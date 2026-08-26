@@ -1,0 +1,18 @@
+{
+  "attachmentFolderPath": "_附件",
+  "newFileLocation": "current",
+  "newLinkFormat": "shortest",
+  "useMarkdownLinks": false,
+  "showLineNumber": true,
+  "readableLineLength": true,
+  "strictLineBreaks": false,
+  "alwaysUpdateLinks": true,
+  "showUnsupportedFiles": false,
+  "trashOption": "local",
+  "promptDelete": true,
+  "tabSize": 2,
+  "spellcheck": false,
+  "defaultViewMode": "preview",
+  "livePreview": true,
+  "propertiesInDocument": "visible"
+}

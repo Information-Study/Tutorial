@@ -1,0 +1,27 @@
+# ── Obsidian：個人工作區狀態不納管 ───────────────────────
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+.obsidian/plugins/
+.obsidian/themes/
+.obsidian/snippets/
+.obsidian/graph.json
+.trash/
+
+# ── 系統與編輯器暫存 ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.swp
+*.swo
+*~
+.vscode/
+
+# ── 實作產生的機密／大檔（教學範例請勿提交真實金鑰）────────
+*.pem
+*.key
+*.crt
+.env
+.env.*
+!.env.example
