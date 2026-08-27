@@ -25,7 +25,7 @@ updated: 2026-08-27
 | 03 | [[03-Nginx-location與rewrite]] | 進階 | location 的六種比對修飾符、優先順序，以及 try_files / rewrite / return 的正確用法 |
 | 04 | [[04-Nginx-反向代理與負載平衡]] | 進階 | proxy_pass 的斜線規則、標頭轉發、upstream 演算法、健康檢查與 WebSocket |
 | 05 | [[05-Nginx-靜態資源與快取]] | 進階 | expires、Cache-Control、ETag、gzip/brotli 壓縮與 proxy_cache 反向代理快取 |
-| 06 | [[06-Nginx-HTTPS與Certbot]] | 入門 | 申請憑證、自動續期、HTTP 轉址與現代 TLS 設定 |
+| 06 | [[06-Nginx-HTTPS與Certbot]] | 入門 | TLS 設定、Let's Encrypt 憑證申請與自動續期、HSTS 與 OCSP Stapling |
 | 07 | [[07-Nginx-日誌與除錯]] | 進階 | 自訂 log_format、error_log 等級與常見錯誤碼的判讀 |
 | 08 | [[08-Nginx-效能調校]] | 專家 | worker 與連線數、gzip/brotli、HTTP/2 與 HTTP/3、限流與逾時 |
 | 09 | [[09-Nginx-安全設定]] | 進階 | 安全標頭、隱藏版本、限制方法與路徑、防盜連與基本防護 |
