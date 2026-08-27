@@ -333,6 +333,16 @@ Bash 預設使用 Emacs 風格的快捷鍵：
 
 ## 進階用法：用 `man` 自己找答案
 
+### 為什麼要學會查 man
+
+網路教學會過時、會針對別的發行版、會抄錯。
+`man` 是**你這台機器上、這個版本、這個發行版**的權威說明——
+它和你的軟體是同一個套件裝進來的。
+
+> [!tip] 判斷準則
+> 網路查到的做法**不生效或報錯**時，第一件事就是回頭查 `man`。
+> 八成是因為版本差異或參數改名。
+
 ### man 的分節（section）
 
 `man` 手冊分成 8 個主要章節，同一個名稱可能在多個章節出現：
@@ -377,7 +387,181 @@ man ls
 n                 # 找下一個
 ```
 
+### 讀懂 SYNOPSIS 的記法
+
+`man` 開頭的 SYNOPSIS 用一套固定符號描述用法：
+
+```
+SYNOPSIS
+       ls [OPTION]... [FILE]...
+       tar [-] A --catenate --concatenate | c --create | ...
+       chmod [OPTION]... MODE[,MODE]... FILE...
+```
+
+| 記法 | 意義 |
+| --- | --- |
+| `[ ]` | **可省略** |
+| `...` | **可重複多個** |
+| `\|` | 擇一 |
+| `{ }` | 群組（必選其一） |
+| 粗體 / 一般字 | 照字面輸入 |
+| *斜體* / 大寫 | 由你替換成實際值 |
+
+```
+chmod [OPTION]... MODE[,MODE]... FILE...
+      └───┬───┘   └─────┬─────┘  └──┬──┘
+      選項可省可多    MODE 必填     檔案必填且可多個
+```
+
+看懂這個之後，不用讀完整篇也知道指令怎麼組。
+
+### 搜尋手冊
+
+```bash
+man -k permission        # 用關鍵字搜尋所有手冊標題（等同 apropos）
+man -k "^chmod"          # 用正規表示式
+man -f passwd            # 列出所有分節中的 passwd（等同 whatis）
+man -a passwd            # 依序顯示所有分節（看完一個按 q 進下一個）
+man -w ls                # 顯示手冊檔案的路徑
+```
+
+```bash
+man -f passwd
+```
+
+```
+passwd (1)           - change user password
+passwd (1ssl)        - compute password hashes
+passwd (5)           - the password file
+```
+
+一眼看出 `passwd` 同時是**指令（1）**和**設定檔格式（5）**。
+
+> [!warning] `man -k` 說 nothing appropriate
+> 代表手冊索引資料庫還沒建立。執行：
+> ```bash
+> sudo mandb
+> ```
+> 新裝套件後索引通常由 cron/timer 自動更新，急著用就手動跑。
+
+### Shell 內建指令沒有 man，要用 `help`
+
+```bash
+man cd
+```
+
+```
+No manual entry for cd
+```
+
+因為 `cd`、`export`、`set`、`alias`、`source`、`trap`、`ulimit`
+這些是 **bash 內建指令**，不是獨立的執行檔，說明藏在 `man bash` 裡面
+（那是一份六千多行的手冊）。
+
+```bash
+help cd                  # ✓ 直接看 bash 內建指令的說明
+help set                 # set -e / -u / -o pipefail 的完整說明
+help                     # 列出所有內建指令
+type cd                  # 確認它是不是內建
+```
+
+```bash
+type cd export ls
+```
+
+```
+cd is a shell builtin
+export is a shell builtin
+ls is aliased to `ls --color=auto'
+```
+
+> [!tip] 這是新手常卡住的地方
+> 「為什麼 `man cd` 找不到？」——因為它不是程式，是 shell 的一部分。
+> **規則：`type X` 說是 builtin 就用 `help X`，否則用 `man X`。**
+
+### 手冊不見了怎麼辦
+
+Ubuntu 的官方容器映像與部分雲端映像會**刻意刪掉手冊**以縮小體積：
+
+```bash
+man ls
+```
+
+```
+This system has been minimized by removing packages and content that are
+not required on a system that users do not log into.
+```
+
+還原：
+
+```bash
+sudo unminimize              # Ubuntu：還原被移除的文件與套件
+sudo apt install -y man-db manpages manpages-posix
+```
+
+> [!info]- Rocky / AlmaLinux（RHEL 系）對照
+> RHEL 系的最小安裝預設**不含手冊**，`dnf` 也預設不裝文件：
+> ```bash
+> sudo dnf install -y man-db man-pages
+>
+> # 檢查是否設定了「不安裝文件」
+> grep -i tsflags /etc/dnf/dnf.conf
+> # 若有 tsflags=nodocs，重裝套件時加上 --setopt=tsflags=
+> sudo dnf reinstall --setopt=tsflags= coreutils
+> ```
+> 另外 RHEL 系的手冊分節與 Debian 系相同，但**部分指令的手冊內容不同**
+> （例如 `useradd` 的預設值），查自己機器上的才準確。
+
+### 讓 man 更好用
+
+```bash
+# 用顏色顯示（需要 bat 或 most）
+export MANPAGER="sh -c 'col -bx | bat -l man -p'"
+
+# 或用 less 的設定（見 06 篇）
+export LESS='-R -i -M -j5'
+
+# 在 man 裡開啟編輯器編輯範例：按 v
+```
+
+```bash
+# 一次搜尋所有手冊的「內容」而不只是標題
+man -K "client_max_body_size"     # 大寫 K，會很慢但很徹底
+```
+
+### `info`：GNU 工具的完整文件
+
+GNU 的工具（`coreutils`、`gawk`、`sed`、`tar`）真正完整的文件在 `info`，
+`man` 只是摘要：
+
+```bash
+info gawk           # gawk 的完整手冊，有章節與範例
+info coreutils 'ls invocation'
+```
+
+```
+man tar
+```
+
+```
+For complete documentation, run: info tar
+```
+
+| 按鍵 | 作用 |
+| --- | --- |
+| `空白` / `Backspace` | 下一頁 / 上一頁 |
+| `n` / `p` | 下一節 / 上一節 |
+| `u` | 上一層 |
+| `l` | 上一個看過的節點 |
+| `s` | 搜尋 |
+| `q` | 離開 |
+
+> [!tip] 什麼時候該看 info
+> `awk` 的陣列、`tar` 的增量備份、`date` 的格式字串——
+> 這些 `man` 只帶過一句，`info` 有完整章節與範例。
+
 ### 其他求助方式
+
 
 ```bash
 ls --help | less        # 大部分指令都支援，比 man 簡短
@@ -596,6 +780,15 @@ source ~/.bashrc
 | `man <指令>` | 完整手冊 |
 | `man 5 <設定檔>` | **設定檔格式說明** |
 | `man 8 <指令>` | 系統管理指令 |
+| `man 7 <主題>` | 概念與慣例（`man 7 glob`、`man 7 signal`） |
+| `man -k <關鍵字>` | 搜尋所有手冊標題（= `apropos`） |
+| `man -f <名稱>` | 列出所有分節（= `whatis`） |
+| `man -a <名稱>` | 依序顯示所有分節 |
+| `man -K <字串>` | 搜尋手冊**內容**（慢但徹底） |
+| `man -w <指令>` | 手冊檔案路徑 |
+| `sudo mandb` | 重建手冊索引 |
+| **`help <內建指令>`** | **bash 內建指令說明（`cd`/`set`/`export`）** |
+| `info <工具>` | GNU 工具的完整文件 |
 | `<指令> --help` | 簡短說明 |
 | `apropos <關鍵字>` | 用關鍵字搜尋手冊 |
 | `tldr <指令>` | 實用範例（需安裝） |
