@@ -24,7 +24,7 @@ updated: 2026-08-27
 | 02 | [[02-PHP-FPM設定與Pool調校]] | 專家 | pm 模式選擇、max_children 計算、狀態頁判讀與慢請求分析 |
 | 03 | [[03-PHP-ini重要參數]] | 進階 | 資源限制、錯誤處理、上傳、session 與安全參數的完整說明 |
 | 04 | [[04-Composer-套件管理]] | 進階 | 安裝、autoload、版本約束、正式環境部署最佳化與安全稽核 |
-| 05 | [[05-PHP-OPcache與效能]] | 進階 | OPcache 原理、正式環境參數與部署後失效問題 |
+| 05 | [[05-PHP-OPcache與效能]] | 專家 | OPcache 設定與監控、JIT、realpath 快取，以及部署時的快取失效處理 |
 | 06 | [[06-PHP-安全設定]] | 進階 | disable_functions、open_basedir、上傳限制與 session 安全 |
 
 ## 建議閱讀順序
