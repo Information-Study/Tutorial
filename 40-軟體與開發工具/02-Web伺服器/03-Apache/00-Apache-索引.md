@@ -22,7 +22,7 @@ updated: 2026-08-27
 | --- | --- | --- | --- |
 | 01 | [[01-Apache-安裝與目錄結構]] | 入門 | Debian 系與 RHEL 系截然不同的目錄配置，以及 a2en* 系列工具 |
 | 02 | [[02-Apache-VirtualHost設定]] | 進階 | ServerName 比對、Directory 區塊、Alias 與 Require 存取控制 |
-| 03 | [[03-Apache-模組與MPM]] | 進階 | a2enmod 模組管理與 prefork / worker / event 的選擇 |
+| 03 | [[03-Apache-模組與MPM]] | 專家 | prefork / worker / event 三種 MPM 的差異、選擇與調校，以及模組管理 |
 | 04 | [[04-Apache-htaccess與Rewrite]] | 進階 | AllowOverride、.htaccess 的代價與 RewriteRule 實戰 |
 | 05 | [[05-Apache-HTTPS設定]] | 入門 | mod_ssl 設定、Certbot 整合與 HTTP 轉址 |
 | 06 | [[06-Apache-與PHP整合]] | 進階 | mod_php 與 php-fpm 兩種整合方式的差異與設定 |
