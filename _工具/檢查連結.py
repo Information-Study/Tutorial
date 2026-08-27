@@ -26,7 +26,9 @@ for p in notes.values():
         continue
     in_fence = False
     for line_no, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
-        if line.lstrip().startswith("```"):
+        # 去掉引用標記，讓 callout 內的程式碼圍籬也算數
+        bare = re.sub(r"^\s*(?:>\s?)*", "", line)
+        if bare.startswith("```"):
             in_fence = not in_fence
             continue
         if in_fence:
