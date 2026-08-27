@@ -20,7 +20,7 @@ updated: 2026-08-27
 
 | # | 篇章 | 難度 | 說明 |
 | --- | --- | --- | --- |
-| 01 | [[01-Nginx-安裝與目錄結構]] | 入門 | 安裝、服務控制、設定檔目錄與 sites-available 慣例 |
+| 01 | [[01-Nginx-安裝與目錄結構]] | 入門 | 三種安裝來源、目錄配置慣例，以及第一次啟動就該做對的設定 |
 | 02 | [[02-Nginx-設定語法與虛擬主機]] | 入門 | context 階層、指令繼承、server_name 比對與多站台共存 |
 | 03 | [[03-Nginx-location與rewrite]] | 進階 | location 比對優先序、try_files、rewrite 與 return 的正確用法 |
 | 04 | [[04-Nginx-反向代理與負載平衡]] | 進階 | proxy_pass、標頭轉發、upstream 演算法、健康檢查與 WebSocket |
