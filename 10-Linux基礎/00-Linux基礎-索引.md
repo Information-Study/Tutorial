@@ -44,6 +44,12 @@ updated: 2026-08-27
 | 22 | [[22-Shell腳本進階]] | 進階 | 函式、陣列、trap、錯誤處理與可維護腳本的寫法 |
 | 23 | [[23-Linux常見疑難排解]] | 進階 | 磁碟滿、開不了機、服務起不來、權限錯誤的系統化排查流程 |
 | 24 | [[24-進階儲存-ZFS與Btrfs]] | 專家 | ZFS 的 pool/vdev/dataset 與 Btrfs 的子卷快照，含備份、校驗與調校 |
+| 25 | [[25-開機流程與GRUB救援]] | 進階 | BIOS/UEFI → GRUB → 核心 → initramfs → systemd target 的完整鏈，與各階段的救援方法 |
+| 26 | [[26-核心模組與sysctl調校]] | 進階 | lsmod/modprobe 模組管理、sysctl 伺服器調校參數、ulimit 與 limits.conf、cgroup 資源控制 |
+| 27 | [[27-硬體資訊與裝置管理]] | 入門 | lscpu/dmidecode/lspci/lsusb/sensors/smartctl 查硬體，udev 規則與裝置命名，盤點腳本 |
+| 28 | [[28-時間同步NTP與chrony]] | 入門 | timesyncd 與 chrony 的選擇與設定、對內提供 NTP、AD/Kerberos 的時間要求、漂移監控 |
+| 29 | [[29-網路儲存與軟體RAID]] | 進階 | NFS 與 CIFS/SMB 的掛載與伺服器端設定、autofs 自動掛載、mdadm 軟體 RAID、磁碟配額 |
+| 30 | [[30-原始碼安裝與系統升級]] | 進階 | 從原始碼編譯安裝到 /usr/local 的正確做法、checkinstall/stow 管理，以及大版本升級（do-release-upgrade、leapp）的完整流程 |
 
 ## 建議閱讀順序
 
