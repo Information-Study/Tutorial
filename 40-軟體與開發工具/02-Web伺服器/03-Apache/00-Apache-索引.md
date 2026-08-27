@@ -26,7 +26,7 @@ updated: 2026-08-27
 | 04 | [[04-Apache-htaccess與Rewrite]] | 進階 | mod_rewrite 的規則語法、旗標、條件，以及 .htaccess 的效能與安全取捨 |
 | 05 | [[05-Apache-HTTPS設定]] | 入門 | mod_ssl 設定、Certbot 申請與續期、SNI 與 OCSP Stapling |
 | 06 | [[06-Apache-與PHP整合]] | 進階 | mod_php 與 PHP-FPM 的差異、遷移流程，以及多版本 PHP 共存 |
-| 07 | [[07-Apache-安全與效能]] | 進階 | 隱藏版本、限制方法、壓縮與快取、安全標頭與模組精簡 |
+| 07 | [[07-Apache-安全與效能]] | 進階 | 安全加固清單、壓縮與快取、逾時與限流，以及上線前的完整驗證 |
 
 ## 建議閱讀順序
 
