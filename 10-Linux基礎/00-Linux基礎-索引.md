@@ -35,7 +35,7 @@ updated: 2026-08-27
 | 13 | [[13-壓縮與封存]] | 入門 | tar 的參數邏輯、各種壓縮格式取捨與備份打包實務 |
 | 14 | [[14-套件管理]] | 入門 | apt 與 dnf 的安裝、升級、搜尋、移除，以及第三方套件庫的加法 |
 | 15 | [[15-磁碟分割與掛載]] | 進階 | df du lsblk mount fstab 與 LVM 的基本操作 |
-| 16 | [[16-網路基礎指令]] | 入門 | ip ss ping traceroute dig curl wget 與網路設定檔位置 |
+| 16 | [[16-網路基礎指令]] | 入門 | ip、nmcli、netplan、ss、ping、dig、curl、wget 與網路設定檔位置 |
 | 17 | [[17-systemd服務管理]] | 入門 | systemctl 操作、unit 檔結構與自訂服務的寫法 |
 | 18 | [[18-排程工作]] | 入門 | crontab 語法、systemd timer 與 at，以及排程失敗的常見原因 |
 | 19 | [[19-日誌系統]] | 入門 | journalctl 查詢技巧、傳統 syslog 檔案與 logrotate 輪替設定 |
