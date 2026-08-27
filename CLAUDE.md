@@ -120,6 +120,11 @@ python3 _工具/檢查連結.py
 git add -A && git commit -m "docs(<章節>): <做了什麼>"
 ```
 
+**遠端**：`origin = https://github.com/Information-Study/Tutorial.git`。
+**每完成一個章節（或一批筆記）commit 後必須 `git push`**。
+認證走 gh CLI（`gh auth login` 後 `gh auth setup-git`）；
+push 失敗時提醒使用者重新登入，不要略過。
+
 提交訊息格式：
 
 ```
