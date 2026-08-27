@@ -157,8 +157,10 @@ Brotli、Zstandard、ModSecurity v3、Lua／NJS，加上 100 多個動態模組�
 | `strip-filter` | HTML／CSS／JS／JSON 回應體精簡 |
 | `zstd` | Zstandard 壓縮 |
 
-另有 OWASP CRS 外掛（wordpress-hardening、vaultwarden、vimbadmin）、Mailstrix 郵件惡意程式掃描、
-rspamd 生態工具、每日重建的 Docker 映像。
+另有 OWASP CRS 外掛（wordpress-hardening、vaultwarden、vimbadmin）與每日重建的 Docker 映像。
+
+> **範圍界線**：myguard-labs 的郵件相關套件（Mailstrix、rspamd 外掛、ViMbAdmin）
+> **不寫入本手冊** — 已確定不納入郵件伺服器主題。
 
 - **主教學位置**：`50-Web伺服器/04-MyGuard套件庫與Angie/`（8 篇）
 - **套件庫加入方式的通用寫法**：`40-Linux伺服器管理/03-伺服器建置與標準化/03-第三方APT套件庫實務`
@@ -182,7 +184,8 @@ rspamd 生態工具、每日重建的 Docker 映像。
 1. **TWGCB Windows／應用軟體基準**：等使用者提供資料
 2. **實機環境**：Cisco／Juniper／PVE／OPNsense／Windows AD 是否有可驗證環境；沒有的話標註「未實機驗證」
 3. **表單輸出格式**：巡檢表、盤點表要不要同時給 CSV／Excel
-4. **郵件伺服器**：目前手冊未含，是否新增 `54-郵件伺服器/`（Postfix／Dovecot／rspamd／Mailstrix）
+
+已排除的範圍：**郵件伺服器**（Postfix／Dovecot／rspamd／Mailstrix）— 使用者已決定不納入。
 
 ## 參考
 
