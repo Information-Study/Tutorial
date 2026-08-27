@@ -21,7 +21,7 @@ updated: 2026-08-27
 | # | 篇章 | 難度 | 說明 |
 | --- | --- | --- | --- |
 | 01 | [[01-Vue-建置與Nginx靜態部署]] | 進階 | 從 GitHub 專案建置 Vue 3，部署到 Nginx 的完整流程與快取策略 |
-| 02 | [[02-Vue-SPA路由與API代理]] | 進階 | history 模式的 try_files 設定與同網域 API 代理 |
+| 02 | [[02-Vue-SPA路由與API代理]] | 進階 | History 模式的伺服器設定、base path 子目錄部署與 API 代理三種模式 |
 | 03 | [[03-Vue-Docker部署]] | 進階 | 多階段建置產出極小的 Nginx 靜態映像 |
 
 ## 建議閱讀順序
