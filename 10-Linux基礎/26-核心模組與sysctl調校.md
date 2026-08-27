@@ -2,7 +2,7 @@
 title: "核心模組與 sysctl 調校"
 desc: "lsmod/modprobe 模組管理、sysctl 伺服器調校參數、ulimit 與 limits.conf、cgroup 資源控制"
 aliases: [sysctl, modprobe, lsmod, ulimit, limits.conf, nofile, somaxconn, cgroup]
-tags: [linux/基礎, 主題/核心]
+tags: [群組/Linux, linux/基礎, 主題/核心]
 category: Linux基礎
 difficulty: 進階
 status: 完成

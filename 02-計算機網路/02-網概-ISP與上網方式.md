@@ -2,7 +2,7 @@
 title: "ISP 與上網方式"
 desc: "從你家的小烏龜到中華電信機房，網際網路是怎麼串起來的"
 aliases: [ISP, 光纖, ADSL, Cable, 數據機, 小烏龜, Tier1]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成

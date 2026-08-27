@@ -2,7 +2,7 @@
 title: "Linux 基礎"
 desc: "全書的地基：從什麼是 Linux 一路到會寫維運腳本"
 aliases: []
-tags: [索引, linux/基礎]
+tags: [群組/Linux, 索引, linux/基礎]
 category: Linux基礎
 type: MOC
 status: 完成

@@ -2,7 +2,7 @@
 title: "NAT 與私有位址"
 desc: "為什麼家裡的 IP 都是 192.168 開頭，以及 NAT 帶來的便利與麻煩"
 aliases: [NAT, PAT, 埠轉發, Port Forwarding, CGNAT, 私有IP]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成

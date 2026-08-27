@@ -2,7 +2,7 @@
 title: "TCP 與 UDP"
 desc: "可靠但慢，或快但不保證，兩種傳輸方式的取捨"
 aliases: [TCP, UDP, 三向交握, 三次握手, 流量控制, 壅塞控制, TIME_WAIT]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成

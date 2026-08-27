@@ -2,7 +2,7 @@
 title: "實體與 OT／IoT 安全設備"
 desc: "門禁、監視、機房實體管控，以及工控與物聯網裝置的特殊風險"
 aliases: [實體安全, 門禁, 監視器, OT, ICS, SCADA, IoT, 普渡模型]
-tags: [安全/防護設備, 主題/實體安全]
+tags: [群組/資訊安全, 安全/防護設備, 主題/實體安全]
 category: 資安防護設備與軟體
 difficulty: 進階
 status: 完成

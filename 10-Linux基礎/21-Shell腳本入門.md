@@ -2,7 +2,7 @@
 title: "Shell 腳本入門"
 desc: "變數、條件、迴圈與參數處理，寫出第一個實用腳本"
 aliases: [bash script, shebang, shell腳本]
-tags: [linux/基礎, 主題/shell]
+tags: [群組/Linux, linux/基礎, 主題/shell]
 category: Linux基礎
 difficulty: 入門
 status: 完成

@@ -2,7 +2,7 @@
 title: "SELinux 與 AppArmor"
 desc: "強制存取控制的概念，以及兩系各自的排查與調整方式"
 aliases: [selinux, apparmor, mac]
-tags: [安全/加固, 主題/存取控制]
+tags: [群組/資訊安全, 安全/加固, 主題/存取控制]
 category: 安全性
 difficulty: 專家
 status: 待撰寫

@@ -2,7 +2,7 @@
 title: "MAC 位址與交換器"
 desc: "同一個區域網路內，資料是怎麼精準送到那一台的"
 aliases: [MAC, 交換器, Switch, Hub, ARP, Frame, CSMA/CD, 廣播網域]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成

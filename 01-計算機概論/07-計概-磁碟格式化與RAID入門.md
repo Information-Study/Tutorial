@@ -2,7 +2,7 @@
 title: "磁碟格式化、RAID 與 NAS 入門"
 desc: "格式化到底做了什麼、RAID 0/1/5/6 怎麼選、NAS 是什麼、什麼時候該買"
 aliases: [格式化, 檔案系統, RAID, NAS, FAT32, NTFS, exFAT]
-tags: [計概/入門, 主題/計算機概論, 主題/儲存]
+tags: [群組/基礎概論, 計概/入門, 主題/計算機概論, 主題/儲存]
 category: 計算機概論
 difficulty: 入門
 status: 完成

@@ -2,7 +2,7 @@
 title: "ufw 基礎與實務"
 desc: "ufw 規則語法、預設政策、來源限制與應用設定檔"
 aliases: [ufw, firewall]
-tags: [安全/防火牆, 主題/網路]
+tags: [群組/資訊安全, 安全/防火牆, 主題/網路]
 category: 安全性
 difficulty: 入門
 status: 待撰寫

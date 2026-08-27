@@ -2,7 +2,7 @@
 title: "Obsidian 開啟 WSL vault 的 EISDIR 問題"
 desc: "Windows 版 Obsidian 監看 \\\\wsl.localhost 路徑失敗的三種解法"
 aliases: [EISDIR, Obsidian WSL]
-tags: [收件匣, 工具/obsidian, 主題/wsl]
+tags: [群組/附錄, 收件匣, 工具/obsidian, 主題/wsl]
 category: 收件匣
 difficulty: 入門
 status: 完成

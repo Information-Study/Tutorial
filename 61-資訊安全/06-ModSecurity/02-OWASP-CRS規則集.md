@@ -2,7 +2,7 @@
 title: "OWASP CRS 規則集"
 desc: "CRS 安裝、偵測模式與阻擋模式、異常分數與偏執等級"
 aliases: [crs, owasp]
-tags: [安全/waf, 主題/規則]
+tags: [群組/資訊安全, 安全/waf, 主題/規則]
 category: 安全性
 difficulty: 專家
 status: 待撰寫

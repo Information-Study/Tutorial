@@ -2,7 +2,7 @@
 title: "nftables 與 iptables"
 desc: "底層規則模型、鏈與表、持久化，以及 Docker 對規則的干擾"
 aliases: [nftables, iptables]
-tags: [安全/防火牆, 主題/網路]
+tags: [群組/資訊安全, 安全/防火牆, 主題/網路]
 category: 安全性
 difficulty: 專家
 status: 待撰寫

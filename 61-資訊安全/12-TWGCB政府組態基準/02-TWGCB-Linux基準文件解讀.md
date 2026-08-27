@@ -2,7 +2,7 @@
 title: "TWGCB Linux 基準文件解讀"
 desc: "基準文件結構、項目編號與檢查方式的讀法，以及版本不吻合時的對應原則"
 aliases: [TWGCB, GCB, 政府組態基準]
-tags: [安全/twgcb, 主題/合規]
+tags: [群組/資訊安全, 安全/twgcb, 主題/合規]
 category: 資訊安全
 difficulty: 進階
 status: 待撰寫

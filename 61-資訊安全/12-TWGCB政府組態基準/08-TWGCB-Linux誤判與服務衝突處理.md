@@ -2,7 +2,7 @@
 title: "TWGCB Linux 誤判與服務衝突處理"
 desc: "套用基準後服務異常的排查，以及與本手冊其他設定的衝突調和"
 aliases: [TWGCB, GCB, 政府組態基準]
-tags: [安全/twgcb, 主題/合規]
+tags: [群組/資訊安全, 安全/twgcb, 主題/合規]
 category: 資訊安全
 difficulty: 專家
 status: 待撰寫

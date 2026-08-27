@@ -2,7 +2,7 @@
 title: "WAF 概念與 ModSecurity 安裝"
 desc: "WAF 的定位與限制，以及在 Nginx 與 Apache 上安裝 ModSecurity"
 aliases: [waf, modsecurity]
-tags: [安全/waf, 主題/安裝]
+tags: [群組/資訊安全, 安全/waf, 主題/安裝]
 category: 安全性
 difficulty: 專家
 status: 待撰寫

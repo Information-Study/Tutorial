@@ -2,7 +2,7 @@
 title: "日誌集中與 SIEM"
 desc: "沒有日誌就沒有調查能力：集中、關聯、告警與 SOC"
 aliases: [SIEM, SOAR, SOC, 日誌集中, UEBA, Wazuh]
-tags: [安全/防護設備, 主題/監控]
+tags: [群組/資訊安全, 安全/防護設備, 主題/監控]
 category: 資安防護設備與軟體
 difficulty: 進階
 status: 完成

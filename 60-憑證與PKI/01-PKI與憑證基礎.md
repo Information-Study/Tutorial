@@ -2,7 +2,7 @@
 title: "PKI 與憑證基礎"
 desc: "非對稱加密、CA 角色、憑證鏈與 X.509 欄位解讀"
 aliases: []
-tags: [安全/tls, 主題/憑證]
+tags: [群組/資訊安全, 安全/tls, 主題/憑證]
 category: 憑證與PKI
 difficulty: 入門
 status: 待撰寫

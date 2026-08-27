@@ -2,7 +2,7 @@
 title: "ModSecurity WAF"
 desc: "五篇涵蓋安裝、規則集、調校、日誌與效能"
 aliases: []
-tags: [索引, 安全/waf]
+tags: [群組/資訊安全, 索引, 安全/waf]
 category: 安全性
 type: MOC
 status: 完成

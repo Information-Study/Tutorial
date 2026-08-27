@@ -2,7 +2,7 @@
 title: "身分存取管理 IAM 與 MFA"
 desc: "帳號才是新的邊界：SSO、MFA、PAM 與最小權限"
 aliases: [IAM, MFA, SSO, PAM, 雙因素認證, 特權帳號管理]
-tags: [安全/防護設備, 主題/資安架構]
+tags: [群組/資訊安全, 安全/防護設備, 主題/資安架構]
 category: 資安防護設備與軟體
 difficulty: 進階
 status: 完成

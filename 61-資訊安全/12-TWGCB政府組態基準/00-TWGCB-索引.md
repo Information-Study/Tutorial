@@ -2,7 +2,7 @@
 title: "TWGCB 政府組態基準"
 desc: "台灣政府組態基準的導入、檢測與維護，本階段先完成 Linux 部分"
 aliases: [TWGCB, GCB]
-tags: [索引, 安全/twgcb]
+tags: [群組/資訊安全, 索引, 安全/twgcb]
 category: 資訊安全
 type: MOC
 status: 完成

@@ -2,7 +2,7 @@
 title: "時間同步 NTP 與 chrony"
 desc: "timesyncd 與 chrony 的選擇與設定、對內提供 NTP、AD/Kerberos 的時間要求、漂移監控"
 aliases: [NTP, chrony, timesyncd, timedatectl, 時間同步, 時區]
-tags: [linux/基礎, 主題/時間]
+tags: [群組/Linux, linux/基礎, 主題/時間]
 category: Linux基礎
 difficulty: 入門
 status: 完成

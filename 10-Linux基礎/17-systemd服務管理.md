@@ -2,7 +2,7 @@
 title: "systemd 服務管理"
 desc: "systemctl 操作、unit 檔結構與自訂服務的寫法"
 aliases: [systemctl, systemd, unit, service, daemon]
-tags: [linux/基礎, 主題/systemd]
+tags: [群組/Linux, linux/基礎, 主題/systemd]
 category: Linux基礎
 difficulty: 入門
 status: 完成

@@ -2,7 +2,7 @@
 title: "無線網路與 Wi-Fi"
 desc: "頻段、通道、標準與訊號，為什麼你家的 Wi-Fi 這麼慢"
 aliases: [WiFi, 無線網路, 802.11, 2.4GHz, 5GHz, WPA3, SSID, AP]
-tags: [網概/入門, 主題/計算機網路, 主題/無線]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路, 主題/無線]
 category: 計算機網路
 difficulty: 入門
 status: 完成

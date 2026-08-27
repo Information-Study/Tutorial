@@ -2,7 +2,7 @@
 title: "Fail2ban 入侵防護"
 desc: "jail 設定、filter 撰寫、封鎖動作與誤封解除"
 aliases: [fail2ban, jail]
-tags: [安全/防護, 主題/防護]
+tags: [群組/資訊安全, 安全/防護, 主題/防護]
 category: 安全性
 difficulty: 進階
 status: 待撰寫

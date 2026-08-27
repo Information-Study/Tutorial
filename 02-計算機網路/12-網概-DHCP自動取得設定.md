@@ -2,7 +2,7 @@
 title: "DHCP 自動取得設定"
 desc: "插上網路線就能上網，背後的四個步驟"
 aliases: [DHCP, DORA, 租約, Relay, APIPA, 保留位址]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成
@@ -133,7 +133,7 @@ sequenceDiagram
 > 3. 電腦下載映像並開始自動安裝
 >
 > 這就是 Windows **WDS** 與 Linux **PXE 部署**的基礎。
-> 見 `41-Windows系統管理` 的 WDS 章節。
+> 見 `20-Windows系統管理` 的 WDS 章節。
 
 ---
 

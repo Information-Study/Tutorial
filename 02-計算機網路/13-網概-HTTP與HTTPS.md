@@ -2,7 +2,7 @@
 title: "HTTP 與 HTTPS"
 desc: "瀏覽一個網頁到底發生什麼，以及那把鎖代表什麼"
 aliases: [HTTP, HTTPS, TLS, SSL, URL, 狀態碼, 憑證, CA, HTML]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成
@@ -239,7 +239,7 @@ Cache-Control: max-age=3600
 > # connect() to unix:/run/php/php8.3-fpm.sock failed (2: No such file or directory)
 > #                                                    ^^^ socket 路徑錯或服務沒起來
 > ```
-> 見 `50-Web伺服器` 章節。
+> 見 `51-Web伺服器` 章節。
 
 ---
 

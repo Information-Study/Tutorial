@@ -2,7 +2,7 @@
 title: "VLAN 與網路分段"
 desc: "一台交換器怎麼切成好幾個互不干擾的網路"
 aliases: [VLAN, Trunk, Access, 802.1Q, STP, 生成樹, 網路分段]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成
@@ -545,7 +545,7 @@ network:
 > 然後把不同的 VM 指派到不同的 VLAN ——
 > 一條實體線就能服務所有 VLAN。
 >
-> 見 `30-虛擬化平台` 章節。
+> 見 `40-虛擬化平台` 章節。
 
 ### 抓帶 VLAN 標籤的封包
 

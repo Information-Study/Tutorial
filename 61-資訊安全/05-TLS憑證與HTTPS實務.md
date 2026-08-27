@@ -2,7 +2,7 @@
 title: "TLS 憑證與 HTTPS 實務"
 desc: "憑證鏈、續期自動化、加密套件選擇、HSTS 與 mTLS"
 aliases: [tls, ssl, letsencrypt, mtls]
-tags: [安全/tls, 主題/加密]
+tags: [群組/資訊安全, 安全/tls, 主題/加密]
 category: 安全性
 difficulty: 進階
 status: 待撰寫

@@ -2,7 +2,7 @@
 title: "CSR 產生與 req 設定檔"
 desc: "openssl req 完整參數、req.txt 設定檔逐段寫法與 Windows certreq 對照"
 aliases: []
-tags: [安全/tls, 主題/憑證]
+tags: [群組/資訊安全, 安全/tls, 主題/憑證]
 category: 憑證與PKI
 difficulty: 進階
 status: 待撰寫

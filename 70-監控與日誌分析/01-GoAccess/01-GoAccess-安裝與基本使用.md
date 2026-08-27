@@ -2,7 +2,7 @@
 title: "GoAccess 安裝與基本使用"
 desc: "安裝、終端機介面操作與各面板的判讀"
 aliases: [goaccess]
-tags: [服務/goaccess, 主題/安裝]
+tags: [群組/系統維運, 服務/goaccess, 主題/安裝]
 category: 監控與日誌分析
 difficulty: 入門
 status: 待撰寫

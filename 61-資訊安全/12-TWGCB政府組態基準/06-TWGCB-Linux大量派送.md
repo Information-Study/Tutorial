@@ -2,7 +2,7 @@
 title: "TWGCB Linux 大量派送"
 desc: "用 Ansible 把基準設定 playbook 化並依角色分群套用"
 aliases: [TWGCB, GCB, 政府組態基準]
-tags: [安全/twgcb, 主題/合規]
+tags: [群組/資訊安全, 安全/twgcb, 主題/合規]
 category: 資訊安全
 difficulty: 專家
 status: 待撰寫

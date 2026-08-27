@@ -2,7 +2,7 @@
 title: "TWGCB 概念與法規要求"
 desc: "什麼是政府組態基準、發布單位、適用對象與版本對應原則"
 aliases: [TWGCB, GCB, 政府組態基準]
-tags: [安全/twgcb, 主題/合規]
+tags: [群組/資訊安全, 安全/twgcb, 主題/合規]
 category: 資訊安全
 difficulty: 入門
 status: 待撰寫

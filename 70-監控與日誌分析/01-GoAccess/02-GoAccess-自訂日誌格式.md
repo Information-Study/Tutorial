@@ -2,7 +2,7 @@
 title: "GoAccess 自訂日誌格式"
 desc: "log-format/date-format/time-format 與自訂 Nginx 格式的對接"
 aliases: [log-format, combined]
-tags: [服務/goaccess, 主題/設定]
+tags: [群組/系統維運, 服務/goaccess, 主題/設定]
 category: 監控與日誌分析
 difficulty: 進階
 status: 待撰寫

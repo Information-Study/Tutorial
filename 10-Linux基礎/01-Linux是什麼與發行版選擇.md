@@ -2,7 +2,7 @@
 title: "Linux 是什麼與發行版選擇"
 desc: "從核心與發行版的關係出發，說明該選哪個發行版當學習與正式環境"
 aliases: [發行版, distro, Linux簡介]
-tags: [linux/基礎, 主題/概論]
+tags: [群組/Linux, linux/基礎, 主題/概論]
 category: Linux基礎
 difficulty: 入門
 status: 完成

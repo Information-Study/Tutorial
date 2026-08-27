@@ -2,7 +2,7 @@
 title: "Ubuntu 與 RHEL 差異總表"
 desc: "套件、服務名、設定檔路徑、防火牆與 SELinux 的兩系對照"
 aliases: [debian, rocky, almalinux]
-tags: [附錄, 速查表, 發行版差異]
+tags: [群組/附錄, 附錄, 速查表, 發行版差異]
 category: 附錄
 difficulty: 入門
 status: 待撰寫

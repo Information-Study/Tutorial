@@ -2,7 +2,7 @@
 title: "DNS 網域名稱系統"
 desc: "網址怎麼變成 IP，以及為什麼有時候要清快取"
 aliases: [DNS, 網域名稱, TLD, 根域, TWNIC, A記錄, CNAME, MX, TTL]
-tags: [網概/入門, 主題/計算機網路]
+tags: [群組/基礎概論, 網概/入門, 主題/計算機網路]
 category: 計算機網路
 difficulty: 入門
 status: 完成

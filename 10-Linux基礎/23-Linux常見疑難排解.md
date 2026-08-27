@@ -2,7 +2,7 @@
 title: "Linux 常見疑難排解"
 desc: "磁碟滿、開不了機、服務起不來、權限錯誤的系統化排查流程"
 aliases: [troubleshooting, 排錯, 疑難排解, emergency mode]
-tags: [linux/基礎, 主題/排錯]
+tags: [群組/Linux, linux/基礎, 主題/排錯]
 category: Linux基礎
 difficulty: 進階
 status: 完成

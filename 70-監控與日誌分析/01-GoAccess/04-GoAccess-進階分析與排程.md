@@ -2,7 +2,7 @@
 title: "GoAccess 進階分析與排程"
 desc: "多站台合併分析、排程產出與從日誌找出攻擊跡象"
 aliases: [cron, report]
-tags: [服務/goaccess, 主題/實戰]
+tags: [群組/系統維運, 服務/goaccess, 主題/實戰]
 category: 監控與日誌分析
 difficulty: 專家
 status: 待撰寫

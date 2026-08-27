@@ -2,7 +2,7 @@
 title: "firewalld RHEL 防火牆"
 desc: "zone 概念、service 定義與 firewall-cmd 永久規則"
 aliases: [firewalld, zone]
-tags: [安全/防火牆, 主題/網路]
+tags: [群組/資訊安全, 安全/防火牆, 主題/網路]
 category: 安全性
 difficulty: 進階
 status: 待撰寫

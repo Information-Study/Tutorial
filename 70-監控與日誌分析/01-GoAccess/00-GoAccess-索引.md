@@ -2,7 +2,7 @@
 title: "GoAccess"
 desc: "把 Nginx 與 Apache 的存取日誌變成看得懂的報表"
 aliases: []
-tags: [索引, 服務/goaccess]
+tags: [群組/系統維運, 索引, 服務/goaccess]
 category: 監控與日誌分析
 type: MOC
 status: 完成

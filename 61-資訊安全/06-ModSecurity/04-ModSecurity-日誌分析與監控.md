@@ -2,7 +2,7 @@
 title: "ModSecurity 日誌分析與監控"
 desc: "稽核日誌格式、關鍵欄位判讀與告警串接"
 aliases: [audit log]
-tags: [安全/waf, 主題/日誌]
+tags: [群組/資訊安全, 安全/waf, 主題/日誌]
 category: 安全性
 difficulty: 專家
 status: 待撰寫

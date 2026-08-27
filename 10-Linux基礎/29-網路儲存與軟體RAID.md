@@ -2,7 +2,7 @@
 title: "網路儲存與軟體 RAID"
 desc: "NFS 與 CIFS/SMB 的掛載與伺服器端設定、autofs 自動掛載、mdadm 軟體 RAID、磁碟配額"
 aliases: [NFS, CIFS, SMB, Samba, autofs, mdadm, RAID, quota, 配額]
-tags: [linux/基礎, 主題/儲存]
+tags: [群組/Linux, linux/基礎, 主題/儲存]
 category: Linux基礎
 difficulty: 進階
 status: 完成

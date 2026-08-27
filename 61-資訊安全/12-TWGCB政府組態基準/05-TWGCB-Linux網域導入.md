@@ -2,7 +2,7 @@
 title: "TWGCB Linux AD 網域導入"
 desc: "Linux 加入 AD 網域後，哪些基準項目改由網域集中控管"
 aliases: [TWGCB, GCB, 政府組態基準]
-tags: [安全/twgcb, 主題/合規]
+tags: [群組/資訊安全, 安全/twgcb, 主題/合規]
 category: 資訊安全
 difficulty: 專家
 status: 待撰寫

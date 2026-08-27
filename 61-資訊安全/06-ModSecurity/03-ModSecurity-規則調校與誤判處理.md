@@ -2,7 +2,7 @@
 title: "ModSecurity 規則調校與誤判處理"
 desc: "排除規則撰寫、依路徑豁免與自訂規則語法"
 aliases: [exclusion, false positive]
-tags: [安全/waf, 主題/調校]
+tags: [群組/資訊安全, 安全/waf, 主題/調校]
 category: 安全性
 difficulty: 專家
 status: 待撰寫

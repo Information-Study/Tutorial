@@ -2,7 +2,7 @@
 title: "DDoS 防護與 CDN"
 desc: "服務不能被打掛：流量清洗、CDN、速率限制與應變準備"
 aliases: [DDoS, CDN, 流量清洗, Anti-DDoS, 速率限制, Cloudflare]
-tags: [安全/防護設備, 主題/可用性]
+tags: [群組/資訊安全, 安全/防護設備, 主題/可用性]
 category: 資安防護設備與軟體
 difficulty: 進階
 status: 完成

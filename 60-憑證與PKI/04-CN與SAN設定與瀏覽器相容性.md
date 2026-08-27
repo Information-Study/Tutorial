@@ -2,7 +2,7 @@
 title: "CN 與 SAN 設定與瀏覽器相容性"
 desc: "CN 已被忽略、必須在 SAN 列出所有網域、萬用字元與 IP SAN"
 aliases: []
-tags: [安全/tls, 主題/憑證]
+tags: [群組/資訊安全, 安全/tls, 主題/憑證]
 category: 憑證與PKI
 difficulty: 進階
 status: 待撰寫

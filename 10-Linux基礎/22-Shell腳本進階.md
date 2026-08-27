@@ -2,7 +2,7 @@
 title: "Shell 腳本進階"
 desc: "函式、陣列、trap、錯誤處理與可維護腳本的寫法"
 aliases: [trap, set -e, 錯誤處理, 鎖檔, 冪等]
-tags: [linux/基礎, 主題/shell]
+tags: [群組/Linux, linux/基礎, 主題/shell]
 category: Linux基礎
 difficulty: 進階
 status: 完成

@@ -2,7 +2,7 @@
 title: "TWGCB Linux 項目分類詳解"
 desc: "帳號、認證、檔案系統、網路、稽核、核心參數各類項目的設定意圖與風險"
 aliases: [TWGCB, GCB, 政府組態基準]
-tags: [安全/twgcb, 主題/合規]
+tags: [群組/資訊安全, 安全/twgcb, 主題/合規]
 category: 資訊安全
 difficulty: 進階
 status: 待撰寫

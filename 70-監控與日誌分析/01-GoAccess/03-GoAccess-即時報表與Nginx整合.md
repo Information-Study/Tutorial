@@ -2,7 +2,7 @@
 title: "GoAccess 即時報表與 Nginx 整合"
 desc: "即時 HTML 報表、WebSocket 設定與存取權限保護"
 aliases: [real-time, websocket]
-tags: [服務/goaccess, 主題/部署]
+tags: [群組/系統維運, 服務/goaccess, 主題/部署]
 category: 監控與日誌分析
 difficulty: 進階
 status: 待撰寫

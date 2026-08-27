@@ -2,7 +2,7 @@
 title: "NIST CSF 與 CIS Controls"
 desc: "六大功能、18 項控制、實作分組 —— 從框架到具體行動"
 aliases: [NIST-CSF, CIS-Controls, CIS-Benchmark, IG1, 成熟度, 資安框架]
-tags: [安全/實踐規範, 主題/管理框架]
+tags: [群組/資訊安全, 安全/實踐規範, 主題/管理框架]
 category: 資安實踐與規範
 difficulty: 進階
 status: 完成

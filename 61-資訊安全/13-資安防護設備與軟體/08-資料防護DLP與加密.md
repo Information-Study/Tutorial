@@ -2,7 +2,7 @@
 title: "資料防護 DLP 與加密"
 desc: "資料外洩防護、全磁碟加密、傳輸加密與資料分級"
 aliases: [DLP, 資料外洩防護, 全磁碟加密, LUKS, BitLocker, 資料分級]
-tags: [安全/防護設備, 主題/資料保護]
+tags: [群組/資訊安全, 安全/防護設備, 主題/資料保護]
 category: 資安防護設備與軟體
 difficulty: 進階
 status: 完成

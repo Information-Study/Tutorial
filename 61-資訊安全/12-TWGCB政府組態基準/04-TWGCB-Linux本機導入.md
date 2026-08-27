@@ -2,7 +2,7 @@
 title: "TWGCB Linux 本機導入"
 desc: "單機套用的完整流程：備份、分批套用、逐項驗證與回退"
 aliases: [TWGCB, GCB, 政府組態基準]
-tags: [安全/twgcb, 主題/合規]
+tags: [群組/資訊安全, 安全/twgcb, 主題/合規]
 category: 資訊安全
 difficulty: 進階
 status: 待撰寫

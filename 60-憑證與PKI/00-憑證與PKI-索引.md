@@ -2,7 +2,7 @@
 title: "憑證與 PKI"
 desc: "從 CSR 產生、向 CA 申請，到自建憑證鏈與全環境派送"
 aliases: [SSL, TLS, 憑證, CSR, PKI, CA]
-tags: [索引, 安全/tls]
+tags: [群組/資訊安全, 索引, 安全/tls]
 category: 憑證與PKI
 type: MOC
 status: 完成

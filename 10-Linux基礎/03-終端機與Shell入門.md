@@ -2,7 +2,7 @@
 title: "終端機與 Shell 入門"
 desc: "認識提示字元、指令結構、Tab 補完、歷史紀錄與求助方式"
 aliases: [shell, bash, 終端機, terminal]
-tags: [linux/基礎, 主題/shell]
+tags: [群組/Linux, linux/基礎, 主題/shell]
 category: Linux基礎
 difficulty: 入門
 status: 完成

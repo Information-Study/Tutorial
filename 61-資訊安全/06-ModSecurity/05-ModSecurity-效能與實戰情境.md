@@ -2,7 +2,7 @@
 title: "ModSecurity 效能與實戰情境"
 desc: "請求本體大小限制、效能開銷量測與真實攻擊的處置流程"
 aliases: [performance, 實戰]
-tags: [安全/waf, 主題/效能]
+tags: [群組/資訊安全, 安全/waf, 主題/效能]
 category: 安全性
 difficulty: 專家
 status: 待撰寫

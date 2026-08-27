@@ -2,7 +2,7 @@
 title: "入侵偵測與防禦 IDS／IPS"
 desc: "只看不擋與看到就擋的差別，以及特徵比對與異常偵測"
 aliases: [IDS, IPS, NIDS, HIDS, Snort, Suricata, Wazuh, 入侵偵測]
-tags: [安全/防護設備, 主題/入侵偵測]
+tags: [群組/資訊安全, 安全/防護設備, 主題/入侵偵測]
 category: 資安防護設備與軟體
 difficulty: 進階
 status: 完成

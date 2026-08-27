@@ -2,7 +2,7 @@
 title: "Web 應用防火牆 WAF"
 desc: "擋掉 SQL Injection 與 XSS 的最後一道牆，以及 API 安全"
 aliases: [WAF, ModSecurity, OWASP CRS, API安全, 應用防火牆]
-tags: [安全/防護設備, 主題/WAF]
+tags: [群組/資訊安全, 安全/防護設備, 主題/WAF]
 category: 資安防護設備與軟體
 difficulty: 進階
 status: 完成
@@ -333,7 +333,7 @@ $ sudo grep -B5 -A20 'id "942100"' /var/log/modsec_audit.log | head -50
 > **`deb.myguard.nl`** 提供**預先編譯好的 NGINX 與 ModSecurity 動態模組**，
 > 而且每日重建、跟上 mainline 版本。
 >
-> 完整說明見 `50-Web伺服器/04-MyGuard套件庫與Angie/`
+> 完整說明見 `51-Web伺服器/04-MyGuard套件庫與Angie/`
 > 與 [[03-第三方APT套件庫實務]]。
 
 ```bash
@@ -341,7 +341,7 @@ $ sudo grep -B5 -A20 'id "942100"' /var/log/modsec_audit.log | head -50
 $ sudo apt install libnginx-mod-http-modsecurity
 
 # 方式 B：使用 MyGuard 套件庫（版本較新、模組較齊）
-#   詳見 50-Web伺服器/04-MyGuard套件庫與Angie/
+#   詳見 51-Web伺服器/04-MyGuard套件庫與Angie/
 
 # 下載 OWASP CRS
 $ sudo git clone --depth 1 -b v4.0/master \

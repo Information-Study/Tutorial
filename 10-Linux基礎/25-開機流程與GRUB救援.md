@@ -2,7 +2,7 @@
 title: "開機流程與 GRUB 救援"
 desc: "BIOS/UEFI → GRUB → 核心 → initramfs → systemd target 的完整鏈，與各階段的救援方法"
 aliases: [GRUB, initramfs, UEFI, 開機, rescue, 救援模式, 核心管理]
-tags: [linux/基礎, 主題/開機]
+tags: [群組/Linux, linux/基礎, 主題/開機]
 category: Linux基礎
 difficulty: 進階
 status: 完成

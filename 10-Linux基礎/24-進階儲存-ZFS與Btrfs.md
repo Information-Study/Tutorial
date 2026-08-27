@@ -2,7 +2,7 @@
 title: "進階儲存 ZFS 與 Btrfs"
 desc: "ZFS 的 pool/vdev/dataset 與 Btrfs 的子卷快照，含備份、校驗與調校"
 aliases: [ZFS, zpool, zfs, Btrfs, subvolume, RAIDZ, snapshot, 快照]
-tags: [linux/基礎, 主題/儲存]
+tags: [群組/Linux, linux/基礎, 主題/儲存]
 category: Linux基礎
 difficulty: 專家
 status: 完成
