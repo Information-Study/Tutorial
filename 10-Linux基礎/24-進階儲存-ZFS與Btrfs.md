@@ -1029,6 +1029,33 @@ echo "✅ 完成。每日健康檢查請加入每日維護作業。"
 
 ---
 
+## 小測驗
+
+Q1. ZFS 的 pool / vdev / dataset 各是什麼？「任一 vdev 全毀」會怎樣？
+Q2. `zpool create tank /dev/sdb /dev/sdc` 建出來的是什麼？一顆壞了會怎樣？
+Q3. 3 顆 raidz1 半年後想加第 4 顆，`zpool add tank /dev/sde` 為什麼失敗？三個選項？
+Q4. `ashift` 為什麼要在建立時就設對？設錯的後果？
+Q5. 建 pool 為什麼用 `/dev/disk/by-id/` 而不是 `/dev/sdb`？
+Q6. `zpool status` 的 `CKSUM` 欄位持續增加代表什麼？為什麼傳統 RAID 看不到這種問題？
+Q7. `sync=disabled` 與 `dedup=on` 各有什麼風險？
+Q8. `zfs send -i` 比 rsync 快在哪？對 2000 萬小檔的差異等級？
+Q9. Btrfs 上 `df` 為什麼不可信？該用什麼？「配置光了但 Used 很少」怎麼解？
+Q10. Btrfs 哪些 RAID profile 不該用於正式環境？需要 RAID5/6 等級該選什麼？
+
+> [!question]- 測驗答案
+> **Q1.** vdev 是磁碟的冗餘單位、pool 是 vdev 的集合、dataset 是 pool 內的檔案系統；任一 vdev 全毀整個 pool 資料全失（見「ZFS 的三層模型」）。
+> **Q2.** 兩個沒有冗餘的單磁碟 vdev（不是 RAID0 效能配置）；任一顆壞掉整個 pool 消失含另一顆的資料。
+> **Q3.** RAIDZ vdev 的磁碟數建立時固定；再加一整組 vdev、逐顆換大磁碟、或備份重建。要彈性擴充用 mirror。
+> **Q4.** 建立後無法更改；設成 512B 在 4K 磁碟上是永久效能損失，只能重建 pool。
+> **Q5.** 裝置名稱重開機可能變；by-id 讓 `zpool status` 直接顯示序號，壞了知道拔哪一顆。
+> **Q6.** 該磁碟資料校驗不符（靜默損毀），即使 SMART 仍 PASSED 也該準備換；傳統 RAID 只校驗中繼資料，會把壞資料原封不動交出。
+> **Q7.** 前者讓 ZFS 忽略 fsync，斷電遺失交易（要效能加 SLOG）；後者去重表每 TB 約 5GB RAM，不足時效能崩潰且關掉救不回。
+> **Q8.** 直接從中繼資料得知差異不用掃描目錄樹；rsync 掃幾小時 vs zfs 幾秒。
+> **Q9.** CoW 與快照共用區塊讓 `df` 失真；用 `btrfs filesystem usage`；`btrfs balance start -dusage=50` 合併半空區塊群組。
+> **Q10.** raid5/raid6（write hole 未解）；用 ZFS RAIDZ 或 mdadm。
+
+---
+
 ## 延伸閱讀
 
 - [[15-磁碟分割與掛載]] — ext4、xfs、LVM 與掛載選項

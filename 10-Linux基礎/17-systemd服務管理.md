@@ -1097,6 +1097,33 @@ namei -l /opt/myapp/dist/server.js
 
 ---
 
+## 小測驗
+
+Q1. `systemctl start` 與 `enable` 各做什麼？「測試正常、重開機後服務沒起來」是漏了哪個？
+Q2. `restart` 與 `reload` 的差別？改了 Nginx 設定該用哪個？`reload` 失敗說不支援代表什麼？
+Q3. 為什麼不能直接編輯 `/usr/lib/systemd/system/nginx.service`？正確做法？
+Q4. 改完 unit 檔卻沒生效，最常漏的一步？
+Q5. `After=` 與 `Requires=` 各管什麼？只寫 `Requires=postgresql` 會有什麼問題？
+Q6. `After=network.target` 對需要連外的服務為什麼不夠？正確寫法要兩行是哪兩行？
+Q7. 程式明明在跑但 `status` 顯示 `failed`，最可能是哪個設定選錯？
+Q8. `Restart=always` 沒有 `StartLimitBurst` 會發生什麼？修好後要跑什麼指令？
+Q9. `MemoryMax=1G` 的價值是什麼？被 OOM 殺掉時日誌會怎麼寫？
+Q10. drop-in 中要覆寫 `ExecStart=` 為什麼要先寫一行空的？
+
+> [!question]- 測驗答案
+> **Q1.** `start` 立即啟動但不設開機自啟，`enable` 相反；漏了 `enable`。一律 `enable --now`（見「最常用的指令」）。
+> **Q2.** `restart` 殺掉重開會中斷連線，`reload` 送訊號重讀設定不中斷；改設定用 `reload`；unit 沒有 `ExecReload=`，用 `reload-or-restart`。
+> **Q3.** 套件升級會無聲覆蓋；`systemctl edit nginx` 建 drop-in（或 `--full`）。
+> **Q4.** `sudo systemctl daemon-reload`。
+> **Q5.** `After=` 只管順序，`Requires=` 只管相依；只寫 `Requires` 兩者可能同時啟動，服務因連不到資料庫而失敗。兩個都要寫。
+> **Q6.** `network.target` 只代表網路子系統啟動，可能還沒拿到 IP；`After=network-online.target` 加 `Wants=network-online.target`。
+> **Q7.** `Type=`——程式會 fork 到背景卻寫 `simple`（或反之）。
+> **Q8.** 每秒無限重啟塞爆日誌吃滿 CPU；`systemctl reset-failed` 再 `start`。
+> **Q9.** 失控的服務只殺死自己，不拖垮整機讓 OOM Killer 去殺資料庫；`A process of this unit has been killed by the OOM killer`。
+> **Q10.** `ExecStart=` 是列表型指令，直接寫會變成兩個 ExecStart；空值先清空再設定。
+
+---
+
 ## 延伸閱讀
 
 - [[18-排程工作]] — systemd timer 與 cron 的選型

@@ -643,6 +643,33 @@ REC
 
 ---
 
+## 小測驗
+
+Q1. 排錯四原則？「先看再動」實際上防什麼？
+Q2. 「服務還活著但變慢」與「已經死了」的處理優先序有何不同？
+Q3. `top` 第三行 `us` 高、`wa` 高、`st` 高各指向什麼？
+Q4. `systemctl status` 的 `203/EXEC`、`200/CHDIR`、`217/USER` 各代表什麼？
+Q5. 「權限全對仍被拒絕」在 RHEL 與 Ubuntu 各先懷疑什麼？各用什麼指令查？
+Q6. 開機進 emergency mode，兩個第一時間該跑的指令？
+Q7. 憑證驗證失敗與 AD 登入失敗可能有什麼共同根因？先查什麼？
+Q8. 重開機前為什麼要保全證據？至少收集哪些？
+Q9. 出現哪些跡象該從「故障」切換成「入侵」處理？
+Q10. 事故紀錄五段中哪一段最重要？為什麼？
+
+> [!question]- 測驗答案
+> **Q1.** 先看再動、一次只改一件事、由外而內、記錄；防止破壞證據與把一個問題變兩個（見「排錯的四個原則」）。
+> **Q2.** 前者避免讓它變成後者（不隨便 restart）；後者先恢復服務再找根因（必要時先重啟，但先保全證據）。
+> **Q3.** 應用在算（看程序、優化或加核心）；磁碟 I/O 瓶頸（`iotop`、磁碟健康）；宿主機搶 CPU（找 PVE/雲端管理者）。
+> **Q4.** 執行檔不存在或無執行權限、`WorkingDirectory` 不存在、`User=` 不存在。
+> **Q5.** RHEL 先懷疑 SELinux（`ausearch -m avc -ts recent`）；Ubuntu 看 AppArmor（`dmesg | grep apparmor`），另外檢查 systemd 沙箱與 `noexec` 掛載。
+> **Q6.** `journalctl -xb` 找第一個 FAILED、`findmnt --verify` 查 fstab（八成是它）。
+> **Q7.** 時間不對；`timedatectl` 看同步狀態，十秒鐘排除一大類原因。
+> **Q8.** 重開機銷毀揮發性狀態，journal 未持久化時連日誌都沒了；`ps auxf`、`ss -tanp`、`lsof +L1`、`dmesg`、`journalctl -b`、`free`、`df`。
+> **Q9.** 不認識的程序/埠/cron/使用者/setuid、陌生 IP 的 `Accepted`、`debsums`/`rpm -Va` 顯示二進位被改、無業務原因的 CPU 100%、日誌空窗。
+> **Q10.** 預防——沒有它同樣的事故一定再來；排錯的終點是「不會再壞」而不是「好了」。
+
+---
+
 ## 延伸閱讀
 
 本篇是 `10-Linux基礎` 的總整理，各類問題的細節在對應篇章：

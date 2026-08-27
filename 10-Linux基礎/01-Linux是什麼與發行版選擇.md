@@ -472,6 +472,33 @@ Nginx 站台  : /etc/nginx/sites-available
 
 ---
 
+## 小測驗
+
+Q1. 「Linux」嚴格來說指的是什麼？`ls`、`bash`、`apt` 各來自哪裡？
+Q2. 是非：Ubuntu 24.04 的核心版本號比 RHEL 9 新，所以 Ubuntu 一定有較多核心功能。
+Q3. 寫腳本判斷發行版家族時，該讀哪個檔案的哪個欄位？為什麼不用 `lsb_release`？
+Q4. 加第三方 APT 套件庫時要填的是版本號（24.04）還是代號（noble）？在哪裡查？
+Q5. CentOS Stream 與 CentOS Linux 的定位差在哪？正式環境要免費 RHEL 相容系統該選什麼？
+Q6. Ubuntu 非 LTS 版本支援幾個月？為什麼正式環境不建議？
+Q7. 腳本裡該用 `apt` 還是 `apt-get`？原因？
+Q8. `uname -r` 顯示 `6.6.87-microsoft-standard-WSL2`，能從這行知道發行版是什麼嗎？
+Q9. RHEL 系第三方套件庫用什麼識別對應版本？（Ubuntu 用 codename）
+Q10. 一台 Ubuntu 18.04 的機器在 2026 年還安全嗎？該怎麼判斷與處理？
+
+> [!question]- 測驗答案
+> **Q1.** Linux 只是核心；`ls` 來自 GNU coreutils、`bash` 是 GNU shell、`apt` 是 Debian 的套件管理。核心＋使用者空間工具＋套件管理打包成的成品才是「發行版」（見「Linux 到底是什麼」）。
+> **Q2.** 否。RHEL 會把新功能回移到舊版號核心，用版本號判斷功能經常判斷錯。
+> **Q3.** `/etc/os-release` 的 `ID` 與 `ID_LIKE`；它是跨發行版標準且最小安裝一定有，`lsb_release` 是額外套件可能不存在。
+> **Q4.** 代號。`. /etc/os-release; echo $VERSION_CODENAME`。填版本號會得到「沒有 Release 檔」。
+> **Q5.** CentOS Stream 是 RHEL 的「上游」預覽版，CentOS Linux（已終止）曾是「下游」複製品。正式環境選 Rocky Linux 或 AlmaLinux。
+> **Q6.** 9 個月；等於每年被迫做一到兩次大版本升級，每次都是停機風險。
+> **Q7.** `apt-get`。`apt` 的輸出格式無穩定性保證，腳本中會出現 stable CLI 警告。
+> **Q8.** 不能。`uname` 是核心資訊，與發行版無關；要看 `/etc/os-release`。
+> **Q9.** 大版本代號 `el8` / `el9`（`PLATFORM_ID`），沒有 codename 概念。
+> **Q10.** 標準支援 2023 年結束；先 `pro status` 看有無 ESM，沒有就等於三年沒安全更新，應規劃遷移到現行 LTS 而非原地跨版升級。
+
+---
+
 ## 延伸閱讀
 
 - [[02-實驗環境準備與初次登入]] — 動手建一台可以隨便玩的練習機

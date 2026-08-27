@@ -803,6 +803,33 @@ main "$@"
 
 ---
 
+## 小測驗
+
+Q1. Ubuntu 上 `#!/bin/sh` 實際是哪個 shell？用了 `[[ ]]` 會怎樣？建議的 shebang？
+Q2. `./script.sh`、`bash script.sh`、`source script.sh` 三者差別？
+Q3. `name = "Mike"` 為什麼報 `name: command not found`？
+Q4. 不加引號的變數有哪三種災難？
+Q5. `[[ ]]` 比 `[ ]` 好在哪？何時才用 `[ ]`？
+Q6. `cat file | while read l; do ((n++)); done; echo $n` 印什麼？為什麼？正確寫法？
+Q7. `for line in $(cat file)` 的兩個問題？
+Q8. `"$@"` 與 `"$*"` 差別？轉傳參數該用哪個？
+Q9. `set -euo pipefail` 三個選項各擋什麼？
+Q10. `set -e` 下 `grep pattern file` 找不到會怎樣？兩種處理？
+
+> [!question]- 測驗答案
+> **Q1.** dash；報 `[[: not found`；`#!/usr/bin/env bash`（見「shebang」）。
+> **Q2.** 前兩者在子程序執行（第二種不需執行權限、強制用 bash）；`source` 在目前 shell 執行，變數會留下。
+> **Q3.** 等號兩邊不能有空白，shell 把 `name` 當指令執行。
+> **Q4.** 空白被切開、空值消失（`rm -rf $dir/*` 變 `/*`）、`*` 被展開。
+> **Q5.** 變數不切詞、空值不出語法錯誤、支援 `&&` `||` `=~`；只有寫 POSIX `#!/bin/sh` 腳本時才用 `[ ]`。
+> **Q6.** `0`（或空）——管線開子 shell，迴圈內的變數消失；`while IFS= read -r l; do ...; done < file`。
+> **Q7.** 用空白切詞（一行「a b」變兩次）且會展開萬用字元；用 `while read`。
+> **Q8.** `"$@"` 保留每個參數邊界，`"$*"` 合併成一個字串；轉傳用 `"$@"`。
+> **Q9.** `-e` 失敗即中止、`-u` 未定義變數報錯、`pipefail` 管線任一段失敗即失敗。
+> **Q10.** 回傳 1 觸發 `-e` 腳本中止；`grep ... || true` 或放進 `if grep -q`。
+
+---
+
 ## 延伸閱讀
 
 - [[22-Shell腳本進階]] — `trap`、錯誤處理、鎖檔、平行執行
