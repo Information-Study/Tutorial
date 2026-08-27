@@ -25,7 +25,7 @@ updated: 2026-08-27
 | 03 | [[03-Laravel-佇列排程與Supervisor]] | 專家 | queue:work 的正確用法、Supervisor 設定、排程 cron 與部署時的重啟 |
 | 04 | [[04-Laravel-快取最佳化與部署流程]] | 專家 | config/route/view 快取、OPcache、Octane 與零停機部署腳本 |
 | 05 | [[05-Laravel-Filament部署]] | 專家 | Filament v3/v4 的正式環境部署、資產發布、權限控管與效能調校 |
-| 06 | [[06-Laravel-Nova部署]] | 專家 | Nova 授權金鑰、私有套件庫認證、資產發布與正式環境注意事項 |
+| 06 | [[06-Laravel-Nova部署]] | 專家 | Nova 授權金鑰、auth.json 管理、CI/CD 整合與資產發布 |
 | 07 | [[07-Laravel-正式環境安全檢查表]] | 專家 | 上線前必須逐項確認的設定、權限與暴露面清單 |
 
 ## 建議閱讀順序
