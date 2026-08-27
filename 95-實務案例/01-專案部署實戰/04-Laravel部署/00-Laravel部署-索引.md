@@ -20,7 +20,7 @@ updated: 2026-08-27
 
 | # | 篇章 | 難度 | 說明 |
 | --- | --- | --- | --- |
-| 01 | [[01-Laravel-環境需求與安裝]] | 進階 | PHP 版本與擴充套件需求、專案取得與 .env 初始化 |
+| 01 | [[01-Laravel-環境需求與安裝]] | 進階 | PHP 擴充、Composer、MySQL 與 Redis 的準備，以及從 GitHub 專案首次部署 |
 | 02 | [[02-Laravel-Nginx與PHP-FPM設定]] | 進階 | 指向 public 的 server block、權限模型與 storage 目錄設定 |
 | 03 | [[03-Laravel-佇列排程與Supervisor]] | 專家 | queue worker 常駐、Supervisor 託管、schedule 排程與 Horizon |
 | 04 | [[04-Laravel-快取最佳化與部署流程]] | 專家 | config/route/view 快取、遷移策略與零停機部署腳本 |
