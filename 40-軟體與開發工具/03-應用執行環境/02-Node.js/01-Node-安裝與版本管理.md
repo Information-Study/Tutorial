@@ -1,90 +1,1146 @@
 ---
 title: "Node.js 安裝與版本管理"
-desc: "NodeSource、nvm 與 fnm 三種安裝方式的取捨與正式環境建議"
-aliases: [node, nvm, fnm]
-tags: [群組/軟體與開發工具, 服務/node, 主題/安裝]
-category: 應用執行環境
+desc: "NodeSource、nvm、fnm 三種安裝方式，以及正式環境的版本策略"
+aliases: [nodejs, nvm, fnm, nodesource, corepack]
+tags: [群組/軟體與開發工具, 服務/nodejs, 主題/安裝]
+category: Node.js
 difficulty: 入門
-status: 待撰寫
+status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[14-套件管理]]"]
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Node.js 安裝與版本管理
 
 > [!abstract] 這篇你會學到
-> - 裝出專案需要的 Node 版本
-> - 在多專案間切換版本
-> - 決定正式環境該不該用 nvm
+> - 分清 **NodeSource / nvm / fnm** 三種安裝方式的適用場景
+> - 理解 **LTS 與 Current** 的差別與版本選擇策略
+> - 讓**多個 Node 版本共存**並依專案自動切換
+> - 用 **`corepack`** 管理 pnpm / yarn 的版本
+> - 處理**正式環境不該用 nvm** 的問題
+> - 規劃**安全的 Node 版本升級**
 
 ## 前置知識
 
-- [[14-套件管理]]
+- [[14-套件管理]] — apt / dnf 基礎
 
-## 觀念說明
+---
 
-<!-- TODO: 待撰寫 — 這個服務在整體架構中的位置 -->
+## 版本策略
 
-## 環境準備與安裝
+```
+Node.js 的版本規則：
+  偶數版本（20, 22, 24）→ ★ 會進入 LTS（長期支援）
+  奇數版本（21, 23）    → ★★ 【永遠不會】進入 LTS，只有 6 個月支援
+
+LTS 的三個階段：
+  Current    （6 個月）→ 新功能，可能有 breaking change
+  Active LTS （12 個月）→ ★ 正式環境用這個
+  Maintenance LTS（12 個月）→ 只修安全性
+  End of Life → 【不再有任何更新】
+```
+
+| 版本 | 狀態 | 支援到 | 建議 |
+| --- | --- | --- | --- |
+| **22.x** | **Active LTS** | 2027-04 | **★ 正式環境首選** |
+| 24.x | Current | — | 開發測試 |
+| 20.x | Maintenance LTS | 2026-04 | 仍可用，該規劃升級 |
+| 18.x | **已 EOL** | 2025-04 | **★ 必須升級** |
+| 16.x 以下 | **已 EOL** | — | **★★ 有已知漏洞** |
 
 ```bash
-# TODO: 待撰寫
+# ★ 查詢當前的支援狀態
+$ curl -s https://nodejs.org/dist/index.json | \
+    jq -r '.[] | select(.lts != false) | "\(.version)  LTS: \(.lts)  \(.date)"' | head -10
+
+# 或到 https://nodejs.org/en/about/previous-releases
+```
+
+> [!danger] 奇數版本絕對不要用在正式環境
+> ```
+> Node 21、23 這類奇數版本：
+>   · 【永遠不會】進入 LTS
+>   · 只有 6 個月的支援
+>   · 可能包含實驗性的 breaking change
+>
+> ★ 正式環境一律用【偶數版本的 Active LTS】
+> ```
+
+---
+
+## 三種安裝方式
+
+| 方式 | 適用 | 優點 | 缺點 |
+| --- | --- | --- | --- |
+| **NodeSource（apt/dnf）** | **★ 正式環境** | 系統套件、自動更新、systemd 友善 | 一台只能一個版本 |
+| **nvm** | **開發機** | 多版本、依專案切換 | **★ 依賴 shell 環境，systemd 下不可靠** |
+| **fnm** | 開發機（★ 更快） | 同 nvm 但用 Rust 寫、快很多 | 同上 |
+| 官方 tarball | 特殊需求 | 完全控制 | 要自己管理更新 |
+
+### ① NodeSource（★ 正式環境推薦）
+
+```bash
+# ═══ Ubuntu / Debian ═══
+$ curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
+$ less /tmp/nodesource_setup.sh              # ★ 先看過內容再執行
+$ sudo -E bash /tmp/nodesource_setup.sh
+$ sudo apt install -y nodejs
+
+$ node -v
+v22.11.0
+$ npm -v
+10.9.0
+
+# ★ 檢查安裝來源
+$ apt policy nodejs
+nodejs:
+  已安裝：22.11.0-1nodesource1
+  候選：  22.11.0-1nodesource1
+  版本列表：
+ *** 22.11.0-1nodesource1 500
+        500 https://deb.nodesource.com/node_22.x nodistro/main amd64 Packages
 ```
 
 > [!info]- Rocky / AlmaLinux（RHEL 系）對照
 > ```bash
-> # TODO: 待撰寫（dnf / 套件庫 / 服務名 / 設定檔路徑差異）
+> # ═══ 方式一：NodeSource ═══
+> $ curl -fsSL https://rpm.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
+> $ less /tmp/nodesource_setup.sh
+> $ sudo -E bash /tmp/nodesource_setup.sh
+> $ sudo dnf install -y nodejs
+>
+> # ═══ 方式二：★ RHEL 內建的模組串流 ═══
+> $ sudo dnf module list nodejs
+> Name      Stream    Profiles                Summary
+> nodejs    18        common, development, ...
+> nodejs    20        common, development, ...
+> nodejs    22 [d]    common, development, ...
+>
+> $ sudo dnf module reset nodejs -y
+> $ sudo dnf module enable nodejs:22 -y
+> $ sudo dnf install -y nodejs npm
+>
+> # ★ 模組串流一次只能啟用一個版本
 > ```
 
-## 基礎設定
+> [!warning] 不要用發行版內建的 `nodejs` 套件
+> ```bash
+> # ❌ Ubuntu 24.04 內建的版本
+> $ sudo apt install nodejs
+> $ node -v
+> v18.19.1          # ★★ 已經 EOL 了
+>
+> # ★ 而且 Ubuntu 的 nodejs 套件【不含 npm】，要另外裝
+> ```
+> **一律用 NodeSource 或 nvm/fnm。**
 
-<!-- TODO: 待撰寫 — 最小可運作設定，逐段解釋 -->
+### ② nvm（開發機）
 
-## 進階設定與調校
+```bash
+# ═══ 安裝 ═══
+$ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh -o /tmp/nvm.sh
+$ less /tmp/nvm.sh                           # ★ 先看過
+$ bash /tmp/nvm.sh
+$ source ~/.bashrc
 
-<!-- TODO: 待撰寫 -->
+$ nvm --version
+0.40.1
+
+# ═══ 安裝與切換版本 ═══
+$ nvm ls-remote --lts | tail -20
+$ nvm install --lts                    # 最新的 LTS
+$ nvm install 22
+$ nvm install 20
+$ nvm use 22
+$ nvm alias default 22                 # ★ 設定預設版本
+
+$ nvm ls
+->     v22.11.0
+       v20.18.0
+default -> 22 (-> v22.11.0)
+node -> stable (-> v22.11.0)
+
+# ═══ ★ 依專案自動切換 ═══
+$ cd myproject
+$ echo "22.11.0" > .nvmrc
+$ nvm use                              # 讀取 .nvmrc
+Found '/home/user/myproject/.nvmrc' with version <22.11.0>
+Now using node v22.11.0
+
+# ★ 自動切換（加進 ~/.bashrc）
+$ cat >> ~/.bashrc <<'EOF'
+# nvm 自動切換
+cdnvm() {
+    cd "$@" || return
+    if [ -f .nvmrc ]; then
+        nvm use >/dev/null 2>&1 || nvm install
+    fi
+}
+alias cd='cdnvm'
+EOF
+```
+
+> [!danger] 正式環境不要用 nvm ★★
+> ```
+> nvm 的原理：
+>   · 把 node 裝在 ~/.nvm/versions/node/vXX/bin/
+>   · 用 shell function 修改 PATH
+>     → ★★ 【只在互動式 shell 中有效】
+>
+> systemd service 中：
+>   ExecStart=/usr/bin/node app.js
+>     → ★ 找不到（PATH 中沒有 nvm 的路徑）
+>   ExecStart=node app.js
+>     → ★★ 【失敗】（systemd 不會載入 ~/.bashrc）
+>
+> cron 中：
+>   * * * * * node script.js
+>     → ★★ 【失敗】（同樣的原因）
+> ```
+>
+> **若一定要在 systemd 中用 nvm 的 node**：
+> ```ini
+> [Service]
+> # ★ 寫【絕對路徑】
+> ExecStart=/home/deploy/.nvm/versions/node/v22.11.0/bin/node /var/www/app/server.js
+> Environment="PATH=/home/deploy/.nvm/versions/node/v22.11.0/bin:/usr/bin:/bin"
+> ```
+> **但這樣升級 node 版本時要改 service 檔** —— 很容易忘記。
+>
+> **★ 正式環境用 NodeSource 裝在 `/usr/bin/node`。**
+
+### ③ fnm（★ 比 nvm 快很多）
+
+```bash
+# ═══ 安裝 ═══
+$ curl -fsSL https://fnm.vercel.app/install -o /tmp/fnm.sh
+$ less /tmp/fnm.sh
+$ bash /tmp/fnm.sh
+
+# 或用 cargo / brew
+# $ cargo install fnm
+
+$ cat >> ~/.bashrc <<'EOF'
+eval "$(fnm env --use-on-cd --shell bash)"
+EOF
+$ source ~/.bashrc
+
+# ═══ 使用（指令與 nvm 幾乎相同）═══
+$ fnm install --lts
+$ fnm install 22
+$ fnm use 22
+$ fnm default 22
+$ fnm list
+
+# ★ --use-on-cd 讓它自動讀取 .nvmrc / .node-version
+$ cd myproject     # 自動切換到 .nvmrc 指定的版本
+```
+
+```
+fnm vs nvm：
+  · fnm 用 Rust 寫，【啟動 shell 快 10-40 倍】
+    （nvm 是 shell script，每次開 terminal 要跑數百行）
+  · 相容 .nvmrc
+  · 指令幾乎相同
+★ 開發機建議用 fnm
+```
+
+---
+
+## `corepack`：管理套件管理器的版本
+
+```bash
+# ★ Node 16.9+ 內建（但預設可能沒啟用）
+$ corepack --version
+0.29.4
+
+$ sudo corepack enable
+$ sudo corepack enable pnpm yarn
+
+# ★ 現在 pnpm / yarn 會依專案的設定自動使用對應版本
+$ cd myproject
+$ cat package.json | jq .packageManager
+"pnpm@9.12.3"
+
+$ pnpm --version
+9.12.3                    # ★ 自動使用專案指定的版本
+```
+
+```json
+// package.json
+{
+    "packageManager": "pnpm@9.12.3+sha512.abc123...",
+    "engines": {
+        "node": ">=22.0.0 <23.0.0",
+        "pnpm": ">=9.0.0"
+    }
+}
+```
+
+> [!tip] `packageManager` 欄位確保團隊一致
+> ```
+> 沒有它：
+>   開發者 A 用 pnpm 8.x → lock 檔格式 v6
+>   開發者 B 用 pnpm 9.x → lock 檔格式 v9
+>     → 【每次 commit 都在改 lock 檔】
+>
+> 有 corepack + packageManager：
+>   所有人（含 CI）自動使用同一個版本
+> ```
+>
+> ```bash
+> # ★ 設定
+> $ corepack use pnpm@9.12.3
+> # 這會更新 package.json 的 packageManager 欄位
+> ```
+
+> [!warning] Node 25 之後 corepack 可能不再內建
+> Node.js 團隊已宣布考慮把 corepack 從核心中移除。
+> 屆時需要單獨安裝：
+> ```bash
+> $ npm install -g corepack
+> ```
+> **動筆時請確認你使用的 Node 版本的狀況。**
+
+---
+
+## 正式環境的完整安裝
+
+```bash
+#!/usr/bin/env bash
+# 正式環境的 Node.js 安裝
+set -euo pipefail
+NODE_MAJOR="${1:-22}"
+
+echo "═══ 安裝 Node.js $NODE_MAJOR ═══"
+
+echo -e "\n【1】★ 確認是偶數版本（LTS）"
+if [ $((NODE_MAJOR % 2)) -ne 0 ]; then
+    echo "  ✗✗ $NODE_MAJOR 是奇數版本，永遠不會進入 LTS，不適合正式環境"
+    exit 1
+fi
+echo "  ✓ 偶數版本"
+
+echo -e "\n【2】加入 NodeSource"
+curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o /tmp/nodesource.sh
+echo "  ★ 安裝腳本已下載，內容摘要："
+head -20 /tmp/nodesource.sh | sed 's/^/    /'
+read -rp "  確認要執行嗎？(y/N) " ans
+[ "$ans" = "y" ] || { echo "  已中止"; exit 1; }
+sudo -E bash /tmp/nodesource.sh
+rm -f /tmp/nodesource.sh
+
+sudo apt install -y nodejs
+
+echo -e "\n【3】驗證"
+echo "  node: $(node -v)"
+echo "  npm:  $(npm -v)"
+echo "  路徑: $(which node)"
+apt policy nodejs 2>/dev/null | head -3 | sed 's/^/  /'
+
+echo -e "\n【4】啟用 corepack"
+sudo corepack enable 2>/dev/null && echo "  ✓ corepack 已啟用" \
+  || echo "  ⚠ corepack 不可用（Node 版本可能太舊或已移除）"
+
+echo -e "\n【5】★ 建立專用的執行使用者"
+id nodeapp >/dev/null 2>&1 || \
+  sudo useradd -r -m -d /var/lib/nodeapp -s /usr/sbin/nologin nodeapp
+echo "  ✓ nodeapp"
+
+echo -e "\n【6】★ npm 的安全設定"
+sudo npm config set audit-level moderate --global
+sudo npm config set fund false --global
+sudo npm config set update-notifier false --global
+# ★ 不要以 root 執行安裝腳本
+sudo npm config set ignore-scripts false --global    # 見 02 篇的討論
+
+echo -e "\n【7】全域套件的安裝位置"
+echo "  prefix: $(npm config get prefix)"
+echo "  ★ 全域套件裝在 /usr/lib/node_modules（需要 sudo）"
+
+echo -e "\n【8】檢查"
+node -e 'console.log("Node.js 運作正常:", process.version, process.platform, process.arch)'
+echo "  記憶體上限: $(node -e 'console.log((require("v8").getHeapStatistics().heap_size_limit/1048576).toFixed(0) + " MB")')"
+
+echo -e "\n✓ 完成"
+```
+
+---
+
+## 多版本共存（正式環境）
+
+> [!tip] 正式環境需要多版本時的做法
+> ```
+> 情境：舊系統跑 Node 18，新系統跑 Node 22
+>
+> ❌ 不要用 nvm（systemd 相容性問題）
+>
+> ✅ 方式一：★ 用容器隔離（最乾淨）
+>    每個應用在自己的容器中，各自帶自己的 Node 版本
+>
+> ✅ 方式二：官方 tarball 裝在不同路徑
+> ```
+
+```bash
+# ═══ 方式二：多版本並存 ═══
+$ NODE_VER=v22.11.0
+$ curl -fsSLO "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-linux-x64.tar.xz"
+$ curl -fsSLO "https://nodejs.org/dist/$NODE_VER/SHASUMS256.txt"
+$ curl -fsSLO "https://nodejs.org/dist/$NODE_VER/SHASUMS256.txt.sig"
+
+# ★ 驗證雜湊
+$ sha256sum -c SHASUMS256.txt --ignore-missing
+node-v22.11.0-linux-x64.tar.xz: 確定
+
+# ★ 驗證簽章（更嚴謹）
+$ gpg --keyserver hkps://keys.openpgp.org --recv-keys 4ED778F539E3634C779C87C6D7062848A1AB005C
+$ gpg --verify SHASUMS256.txt.sig SHASUMS256.txt
+
+$ sudo mkdir -p /opt/node
+$ sudo tar -xJf "node-$NODE_VER-linux-x64.tar.xz" -C /opt/node
+$ sudo mv "/opt/node/node-$NODE_VER-linux-x64" "/opt/node/$NODE_VER"
+
+$ /opt/node/v22.11.0/bin/node -v
+v22.11.0
+
+# ★ 建立穩定的符號連結（升級時只要改這個）
+$ sudo ln -sfn /opt/node/v22.11.0 /opt/node/current
+$ /opt/node/current/bin/node -v
+```
+
+```ini
+# ★ systemd service 使用特定版本
+# /etc/systemd/system/app.service
+[Unit]
+Description=Nuxt SSR App
+After=network.target
+
+[Service]
+Type=simple
+User=nodeapp
+Group=nodeapp
+WorkingDirectory=/var/www/app/current
+
+# ★ 用符號連結，升級時只要改 /opt/node/current 指向
+Environment="NODE_ENV=production"
+Environment="PATH=/opt/node/current/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="HOST=127.0.0.1"
+Environment="PORT=3000"
+EnvironmentFile=-/var/www/app/shared/.env
+
+ExecStart=/opt/node/current/bin/node .output/server/index.mjs
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=app
+
+# ★ 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/app/shared/storage /var/www/app/shared/tmp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false      # ★ Node 的 JIT 需要，不能設 true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+# 資源限制
+LimitNOFILE=65535
+MemoryMax=1G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+$ sudo systemctl daemon-reload
+$ sudo systemctl enable --now app
+$ sudo systemctl status app
+$ sudo journalctl -u app -f
+```
+
+> [!warning] `MemoryDenyWriteExecute=true` 會讓 Node 無法啟動
+> ```
+> Node.js 的 V8 引擎需要【可寫可執行的記憶體】來做 JIT 編譯
+>   → MemoryDenyWriteExecute=true 會直接讓程序崩潰
+>
+> 症狀：
+>   FATAL ERROR: v8::internal::...
+>   或 Illegal instruction (core dumped)
+> ```
+> **這個選項對 Node.js 應用必須設成 `false`（或不設）。**
+
+---
+
+## 版本升級
+
+```bash
+#!/usr/bin/env bash
+# Node.js 版本升級（★ 漸進式）
+set -euo pipefail
+OLD="${1:?舊版本，例如 20}"
+NEW="${2:?新版本，例如 22}"
+
+echo "═══ Node.js $OLD → $NEW 升級 ═══"
+
+echo -e "\n【1】★ 檢查專案的相容性宣告"
+for p in /var/www/*/current/package.json; do
+    [ -e "$p" ] || continue
+    echo "  ── $p ──"
+    jq -r '.engines.node // "（未宣告 engines.node）"' "$p" | sed 's/^/    node: /'
+done
+
+echo -e "\n【2】★ 檢查原生模組（升級 Node 主版本時必須重編）"
+for d in /var/www/*/current; do
+    [ -d "$d/node_modules" ] || continue
+    N=$(find "$d/node_modules" -name '*.node' 2>/dev/null | wc -l)
+    [ "$N" -gt 0 ] && {
+        echo "  ⚠ $d 有 $N 個原生模組【升級後必須 npm rebuild】"
+        find "$d/node_modules" -name '*.node' 2>/dev/null | \
+          sed 's|.*/node_modules/||; s|/.*||' | sort -u | head -10 | sed 's/^/      /'
+    }
+done
+
+echo -e "\n【3】在測試環境安裝新版"
+cat <<EOF
+  # 用官方 tarball 並存安裝（不影響現有版本）
+  NODE_VER=\$(curl -s https://nodejs.org/dist/index.json | \\
+    jq -r '[.[] | select(.version | startswith("v$NEW."))][0].version')
+  echo "最新的 v$NEW.x：\$NODE_VER"
+
+  curl -fsSLO "https://nodejs.org/dist/\$NODE_VER/node-\$NODE_VER-linux-x64.tar.xz"
+  curl -fsSLO "https://nodejs.org/dist/\$NODE_VER/SHASUMS256.txt"
+  sha256sum -c SHASUMS256.txt --ignore-missing
+
+  sudo mkdir -p /opt/node
+  sudo tar -xJf "node-\$NODE_VER-linux-x64.tar.xz" -C /opt/node
+  sudo mv "/opt/node/node-\$NODE_VER-linux-x64" "/opt/node/\$NODE_VER"
+EOF
+
+echo -e "\n【4】★ 用新版重建並測試"
+cat <<'EOF'
+  cd /var/www/app/current
+  export PATH=/opt/node/v22.11.0/bin:$PATH
+  node -v
+
+  # ★ 原生模組必須重建
+  rm -rf node_modules
+  npm ci --omit=dev            # 或 pnpm install --frozen-lockfile --prod
+
+  # 跑測試
+  npm test
+
+  # 建置
+  npm run build
+
+  # ★ 用新版啟動測試（不同的 port）
+  PORT=3001 node .output/server/index.mjs &
+  curl -sI http://127.0.0.1:3001/
+EOF
+
+echo -e "\n【5】★ 切換（改符號連結 + restart）"
+cat <<'EOF'
+  sudo ln -sfn /opt/node/v22.11.0 /opt/node/current
+  sudo systemctl restart app
+
+  # ★ 回退只要改回去
+  sudo ln -sfn /opt/node/v20.18.0 /opt/node/current
+  sudo systemctl restart app
+EOF
+
+echo -e "\n【6】升級後的檢查清單"
+cat <<'EOF'
+  □ node -v 是新版
+  □ 應用正常啟動（journalctl -u app -n 50）
+  □ 沒有 DeprecationWarning（node --trace-deprecation）
+  □ 原生模組正常（沒有 NODE_MODULE_VERSION 錯誤）
+  □ 記憶體用量正常（新版 V8 的行為可能不同）
+  □ 效能沒有退化（壓測比對）
+  □ 觀察兩週後才移除舊版
+EOF
+```
+
+> [!danger] 升級 Node 主版本時原生模組必須重建
+> ```
+> Error: The module '/app/node_modules/bcrypt/lib/binding/napi-v3/bcrypt_lib.node'
+> was compiled against a different Node.js version using
+> NODE_MODULE_VERSION 108. This version of Node.js requires
+> NODE_MODULE_VERSION 127.
+> ```
+>
+> **解法**：
+> ```bash
+> $ rm -rf node_modules
+> $ npm ci                      # ★ 重新安裝並編譯
+> # 或
+> $ npm rebuild
+> ```
+>
+> **常見的原生模組**：`bcrypt`、`sharp`、`canvas`、`better-sqlite3`、
+> `node-sass`、`@prisma/engines`、`sqlite3`。
+> **CI/CD 中要確保建置環境與正式環境的 Node 版本一致。**
+
+---
 
 ## 完整實戰範例
 
-<!-- TODO: 待撰寫 — 完整設定檔另存於 `_設定檔範例/` 並在此引用 -->
+### 環境檢查腳本
+
+```bash
+#!/usr/bin/env bash
+# /usr/local/bin/node-env-check
+echo "═══ Node.js 環境檢查 ═══"
+
+echo -e "\n【1】版本"
+if command -v node >/dev/null; then
+    V=$(node -v)
+    MAJOR=$(echo "$V" | grep -oP 'v\K\d+')
+    echo "  node: $V  ($(which node))"
+    echo "  npm:  $(npm -v 2>/dev/null || echo '未安裝')"
+
+    # ★ 檢查是否為 LTS
+    if [ $((MAJOR % 2)) -ne 0 ]; then
+        echo "  ⚠⚠ 奇數版本【永遠不會進入 LTS，不適合正式環境】"
+    else
+        echo "  ✓ 偶數版本"
+    fi
+
+    # ★ 檢查是否 EOL
+    LTS=$(curl -s --max-time 5 https://nodejs.org/dist/index.json 2>/dev/null | \
+          jq -r "[.[] | select(.version | startswith(\"v${MAJOR}.\"))][0].lts" 2>/dev/null)
+    [ "$LTS" = "false" ] && echo "  ⚠ 此版本不是 LTS"
+    [ "$MAJOR" -lt 20 ] && echo "  ⚠⚠ 版本過舊【可能已 EOL，有已知漏洞】"
+else
+    echo "  ✗ 未安裝 Node.js"
+    exit 1
+fi
+
+echo -e "\n【2】安裝方式"
+NP=$(readlink -f "$(which node)")
+case "$NP" in
+    /usr/bin/node|/usr/local/bin/node)
+        echo "  ✓ 系統套件（$NP）—— ★ 適合正式環境"
+        apt policy nodejs 2>/dev/null | grep -A1 '已安裝\|Installed' | sed 's/^/    /'
+        ;;
+    */.nvm/*)
+        echo "  ⚠⚠ nvm（$NP）"
+        echo "    ★ systemd 與 cron 中無法直接使用，正式環境建議改用 NodeSource"
+        ;;
+    */.fnm/*|*/fnm*)
+        echo "  ⚠ fnm（$NP）—— 同 nvm 的問題"
+        ;;
+    /opt/node/*)
+        echo "  ✓ 官方 tarball（$NP）"
+        [ -L /opt/node/current ] && echo "    current -> $(readlink /opt/node/current)"
+        ;;
+    *)  echo "  ○ $NP" ;;
+esac
+
+echo -e "\n【3】套件管理器"
+for pm in npm pnpm yarn; do
+    command -v "$pm" >/dev/null && printf '  %-6s %s\n' "$pm" "$($pm --version 2>/dev/null)"
+done
+command -v corepack >/dev/null && echo "  corepack $(corepack --version)" \
+  || echo "  ○ corepack 不可用"
+
+echo -e "\n【4】★ 專案的版本宣告"
+for p in /var/www/*/current/package.json ./package.json; do
+    [ -e "$p" ] || continue
+    echo "  ── $(dirname "$p") ──"
+    jq -r '"    engines.node: \(.engines.node // "（未宣告）")
+    packageManager: \(.packageManager // "（未宣告）")"' "$p" 2>/dev/null
+    D=$(dirname "$p")
+    [ -f "$D/.nvmrc" ] && echo "    .nvmrc: $(cat "$D/.nvmrc")"
+    [ -f "$D/.node-version" ] && echo "    .node-version: $(cat "$D/.node-version")"
+done
+
+echo -e "\n【5】★ 原生模組"
+for d in /var/www/*/current .; do
+    [ -d "$d/node_modules" ] || continue
+    N=$(find "$d/node_modules" -name '*.node' 2>/dev/null | wc -l)
+    [ "$N" -gt 0 ] && {
+        echo "  $d：$N 個原生模組（★ 升級 Node 主版本時要 npm rebuild）"
+        find "$d/node_modules" -name '*.node' 2>/dev/null | \
+          sed 's|.*/node_modules/||; s|/.*||' | sort -u | head -5 | sed 's/^/    - /'
+    }
+done
+
+echo -e "\n【6】執行中的 Node 程序"
+ps -eo pid,user,rss,etime,args --sort=-rss 2>/dev/null | grep -E '[n]ode' | head -10 | \
+  awk '{printf "  PID %-7s %-10s %7.1f MB  %-10s %s\n", $1, $2, $3/1024, $4, substr($0, index($0,$5), 60)}'
+
+echo -e "\n【7】systemd 服務"
+systemctl list-units --type=service --all 2>/dev/null | grep -iE 'node|nuxt|next|pm2' | \
+  sed 's/^/  /' || echo "  （沒有）"
+
+echo -e "\n【8】★ 監聽的 port"
+sudo ss -tlnp 2>/dev/null | grep -i node | while read -r _ _ _ _ addr _; do
+    if [[ "$addr" == 127.0.0.1:* ]] || [[ "$addr" == "[::1]":* ]]; then
+        echo "  ✓ $addr（只監聽本機）"
+    else
+        echo "  ⚠⚠ $addr 【外部可直接連到 Node，應該只綁 127.0.0.1】"
+    fi
+done
+
+echo -e "\n【9】記憶體設定"
+node -e '
+const v8 = require("v8");
+const s = v8.getHeapStatistics();
+console.log("  heap 上限:", (s.heap_size_limit/1048576).toFixed(0), "MB");
+console.log("  ★ 預設約為系統記憶體的一部分；可用 --max-old-space-size 調整");
+' 2>/dev/null
+
+echo -e "\n【10】環境變數"
+echo "  NODE_ENV: ${NODE_ENV:-（未設定）★ 正式環境應為 production}"
+echo "  NODE_OPTIONS: ${NODE_OPTIONS:-（未設定）}"
+```
+
+---
 
 ## 常見錯誤與排錯
 
-| 現象 | 原因 | 解法 |
+| 現象／錯誤 | 原因 | 解法 |
 | --- | --- | --- |
-|  |  |  |
+| **`node: command not found`（systemd 中）** ★★ | **nvm 只在互動式 shell 有效** | 用 NodeSource；或 service 中寫絕對路徑 |
+| **cron 中 node 找不到** ★ | 同上 | 寫絕對路徑 `/usr/bin/node` |
+| **`NODE_MODULE_VERSION` 不符** ★★ | 升級 Node 後原生模組沒重建 | `rm -rf node_modules && npm ci` |
+| 發行版內建的 node 太舊 | Ubuntu/Debian 的套件落後 | 用 NodeSource |
+| Ubuntu 的 nodejs 沒有 npm | 發行版拆成兩個套件 | `apt install npm`；或用 NodeSource |
+| **奇數版本用在正式環境** ★ | 不知道版本規則 | **只用偶數版本的 LTS** |
+| **`MemoryDenyWriteExecute` 導致崩潰** ★ | V8 的 JIT 需要 W+X 記憶體 | systemd 中設成 `false` |
+| `EACCES` 安裝全域套件 | 權限 | 用 `sudo`；或改 npm prefix 到家目錄 |
+| **記憶體不足（OOM）** | heap 上限太小 | `--max-old-space-size=2048`；或 systemd `MemoryMax` |
+| `JavaScript heap out of memory` | 同上 | 同上；或找出記憶體洩漏 |
+| pnpm/yarn 版本不一致 | 沒用 corepack | `corepack enable` + `packageManager` 欄位 |
+| **多台機器 lock 檔一直變** | 套件管理器版本不同 | `packageManager` 欄位 |
+| **Node 監聽 0.0.0.0** ★ | 沒設 HOST | `HOST=127.0.0.1`；反向代理在前 |
+| 升級後效能變差 | V8 的行為變更 | 壓測比對；檢查 GC 設定 |
+
+### 排查
+
+```bash
+# 【1】確認 node 的真實路徑
+$ which node
+$ readlink -f "$(which node)"
+$ type -a node
+
+# 【2】systemd 中的環境
+$ systemctl show app -p Environment
+$ sudo systemctl cat app
+
+# 【3】測試 systemd 能不能找到 node
+$ sudo systemd-run --uid=nodeapp --pty /usr/bin/env node -v
+
+# 【4】原生模組的版本
+$ node -p "process.versions.modules"
+127
+$ find node_modules -name '*.node' | head -5
+
+# 【5】記憶體
+$ node -e 'console.log(require("v8").getHeapStatistics())'
+$ ps -o pid,rss,args -C node
+
+# 【6】看應用日誌
+$ sudo journalctl -u app -n 100 --no-pager
+$ sudo journalctl -u app -f
+```
+
+---
 
 ## 安全性注意事項
 
-> [!warning] 注意
-> <!-- TODO: 待撰寫 -->
+> [!danger] 安裝腳本要先看過再執行
+> ```bash
+> # ❌ 危險
+> $ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+>
+> # ✅ 先下載、檢視、再執行
+> $ curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/setup.sh
+> $ less /tmp/setup.sh
+> $ sudo -E bash /tmp/setup.sh
+> ```
+> **官方 tarball 更應該驗證雜湊與 GPG 簽章**：
+> ```bash
+> $ sha256sum -c SHASUMS256.txt --ignore-missing
+> $ gpg --verify SHASUMS256.txt.sig SHASUMS256.txt
+> ```
+
+> [!warning] Node 應用只監聽 127.0.0.1
+> ```javascript
+> // ❌ 預設可能監聽所有介面
+> app.listen(3000);
+>
+> // ✅ 只監聽本機
+> app.listen(3000, '127.0.0.1');
+> ```
+> ```bash
+> # Nuxt / Nitro
+> $ HOST=127.0.0.1 PORT=3000 node .output/server/index.mjs
+>
+> # Next.js
+> $ next start -H 127.0.0.1 -p 3000
+> ```
+> ```bash
+> # ★ 驗證
+> $ sudo ss -tlnp | grep node
+> LISTEN 0 511 127.0.0.1:3000     # ★ 必須是 127.0.0.1
+> $ sudo ufw deny 3000/tcp        # 再加一道
+> ```
+> **否則使用者可以繞過 Nginx** —— 繞過 TLS、限流、WAF、安全標頭。
+
+> [!tip] systemd 的加固選項
+> ```ini
+> NoNewPrivileges=true          # ★ 無法提權
+> PrivateTmp=true               # ★ 獨立的 /tmp
+> ProtectSystem=strict          # ★ 整個檔案系統唯讀
+> ProtectHome=true              # ★ 看不到 /home
+> ReadWritePaths=/var/www/app/shared/storage      # ★ 只有這裡可寫
+> ProtectKernelTunables=true
+> ProtectKernelModules=true
+> RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+> RestrictNamespaces=true
+> LockPersonality=true
+> RestrictSUIDSGID=true
+> MemoryDenyWriteExecute=false  # ★★ Node 必須是 false（V8 JIT）
+> LimitNOFILE=65535
+> MemoryMax=1G                  # ★ 防止 OOM 拖垮整台機器
+> ```
+> ```bash
+> # ★ 檢視加固分數
+> $ systemd-analyze security app.service
+> ```
+
+> [!warning] 及早規劃版本升級
+> ```
+> Node.js 的支援週期：
+>   Current 6 個月 → Active LTS 12 個月 → Maintenance LTS 12 個月 → EOL
+>   ★ 從發布到 EOL 約 30 個月
+>
+> 建議：
+>   · 每半年檢視一次版本狀態
+>   · 【Maintenance LTS 階段就開始規劃升級】
+>   · EOL 之後【不要】繼續使用
+> ```
+> ```bash
+> # 加進例行巡檢
+> $ node -v
+> $ node -e 'const m=+process.version.slice(1).split(".")[0];
+>   console.log(m < 20 ? "⚠ 版本過舊，可能已 EOL" : "✓")'
+> ```
+
+---
 
 ## 速查表
 
-| 指令 / 設定項 | 說明 | 範例 |
-| --- | --- | --- |
-|  |  |  |
+### 版本策略
+
+```
+偶數版本（20/22/24）→ ★ 會進 LTS，正式環境用這個
+奇數版本（21/23）   → ★★ 永遠不會進 LTS，只有 6 個月支援
+
+Current(6月) → Active LTS(12月) → Maintenance LTS(12月) → EOL
+                ^^^^^^^^^^^^^^^ ★ 正式環境
+```
+
+### 三種安裝
+
+```bash
+# ★ 正式環境：NodeSource
+curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/s.sh
+less /tmp/s.sh && sudo -E bash /tmp/s.sh    # ★ 先看過
+sudo apt install -y nodejs
+
+# 開發機：fnm（比 nvm 快 10-40 倍）
+curl -fsSL https://fnm.vercel.app/install -o /tmp/f.sh && bash /tmp/f.sh
+eval "$(fnm env --use-on-cd --shell bash)"
+fnm install --lts && fnm default 22
+
+# 多版本共存（正式環境）：官方 tarball
+sudo tar -xJf node-v22.11.0-linux-x64.tar.xz -C /opt/node
+sudo ln -sfn /opt/node/v22.11.0 /opt/node/current    # ★ 升級只改這個
+```
+
+```
+★★ 正式環境【不要用 nvm】—— systemd 與 cron 中找不到 node
+```
+
+### systemd service
+
+```ini
+[Service]
+User=nodeapp
+WorkingDirectory=/var/www/app/current
+Environment="NODE_ENV=production"
+Environment="PATH=/opt/node/current/bin:/usr/bin:/bin"
+Environment="HOST=127.0.0.1"          # ★ 只監聽本機
+Environment="PORT=3000"
+ExecStart=/opt/node/current/bin/node .output/server/index.mjs
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/app/shared/storage
+MemoryDenyWriteExecute=false          # ★★ Node 必須 false（V8 JIT）
+LimitNOFILE=65535
+MemoryMax=1G
+```
+
+### corepack
+
+```bash
+sudo corepack enable
+corepack use pnpm@9.12.3        # 更新 package.json 的 packageManager
+```
+```json
+{ "packageManager": "pnpm@9.12.3", "engines": { "node": ">=22 <23" } }
+```
+
+### 升級
+
+```
+① 檢查 engines.node 與原生模組
+② 官方 tarball 並存安裝（驗證雜湊與簽章）
+③ ★ rm -rf node_modules && npm ci（原生模組必須重建）
+④ 跑測試 + 用不同 port 啟動驗證
+⑤ ln -sfn /opt/node/新版 /opt/node/current && systemctl restart
+⑥ ★ 回退只要改回符號連結
+⑦ 觀察兩週後移除舊版
+```
+
+### 排查
+
+```bash
+readlink -f "$(which node)"                     # 真實路徑
+sudo systemd-run --uid=nodeapp --pty node -v    # systemd 找得到嗎
+node -p "process.versions.modules"              # 原生模組 ABI 版本
+node -e 'console.log(require("v8").getHeapStatistics())'
+sudo ss -tlnp | grep node                       # ★ 應為 127.0.0.1
+sudo journalctl -u app -n 100
+systemd-analyze security app.service            # 加固分數
+```
+
+| 錯誤 | 原因 |
+| --- | --- |
+| `node: command not found`（systemd） | **nvm 只在互動式 shell 有效** |
+| `NODE_MODULE_VERSION 不符` | **原生模組要 `npm ci` 重建** |
+| `JavaScript heap out of memory` | `--max-old-space-size=2048` |
+| V8 崩潰 / Illegal instruction | **`MemoryDenyWriteExecute` 要設 false** |
+
+---
 
 ## 練習題
 
-> [!question]- 練習 1
-> <!-- TODO: 待撰寫 -->
+> [!question]- 練習 1：nvm 在 systemd 中的問題
+> 1. 用 nvm 安裝 Node 22
+> 2. `which node` → 路徑是什麼？
+> 3. 建立一個簡單的 HTTP server
+> 4. 寫一個 systemd service，`ExecStart=node server.js`
+> 5. `systemctl start` → **失敗了嗎？錯誤訊息是什麼？**
+> 6. 改成絕對路徑 → 成功了嗎？
+> 7. **升級 node 版本後，service 還能用嗎？**
+> 8. 改用 NodeSource + `/usr/bin/node`，重做一次
+
+> [!question]- 練習 2：原生模組的 ABI 問題
+> 1. `npm install bcrypt`（或 `sharp`）
+> 2. `node -p "process.versions.modules"` 記下 ABI 版本
+> 3. `find node_modules -name '*.node'`
+> 4. **切換到不同主版本的 Node**
+> 5. 執行應用 → **看到 `NODE_MODULE_VERSION` 錯誤了嗎？**
+> 6. `npm rebuild` 或 `rm -rf node_modules && npm ci`
+> 7. **確認可以運作**
+> 8. 想想這對 CI/CD 建置環境的意義
+
+> [!question]- 練習 3：systemd 加固
+> 1. 建立一個 Node 應用的 systemd service（不加任何加固選項）
+> 2. `systemd-analyze security app.service` → **分數是多少？**
+> 3. **逐一加上加固選項**，每加一項就 restart 並確認應用正常
+> 4. **加上 `MemoryDenyWriteExecute=true`** → 發生什麼事？
+> 5. 改成 `false`
+> 6. **最終分數是多少？**
+> 7. 測試 `ProtectSystem=strict` 下應用能不能寫入 log
+
+> [!question]- 練習 4：完整升級演練
+> 1. 現有 Node 20 的環境
+> 2. 用官方 tarball 並存安裝 Node 22（**驗證雜湊與 GPG 簽章**）
+> 3. 用新版重建 `node_modules` 並跑測試
+> 4. 用不同的 port 啟動驗證
+> 5. 切換符號連結 + restart
+> 6. **模擬「發現問題要回退」** —— 需要幾秒？
+> 7. 記錄整個流程的中斷時間
+
+> [!question]- 練習 5：綁定位址驗證
+> 1. 啟動一個 Node 應用，**不指定 HOST**
+> 2. `sudo ss -tlnp | grep node` → 監聽在哪？
+> 3. **從另一台機器 `curl http://伺服器IP:3000/`** → 連得到嗎？
+> 4. 這時候有 TLS 嗎？有限流嗎？有安全標頭嗎？
+> 5. 設定 `HOST=127.0.0.1` 並重啟
+> 6. **重測** —— 外部連不到了吧？
+> 7. 加上 `ufw deny 3000/tcp`
+
+---
 
 ## 小測驗
 
-<!-- 最多 10 題，針對關鍵細節與易錯觀念 -->
+Q1. **Node.js 的偶數與奇數版本有什麼差別？正式環境該用哪種**？
 
-Q1. 
-Q2. 
-Q3. 
+Q2. **NodeSource / nvm / fnm 三種安裝方式各適合什麼場景**？
+
+Q3. **為什麼正式環境不該用 nvm？會出什麼問題**？
+
+Q4. **升級 Node 主版本時，為什麼原生模組必須重建？錯誤訊息長什麼樣**？
+
+Q5. **`corepack` 與 `packageManager` 欄位解決什麼問題**？
+
+Q6. **systemd service 中 `MemoryDenyWriteExecute=true` 為什麼會讓 Node 崩潰**？
+
+Q7. **Node 應用為什麼要只監聽 `127.0.0.1`？不這樣做的後果是什麼**？
+
+Q8. **多版本共存時，用符號連結（`/opt/node/current`）有什麼好處**？
+
+Q9. **安裝 Node 時應該做哪些安全驗證**？
+
+Q10. **Node.js 的支援週期是多久？該在什麼時候開始規劃升級**？
 
 > [!question]- 測驗答案
-> **Q1.** 
-> **Q2.** 
-> **Q3.** 
+> **Q1.** **偶數版本（20、22、24）會進入 LTS（長期支援）**，
+> 從發布起經過 Current(6 個月) → **Active LTS(12 個月)** →
+> Maintenance LTS(12 個月) → EOL，總共約 30 個月的支援。
+> **奇數版本（21、23）永遠不會進入 LTS，只有 6 個月的支援**，
+> 而且可能包含實驗性的 breaking change。
+> **正式環境一律用「偶數版本的 Active LTS」。**
+>
+> **Q2.** **NodeSource（apt/dnf）** —— **正式環境** ——
+> 裝在 `/usr/bin/node`，是系統套件，**systemd 與 cron 都找得到**，
+> 有自動安全更新；缺點是一台機器只能一個版本。
+> **nvm** —— **開發機** —— 多版本共存、依專案自動切換（`.nvmrc`）；
+> 缺點是**依賴 shell 環境，systemd 與 cron 中不可靠**，而且 shell 啟動較慢。
+> **fnm** —— **開發機（更好的選擇）** —— 功能與 nvm 幾乎相同、相容 `.nvmrc`，
+> 但用 Rust 寫，**shell 啟動快 10-40 倍**。
+> 另外**官方 tarball** 適合正式環境的多版本共存（配合符號連結）。
+>
+> **Q3.** 因為 **nvm 的原理是「用 shell function 修改 `PATH`」，
+> 只在互動式 shell 中有效**：
+> ```
+> systemd service：ExecStart=node app.js
+>   → ★★ 失敗（systemd 不會載入 ~/.bashrc，PATH 中沒有 nvm 的路徑）
+>
+> cron：* * * * * node script.js
+>   → ★★ 失敗（同樣的原因）
+> ```
+> 若一定要用，**service 中必須寫絕對路徑**
+> （`/home/deploy/.nvm/versions/node/v22.11.0/bin/node`），
+> 但**升級 node 版本時要記得改 service 檔** —— 很容易忘記造成事故。
+> **正式環境應該用 NodeSource（`/usr/bin/node`）或官方 tarball + 符號連結。**
+>
+> **Q4.** 因為**原生模組（用 C++ 寫、編譯成 `.node` 檔）是針對特定的
+> Node.js ABI（`NODE_MODULE_VERSION`）編譯的** ——
+> 不同主版本的 Node 有不同的 ABI，二進位不相容。
+> **錯誤訊息**：
+> ```
+> Error: The module '/app/node_modules/bcrypt/.../bcrypt_lib.node'
+> was compiled against a different Node.js version using
+> NODE_MODULE_VERSION 108. This version of Node.js requires
+> NODE_MODULE_VERSION 127.
+> ```
+> **解法**：`rm -rf node_modules && npm ci`（或 `npm rebuild`）。
+> **常見的原生模組**：`bcrypt`、`sharp`、`canvas`、`better-sqlite3`、`sqlite3`、
+> `@prisma/engines`。
+> **CI/CD 的建置環境必須與正式環境使用相同的 Node 主版本。**
+>
+> **Q5.** 解決**「團隊成員與 CI 使用不同版本的套件管理器，
+> 導致 lock 檔格式不一致、每次 commit 都在改 lock 檔」**的問題。
+> ```json
+> { "packageManager": "pnpm@9.12.3+sha512.abc..." }
+> ```
+> 啟用 `corepack` 後（`sudo corepack enable`），
+> **執行 `pnpm` 時會自動下載並使用專案指定的那個版本**，
+> 所有人（含 CI）都使用同一個版本。
+> 設定方式：`corepack use pnpm@9.12.3`（會自動更新 `package.json`）。
+> 注意 Node 25 之後 corepack 可能不再內建於核心，屆時需要單獨安裝。
+>
+> **Q6.** 因為 **Node.js 的 V8 引擎需要「可寫且可執行」的記憶體頁面來做 JIT 編譯**
+> （把 JavaScript 動態編譯成機器碼）。
+> `MemoryDenyWriteExecute=true` 會**禁止程序建立 W+X 的記憶體映射**，
+> V8 一啟動就會失敗：
+> ```
+> FATAL ERROR: v8::internal::...
+> 或 Illegal instruction (core dumped)
+> ```
+> **對 Node.js 應用這個選項必須設成 `false`（或不設）。**
+> 這是少數「對多數服務有益但對 Node 不適用」的加固選項 ——
+> 其他選項（`NoNewPrivileges`、`ProtectSystem=strict`、`PrivateTmp` 等）都可以且應該啟用。
+>
+> **Q7.** 因為若 Node 監聽 `0.0.0.0`，**外部可以直接連到 Node，完全繞過前面的 Nginx**：
+> **繞過 TLS**（明文傳輸）、**繞過限流**、**繞過 WAF**、
+> **繞過安全標頭**、**繞過 IP 封鎖與存取控制**。
+> 更嚴重的是**攻擊者可以偽造 `X-Forwarded-For` 等標頭**，
+> 繞過應用層依 IP 的限制。
+> ```bash
+> HOST=127.0.0.1 PORT=3000 node .output/server/index.mjs
+> sudo ss -tlnp | grep node        # ★ 必須是 127.0.0.1:3000
+> sudo ufw deny 3000/tcp           # 再加一道
+> ```
+>
+> **Q8.** **升級與回退時只要改一個符號連結**：
+> ```bash
+> sudo ln -sfn /opt/node/v22.11.0 /opt/node/current
+> sudo systemctl restart app
+> # ★ 回退
+> sudo ln -sfn /opt/node/v20.18.0 /opt/node/current
+> sudo systemctl restart app
+> ```
+> **systemd service 檔中永遠寫 `/opt/node/current/bin/node`，不需要修改** ——
+> 避免了「升級 Node 後忘記改 service 檔」這個常見的事故。
+> 而且**新舊版本並存**，回退是秒級的，不需要重新下載或安裝。
+>
+> **Q9.** ①**安裝腳本要先下載、檢視、再執行**，
+> 不要用 `curl ... | sudo bash`（供應鏈攻擊的入口）：
+> ```bash
+> curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/setup.sh
+> less /tmp/setup.sh
+> sudo -E bash /tmp/setup.sh
+> ```
+> ②**官方 tarball 要驗證 SHA-256 雜湊**：
+> ```bash
+> sha256sum -c SHASUMS256.txt --ignore-missing
+> ```
+> ③**更嚴謹的話驗證 GPG 簽章**：
+> ```bash
+> gpg --recv-keys 4ED778F539E3634C779C87C6D7062848A1AB005C
+> gpg --verify SHASUMS256.txt.sig SHASUMS256.txt
+> ```
+>
+> **Q10.** **總共約 30 個月**：
+> **Current（6 個月）→ Active LTS（12 個月）→ Maintenance LTS（12 個月）→ EOL**。
+> **應該在「Maintenance LTS 階段」就開始規劃升級** ——
+> 那時候只剩安全性修補，新功能與 bug 修正都不會回溯，
+> 而且距離 EOL 只剩 12 個月。
+> **絕對不要在 EOL 之後繼續使用** —— 之後發現的漏洞都不會修補。
+> 建議每半年檢視一次：
+> ```bash
+> node -e 'const m=+process.version.slice(1).split(".")[0];
+>   console.log(m < 20 ? "⚠ 版本過舊" : "✓")'
+> ```
+
+---
 
 ## 延伸閱讀
 
-- [[02-npm-pnpm-yarn套件管理]]
-- [[03-PM2-程序管理入門]]
+- [[02-npm-pnpm-yarn套件管理]] — 下一步：套件管理器
+- [[03-PM2-程序管理入門]] — PM2 vs systemd
+- [[04-PM2-進階設定與部署]] — cluster 模式與零停機
+- [[00-Vue與Nuxt-索引]] — 前端框架
+- [[17-systemd服務管理]] — systemd 基礎
