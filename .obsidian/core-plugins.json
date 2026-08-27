@@ -24,5 +24,10 @@
   "workspaces": false,
   "canvas": true,
   "sync": false,
-  "publish": false
+  "publish": false,
+  "footnotes": false,
+  "daily-notes": true,
+  "slash-command": false,
+  "bases": true,
+  "webviewer": false
 }
