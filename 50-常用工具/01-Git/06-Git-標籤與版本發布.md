@@ -1,82 +1,1051 @@
 ---
 title: "Git 標籤與版本發布"
-desc: "輕量與附註標籤、語意化版號與發布流程"
-aliases: [tag, release, semver]
+desc: "語意化版號、可追溯的上線標籤，以及與部署流程的串接"
+aliases: [git tag, SemVer, 語意化版號, Release, 版本發布]
 tags: [群組/軟體與開發工具, 工具/git, 主題/版本控制]
 category: 常用工具
-difficulty: 入門
-status: 待撰寫
+difficulty: 進階
+status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[04-Git-遠端協作]]"]
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Git 標籤與版本發布
 
 > [!abstract] 這篇你會學到
-> - 為每次上線打上可追溯的標籤
-> - 採用語意化版號
-> - 把標籤與部署流程串起來
+> - 為每次上線打上**可追溯的標籤**
+> - 採用**語意化版號（SemVer）**，並知道機關環境的變通做法
+> - 分辨**輕量標籤與附註標籤**（以及為什麼正式發布要用後者）
+> - 把**標籤與部署流程串起來**（部署什麼版本、怎麼回退）
+> - 自動產生 **CHANGELOG**
+> - **簽章標籤**確保版本的真實性
+
+> [!tip] 為什麼維運人員需要標籤
+> **標籤回答的是這三個問題**：
+> ```
+> ① 【正式環境現在跑的是哪一版？】
+> ② 【出問題時要退回哪一版？】
+> ③ 【這兩版之間改了什麼？】
+> ```
+>
+> 沒有標籤時，這些問題的答案是「**呃…我查一下 commit**」。
 
 ## 前置知識
 
-- [[04-Git-遠端協作]]
+- [[04-Git-遠端協作]] — push 與遠端管理
+- [[03-Git-分支與合併]] — hotfix 流程
+
+---
 
 ## 觀念說明
 
-<!-- TODO: 待撰寫 — 這個工具解決什麼問題、底層在做什麼 -->
+### 標籤是什麼
 
-## 基礎操作
+> [!note] 標籤是「不會移動的分支」
+> ```
+> 分支：指向某個提交，【會隨著新提交前進】
+> 標籤：指向某個提交，【永遠不動】
+> ```
+>
+> ```bash
+> $ cat .git/refs/tags/v1.2.0
+> a1b2c3d4e5f6789012345678901234567890abcd    # 永遠是這個
+>
+> $ cat .git/refs/heads/main
+> z9y8x7w6v5u4321098765432109876543210fedc    # 會一直往前
+> ```
 
-<!-- TODO: 待撰寫 — 每個指令附「輸入 → 預期輸出」 -->
+### 兩種標籤
 
-> [!info]- Rocky / AlmaLinux（RHEL 系）對照
-> <!-- TODO: 待撰寫 — 套件名、路徑或行為差異 -->
+| | **輕量標籤（Lightweight）** | **附註標籤（Annotated）** |
+| --- | --- | --- |
+| 建立 | `git tag v1.0.0` | **`git tag -a v1.0.0 -m "訊息"`** |
+| 儲存 | 只是一個指標 | **一個完整的 Git 物件** |
+| 含有 | 提交 SHA | **建立者、日期、訊息、可簽章** |
+| 用途 | 臨時標記 | **正式發布** |
+| `git show` | 顯示提交 | **顯示標籤資訊 + 提交** |
 
-## 進階用法
+> [!danger] 正式發布一律用附註標籤
+> **為什麼**：
+> ```
+> 輕量標籤：
+>   $ git show v1.0.0
+>   commit a1b2c3d...              ← 只看得到提交
+>
+> 附註標籤：
+>   $ git show v1.0.0
+>   tag v1.0.0
+>   Tagger: 王小明 <wang@example.gov.tw>
+>   Date:   2026-08-28 14:30:00 +0800
+>
+>   Release v1.0.0
+>
+>   · 新增 API 反向代理
+>   · 修正登入逾時問題
+>   ...                             ← 【誰、什麼時候、發布了什麼】
+>   commit a1b2c3d...
+> ```
+>
+> **稽核時會問「這個版本是誰發布的、什麼時候」** ——
+> 輕量標籤答不出來。
 
-<!-- TODO: 待撰寫 — 組合技、參數深入、與其他工具串接 -->
+---
+
+## 語意化版號（SemVer）
+
+```
+主版號.次版號.修訂號
+ MAJOR.MINOR.PATCH
+   2  .  3  .  1
+```
+
+| 位置 | 何時遞增 | 例子 |
+| --- | --- | --- |
+| **MAJOR 主版號** | **不相容的變更**（破壞性） | API 移除欄位、資料庫結構大改 |
+| **MINOR 次版號** | **向下相容的新功能** | 新增 API 端點、新增設定選項 |
+| **PATCH 修訂號** | **向下相容的錯誤修正** | 修 bug、安全性修補 |
+
+```
+1.0.0 → 1.0.1   修了一個 bug
+1.0.1 → 1.1.0   新增了一個功能
+1.1.0 → 2.0.0   改了 API，舊的呼叫方式失效
+```
+
+### 預發布與建置資訊
+
+```
+1.0.0-alpha         內部測試
+1.0.0-alpha.1
+1.0.0-beta          公開測試
+1.0.0-rc.1          發布候選（Release Candidate）
+1.0.0               正式版
+
+1.0.0+20260828      建置資訊（不影響版本優先序）
+1.0.0-rc.1+build.42
+```
+
+**優先序**：`1.0.0-alpha < 1.0.0-beta < 1.0.0-rc.1 < 1.0.0`
+
+> [!warning] 機關環境的現實：SemVer 常常不適用
+> **SemVer 是為「有外部使用者的軟體」設計的**。
+>
+> **機關的內部系統通常**：
+> - 沒有外部 API 使用者
+> - 「不相容變更」的概念不明顯
+> - 更關心「**什麼時候上線的**」而非「相不相容」
+>
+> **替代方案：日期版號（CalVer）**
+> ```
+> 2026.08.28           年.月.日
+> 2026.08.28.1         同一天的第 2 次發布
+> v2026.08             年.月（月度發布）
+> 115.08.28            民國年（機關可能習慣這個）
+> ```
+>
+> **好處**：
+> - **一眼知道多舊**
+> - **不用爭論「這算 minor 還是 major」**
+> - 與變更管理的時間軸對得起來
+
+> [!tip] 混合方案（推薦給機關）
+> ```
+> v2.3.1-20260828
+> │      └─ 上線日期（維運關心的）
+> └──────── 語意化版號（開發關心的）
+> ```
+> 兩邊的需求都滿足。
+
+---
+
+## 標籤的操作
+
+```bash
+# ===== 建立 =====
+$ git tag v1.0.0                          # 輕量標籤
+$ git tag -a v1.0.0 -m "Release v1.0.0"   # ★ 附註標籤
+$ git tag -a v1.0.0                       # 開編輯器寫多行訊息
+$ git tag -a v1.0.0 a1b2c3d -m "..."      # ★ 為「過去的提交」打標籤
+$ git tag -s v1.0.0 -m "..."              # 簽章標籤（見下方）
+
+# ===== 查看 =====
+$ git tag                                 # 列出全部
+$ git tag -l "v1.*"                       # 篩選
+$ git tag -n                              # 附帶訊息
+$ git tag --sort=-version:refname         # ★ 依版號排序（新到舊）
+$ git tag --sort=-creatordate             # 依建立時間排序
+
+$ git show v1.0.0                         # 標籤詳情
+$ git show v1.0.0 --stat                  # 附帶變更統計
+
+# ===== 推送（★ 標籤【不會】隨 git push 自動推送）=====
+$ git push origin v1.0.0                  # 推送單一標籤
+$ git push origin --tags                  # 推送全部標籤
+$ git push --follow-tags                  # ★ 推送提交 + 附註標籤（推薦）
+
+# 設成預設
+$ git config --global push.followTags true
+
+# ===== 刪除 =====
+$ git tag -d v1.0.0                       # 刪除本地
+$ git push origin --delete v1.0.0         # 刪除遠端
+$ git push origin :refs/tags/v1.0.0       # 舊語法
+
+# ===== 取得遠端標籤 =====
+$ git fetch --tags
+$ git fetch --prune --prune-tags          # 同時清除遠端已刪的標籤
+```
+
+> [!danger] `git push` 不會推送標籤
+> **這是最常見的困惑**：
+> ```
+> $ git tag -a v1.0.0 -m "Release"
+> $ git push
+> Everything up-to-date              ← 【標籤沒有被推上去！】
+>
+> $ git push origin v1.0.0           ← 要明確推送
+> # 或
+> $ git push --follow-tags           ← ★ 推薦：一併推送附註標籤
+> ```
+
+> [!warning] 不要修改已發布的標籤
+> ```
+> 你把 v1.0.0 移到另一個提交（git tag -f）
+>   → 已經 fetch 過的人【不會自動更新】
+>     → 【同一個版號在不同人手上是不同的內容】
+>       → 部署與除錯時完全混亂
+> ```
+>
+> **正確做法：發布新的版號**（v1.0.1），不要動舊的。
+>
+> **萬不得已要改**：
+> ```bash
+> $ git tag -f v1.0.0 <新的 sha>
+> $ git push origin -f v1.0.0
+> # ★ 必須通知所有人：git fetch --tags --force
+> ```
+
+---
+
+## 檢視與比較版本
+
+```bash
+# ===== 目前的程式碼最接近哪個標籤（★ 極實用）=====
+$ git describe --tags
+v1.2.0-5-ga1b2c3d
+│      │ └─ 目前提交的 SHA
+│      └─── 從 v1.2.0 之後又有 5 個提交
+└────────── 最近的標籤
+
+$ git describe --tags --always --dirty
+v1.2.0-5-ga1b2c3d-dirty      # -dirty = 工作區有未提交的修改
+
+$ git describe --tags --abbrev=0
+v1.2.0                       # 只要標籤名
+
+# ===== 兩個版本之間改了什麼（★ 發布說明的來源）=====
+$ git log v1.0.0..v1.1.0 --oneline
+$ git log v1.0.0..v1.1.0 --pretty=format:"- %s (%an)"
+$ git diff v1.0.0..v1.1.0 --stat
+$ git diff v1.0.0..v1.1.0 -- nginx/          # 只看特定目錄
+
+# ===== 某個提交是在哪些標籤之後 =====
+$ git tag --contains a1b2c3d
+v1.1.0
+v1.2.0
+
+# ===== 某個標籤包含哪些提交 =====
+$ git log v1.1.0 --oneline -10
+
+# ===== 找出某個 bug 是在哪個版本引入的 =====
+$ git tag --contains <引入 bug 的提交>
+# → 列出的第一個版本就是「第一個含有這個 bug 的版本」
+
+# ===== 切換到某個版本（★ 會進入 detached HEAD）=====
+$ git checkout v1.0.0
+$ git switch --detach v1.0.0
+
+# ===== 從標籤建立分支（例如做 hotfix）=====
+$ git switch -c hotfix/1567 v1.2.0
+```
+
+> [!tip] `git describe` 是部署腳本的好朋友
+> ```bash
+> # 在應用程式中嵌入版本資訊
+> $ VERSION=$(git describe --tags --always --dirty)
+> $ echo "APP_VERSION=$VERSION" >> .env
+>
+> # 或寫進健康檢查端點
+> $ echo "$VERSION" > public/version.txt
+> $ curl https://example.gov.tw/version.txt
+> v1.2.0-5-ga1b2c3d
+> ```
+> **這樣你隨時都能確認「正式環境跑的是哪一版」。**
+
+---
+
+## 標籤與部署的串接
+
+### 部署腳本
+
+```bash
+#!/usr/bin/env bash
+# /usr/local/sbin/deploy.sh <版本標籤>
+# 依標籤部署，並記錄可回退的版本
+set -euo pipefail
+
+REPO_DIR="/var/www/myproject"
+DEPLOY_USER="www-data"
+TAG="${1:?用法: $0 <版本標籤>  例如: $0 v1.2.0}"
+LOG="/var/log/deploy.log"
+
+exec > >(tee -a "$LOG") 2>&1
+echo "═══════════════════════════════════════"
+echo " 部署 $TAG   $(date '+%F %T')"
+echo " 執行者：${SUDO_USER:-$USER}"
+echo "═══════════════════════════════════════"
+
+cd "$REPO_DIR"
+
+# ========== 【1】記錄目前版本（用於回退）==========
+CURRENT=$(sudo -u "$DEPLOY_USER" git describe --tags --always)
+CURRENT_SHA=$(sudo -u "$DEPLOY_USER" git rev-parse HEAD)
+echo "目前版本：$CURRENT ($CURRENT_SHA)"
+
+# ========== 【2】取得標籤 ==========
+sudo -u "$DEPLOY_USER" git fetch origin --tags --prune
+
+if ! sudo -u "$DEPLOY_USER" git rev-parse "$TAG" >/dev/null 2>&1; then
+  echo "❌ 找不到標籤 $TAG"
+  echo "可用的標籤："
+  sudo -u "$DEPLOY_USER" git tag --sort=-version:refname | head -10
+  exit 1
+fi
+
+# ========== 【3】★ 驗證標籤簽章（若有使用）==========
+if sudo -u "$DEPLOY_USER" git tag -v "$TAG" >/dev/null 2>&1; then
+  echo "✓ 標籤簽章驗證通過"
+else
+  echo "⚠ 標籤未簽章或簽章驗證失敗"
+  # 正式環境可考慮在此 exit 1
+fi
+
+# ========== 【4】顯示本次部署包含哪些變更 ==========
+echo -e "\n【本次變更】$CURRENT → $TAG"
+sudo -u "$DEPLOY_USER" git log --oneline "$CURRENT_SHA..$TAG" | sed 's/^/  /'
+
+echo -e "\n【變更的檔案】"
+sudo -u "$DEPLOY_USER" git diff --stat "$CURRENT_SHA..$TAG" | tail -20
+
+# ========== 【5】確認（互動式部署時）==========
+if [ -t 0 ]; then
+  read -rp $'\n確認部署？(yes/no) ' ans
+  [ "$ans" = "yes" ] || { echo "已取消"; exit 0; }
+fi
+
+# ========== 【6】確認工作區乾淨 ==========
+if ! sudo -u "$DEPLOY_USER" git diff --quiet; then
+  echo "❌ 工作區有未提交的變更："
+  sudo -u "$DEPLOY_USER" git status -s
+  exit 1
+fi
+
+# ========== 【7】切換版本 ==========
+sudo -u "$DEPLOY_USER" git checkout --detach "$TAG"
+
+# ========== 【8】後續動作（依專案類型，見 85 章）==========
+# sudo -u "$DEPLOY_USER" composer install --no-dev --optimize-autoloader
+# sudo -u "$DEPLOY_USER" npm ci && npm run build
+# sudo -u "$DEPLOY_USER" php artisan migrate --force
+# sudo -u "$DEPLOY_USER" php artisan config:cache route:cache view:cache
+# sudo systemctl reload php8.3-fpm
+
+# ========== 【9】記錄版本資訊 ==========
+sudo -u "$DEPLOY_USER" sh -c \
+  "git describe --tags --always > public/version.txt"
+
+# ========== 【10】驗證 ==========
+sleep 2
+if curl -sf -o /dev/null -w '%{http_code}' https://example.gov.tw/health | grep -q 200; then
+  echo "✓ 健康檢查通過"
+else
+  echo "❌ 健康檢查失敗！"
+  echo "回退指令："
+  echo "  sudo -u $DEPLOY_USER git -C $REPO_DIR checkout --detach $CURRENT_SHA"
+  exit 1
+fi
+
+echo -e "\n═══════════════════════════════════════"
+echo " 部署完成：$CURRENT → $TAG"
+echo " 回退指令：$0 $CURRENT"
+echo "═══════════════════════════════════════"
+```
+
+### 發布流程
+
+```bash
+# ========== 【1】確認在正確的分支且是最新的 ==========
+$ git switch main
+$ git pull
+
+# ========== 【2】確認測試通過、CI 是綠的 ==========
+$ gh run list --branch main --limit 3
+
+# ========== 【3】看看這次發布包含什麼 ==========
+$ LAST=$(git describe --tags --abbrev=0)
+$ echo "上一版：$LAST"
+v1.1.0
+
+$ git log "$LAST"..HEAD --oneline
+a1b2c3d feat(nginx): 啟用 HTTP/3
+d4e5f6g fix(php): 修正檔案上傳大小限制
+g7h8i9j docs: 更新部署說明
+
+# ========== 【4】決定版號 ==========
+# 有新功能且向下相容 → MINOR：v1.2.0
+
+# ========== 【5】建立附註標籤 ==========
+$ git tag -a v1.2.0 -m "Release v1.2.0
+
+## 新增功能
+- 啟用 HTTP/3（QUIC）支援
+- 新增檔案上傳進度顯示
+
+## 錯誤修正
+- 修正檔案上傳大小限制未生效的問題（#1234）
+- 修正 API 回應遺失 CORS 標頭的問題（#1245）
+
+## 其他
+- 更新部署說明文件
+
+## 升級注意事項
+- 需要 Nginx 1.25+ 才支援 HTTP/3
+- 部署後需執行 php artisan config:cache
+
+## 相關單號
+#1234 #1245"
+
+# ========== 【6】推送 ==========
+$ git push --follow-tags
+
+# ========== 【7】在平台上建立 Release ==========
+$ gh release create v1.2.0 \
+    --title "v1.2.0" \
+    --notes-from-tag \
+    --verify-tag
+
+# 或自動產生發布說明
+$ gh release create v1.2.0 --generate-notes
+
+# ========== 【8】部署 ==========
+$ ssh web01 'sudo /usr/local/sbin/deploy.sh v1.2.0'
+```
+
+---
+
+## 自動產生 CHANGELOG
+
+> [!tip] 前提：commit 訊息要符合 Conventional Commits
+> 見 [[02-Git-基本工作流程]]。
+
+```bash
+# ===== 方式一：純 Git（無需額外工具）=====
+$ LAST=$(git describe --tags --abbrev=0 HEAD^)
+$ {
+    echo "# v1.2.0 ($(date +%F))"
+    echo ""
+    echo "## 新增功能"
+    git log "$LAST"..HEAD --pretty="- %s (%h)" --grep="^feat"
+    echo ""
+    echo "## 錯誤修正"
+    git log "$LAST"..HEAD --pretty="- %s (%h)" --grep="^fix"
+    echo ""
+    echo "## 效能改善"
+    git log "$LAST"..HEAD --pretty="- %s (%h)" --grep="^perf"
+    echo ""
+    echo "## 其他"
+    git log "$LAST"..HEAD --pretty="- %s (%h)" \
+        --grep="^chore" --grep="^docs" --grep="^refactor"
+  } > CHANGELOG-v1.2.0.md
+```
+
+```bash
+# ===== 方式二：git-cliff（Rust 寫的，設定彈性大）=====
+$ cargo install git-cliff
+# 或下載預編譯版本
+
+$ git cliff --tag v1.2.0 -o CHANGELOG.md
+$ git cliff --unreleased --tag v1.2.0    # 只看未發布的
+```
+
+```toml
+# cliff.toml
+[changelog]
+header = "# 變更記錄\n\n"
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }} ({{ commit.id | truncate(length=7, end="") }})
+{%- endfor %}
+{% endfor %}
+"""
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+commit_parsers = [
+    { message = "^feat", group = "新增功能" },
+    { message = "^fix", group = "錯誤修正" },
+    { message = "^perf", group = "效能改善" },
+    { message = "^refactor", group = "重構" },
+    { message = "^docs", group = "文件" },
+    { message = "^chore", skip = true },
+]
+```
+
+```bash
+# ===== 方式三：GitHub 自動產生 =====
+$ gh release create v1.2.0 --generate-notes
+# GitHub 會依 PR 標題與標籤自動分類
+```
+
+```yaml
+# .github/release.yml —— 設定自動產生的分類
+changelog:
+  categories:
+    - title: 🚀 新增功能
+      labels: [feature, enhancement]
+    - title: 🐛 錯誤修正
+      labels: [bug, fix]
+    - title: 🔒 安全性
+      labels: [security]
+    - title: 📝 文件
+      labels: [documentation]
+    - title: 其他
+      labels: ["*"]
+  exclude:
+    labels: [ignore-for-release]
+```
+
+---
+
+## 簽章標籤
+
+> [!tip] 為什麼要簽章
+> **標籤決定了「部署什麼版本」。**
+>
+> 如果攻擊者能建立標籤，他就能：
+> - 把惡意的提交標記為 `v1.2.1`
+> - **讓自動部署系統部署它**
+>
+> **簽章能確保「這個版本確實是授權的人發布的」。**
+
+```bash
+# ===== 用 SSH 金鑰簽章（Git 2.34+，比 GPG 簡單）=====
+$ git config --global gpg.format ssh
+$ git config --global user.signingkey ~/.ssh/id_ed25519.pub
+$ git config --global tag.gpgSign true
+$ git config --global commit.gpgsign true
+
+# 建立允許的簽章者清單
+$ mkdir -p ~/.config/git
+$ cat > ~/.config/git/allowed_signers <<'EOF'
+wang@example.gov.tw ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+li@example.gov.tw   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+EOF
+$ git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+
+# ===== 建立簽章標籤 =====
+$ git tag -s v1.2.0 -m "Release v1.2.0"
+
+# ===== 驗證 =====
+$ git tag -v v1.2.0
+object a1b2c3d...
+type commit
+tag v1.2.0
+tagger 王小明 <wang@example.gov.tw> 1724832600 +0800
+
+Release v1.2.0
+Good "git" signature for wang@example.gov.tw with ED25519 key SHA256:xxx
+```
+
+```bash
+# ===== 用 GPG 簽章（傳統方式）=====
+$ gpg --full-generate-key
+$ gpg --list-secret-keys --keyid-format=long
+sec   ed25519/ABCD1234EFGH5678 2026-08-28 [SC]
+
+$ git config --global user.signingkey ABCD1234EFGH5678
+$ git config --global tag.gpgSign true
+
+# 匯出公鑰上傳到 GitHub
+$ gpg --armor --export ABCD1234EFGH5678
+```
+
+> [!tip] 在部署腳本中強制驗證
+> ```bash
+> # 只部署經過簽章驗證的標籤
+> if ! git tag -v "$TAG" 2>&1 | grep -q "Good.*signature"; then
+>   echo "❌ 標籤 $TAG 的簽章驗證失敗，拒絕部署"
+>   exit 1
+> fi
+> ```
+> **這能防止「有人偷偷建立標籤讓 CI 部署惡意程式碼」。**
+
+---
 
 ## 完整實戰範例
 
-<!-- TODO: 待撰寫 — 一個可整段照做的情境 -->
+### 機關內部系統的版本管理方案
+
+```
+═══════════════════════════════════════════════════════════
+ 版本標籤規範                              文件編號：STD-010
+═══════════════════════════════════════════════════════════
+【版號格式】
+  v<主>.<次>.<修訂>-<YYYYMMDD>
+  例：v2.3.1-20260828
+
+【遞增規則】
+  主版號：資料庫結構變更 / API 不相容變更 / 需要停機的重大更新
+  次版號：新增功能（向下相容）
+  修訂號：錯誤修正、安全性修補、設定調整
+
+【標籤要求】
+  · 一律使用【附註標籤】（git tag -a）
+  · 【必須簽章】（git tag -s）
+  · 訊息必須包含：
+      - 新增功能
+      - 錯誤修正
+      - 【升級注意事項】（含是否需要停機、是否需要 migration）
+      - 【回退方式】
+      - 相關單號
+
+【發布流程】
+  ① 確認 main 分支 CI 通過
+  ② 確認測試環境驗證完成（附測試紀錄）
+  ③ 填寫變更申請單並取得核准
+  ④ 建立簽章標籤並推送
+  ⑤ 在平台建立 Release
+  ⑥ 依變更時窗部署
+  ⑦ 部署後驗證並記錄
+
+【緊急修正（hotfix）】
+  · 從【正式環境目前的標籤】建立分支
+  · 版號只遞增修訂號
+  · 事後補變更申請單（24 小時內）
+  · ★【必須合併回 main】
+
+【回退】
+  · 部署腳本必須記錄前一版標籤
+  · 回退 = 部署前一版標籤
+  · 涉及資料庫 migration 時，回退前先確認 down migration 可用
+═══════════════════════════════════════════════════════════
+```
+
+### 查詢「正式環境跑的是哪一版」
+
+```bash
+#!/usr/bin/env bash
+# 查詢所有伺服器上跑的版本
+for host in web01 web02 web03; do
+  ver=$(ssh "$host" 'cat /var/www/myproject/public/version.txt 2>/dev/null' || echo "無法取得")
+  sha=$(ssh "$host" 'cd /var/www/myproject && git rev-parse --short HEAD 2>/dev/null' || echo "-")
+  printf "%-8s %-24s %s\n" "$host" "$ver" "$sha"
+done
+```
+
+```
+web01    v1.2.0                   a1b2c3d
+web02    v1.2.0                   a1b2c3d
+web03    v1.1.0                   d4e5f6g      ← ⚠ 版本不一致！
+```
+
+> [!warning] 多台伺服器版本不一致是常見的故障原因
+> **症狀**：
+> - 「有時候正常，有時候出錯」（負載平衡到不同的機器）
+> - 難以重現的問題
+>
+> **對策**：
+> - **部署腳本一次部署所有機器**
+> - **部署後自動驗證所有機器的版本一致**
+> - 監控中加入版本一致性檢查
+
+### 找出「這個 bug 是哪一版引入的」
+
+```bash
+# ===== 方式一：用標籤範圍找 =====
+$ git log v1.1.0..v1.2.0 --oneline -- src/upload.php
+a1b2c3d fix(upload): 調整檔案大小限制    ← 可能是這個
+
+# ===== 方式二：用 git bisect（見 07 篇）=====
+$ git bisect start
+$ git bisect bad v1.2.0        # 這一版有問題
+$ git bisect good v1.1.0       # 這一版沒問題
+# → Git 會二分法讓你測試中間的版本
+
+# ===== 方式三：找出某個提交出現在哪些版本 =====
+$ git tag --contains a1b2c3d
+v1.2.0
+v1.2.1
+# → v1.2.0 是第一個含有這個提交的版本
+```
+
+---
 
 ## 常見錯誤與排錯
 
-| 現象 | 原因 | 解法 |
+| 現象／錯誤 | 原因 | 解法 |
 | --- | --- | --- |
-|  |  |  |
+| **`git push` 後遠端沒有標籤** | **標籤不會隨 push 自動推送** | `git push origin <tag>` 或 **`git push --follow-tags`** |
+| 別人看不到新標籤 | 對方沒 fetch | `git fetch --tags` |
+| **修改了已發布的標籤造成混亂** | 同一版號在不同人手上內容不同 | **不要改已發布的標籤**，發新版號 |
+| 遠端刪了標籤但本地還在 | fetch 不會自動刪 | `git fetch --prune --prune-tags` |
+| **不知道正式環境跑哪一版** | 沒有版本標記 | 部署時寫入 `version.txt`；用 `git describe` |
+| **多台伺服器版本不一致** | 部署沒有一次做完 | 部署腳本涵蓋所有機器 + 部署後驗證一致性 |
+| `git describe` 說找不到標籤 | 淺層 clone 沒有標籤 | `git fetch --tags --unshallow` |
+| 版號該進 MAJOR 還是 MINOR 爭論不休 | 內部系統不適用 SemVer | 考慮改用 **CalVer（日期版號）**或混合方案 |
+| **CHANGELOG 產生出來很亂** | commit 訊息不規範 | 導入 **Conventional Commits** + commit-msg hook |
+| 標籤打在錯的提交上 | 打完才發現 | 未推送：`git tag -d` 重打；已推送：**發新版號** |
+| **有人建立了未授權的標籤** | 沒有簽章與保護 | **簽章標籤** + 平台的 tag protection |
+| checkout 標籤後進入 detached HEAD | 標籤不是分支 | 正常現象；要開發的話 `git switch -c <分支> <tag>` |
+| 回退後資料庫結構不相容 | migration 是單向的 | 回退前確認 **down migration** 可用；見 [[00-部署實戰-索引]] |
+
+---
 
 ## 安全性注意事項
 
-> [!warning] 注意
-> <!-- TODO: 待撰寫 -->
+> [!danger] 標籤是部署的觸發點，必須保護
+> **如果 CI/CD 設定成「推送標籤就自動部署到正式環境」**，
+> 那麼**能建立標籤的人 = 能部署任何程式碼到正式環境的人**。
+>
+> **必做的防護**：
+> ```
+> ① 【平台上啟用 Tag Protection】
+>    GitHub: Settings → Tags → New rule → v*
+>    GitLab: Settings → Repository → Protected tags
+>    → 【只有指定的人或角色能建立/刪除受保護的標籤】
+>
+> ② 【要求簽章標籤】
+>    部署腳本驗證：git tag -v "$TAG"
+>
+> ③ 【部署需要人工核准】
+>    GitHub Environments 的 required reviewers
+>
+> ④ 【部署紀錄可稽核】
+>    誰、什麼時候、部署了哪一版
+> ```
+
+> [!warning] 標籤訊息不要寫敏感資訊
+> **標籤訊息會出現在**：
+> - `git tag -n`
+> - GitHub/GitLab 的 Release 頁面（**可能是公開的**）
+> - CHANGELOG
+> - 自動發送的通知
+>
+> ```
+> ❌ "修正 admin 帳號的密碼驗證（密碼已改為 NewP@ss）"
+> ❌ "修正資料庫連線（改用 10.0.5.30:3306，帳號 root）"
+> ❌ "修正 SQL Injection 弱點於 /admin/report.php 的 id 參數"
+>    ← ⚠ 這等於告訴攻擊者「舊版有這個弱點，在這個位置」
+>
+> ✅ "修正管理介面的驗證邏輯"
+> ✅ "調整資料庫連線設定"
+> ✅ "修正安全性弱點（詳見內部單號 #1234）"
+> ```
+
+> [!tip] 安全性修補的發布說明拿捏
+> **兩難**：
+> - **說太細** → 幫攻擊者找到舊版的弱點
+> - **說太少** → 使用者不知道該不該升級
+>
+> **業界慣例**：
+> ```
+> 【發布當下】
+>   「本版修正一個安全性問題，建議所有使用者升級。
+>     嚴重程度：高」
+>
+> 【一段時間後（例如 30～90 天，等大家都升級了）】
+>   公布完整的技術細節與 CVE 編號
+> ```
+>
+> **機關內部系統**：
+> 弱點細節寫在**內部的變更單**，
+> 標籤訊息只寫「修正安全性問題（單號 #1234）」。
+
+> [!danger] 部署前務必確認標籤指向的內容
+> ```bash
+> # ★ 不要盲目相信標籤名稱
+> $ git tag -v v1.2.0                    # 驗證簽章
+> $ git log v1.1.0..v1.2.0 --oneline     # 看包含哪些提交
+> $ git diff v1.1.0..v1.2.0 --stat       # 看變更了什麼
+> $ git show v1.2.0 --stat               # 看標籤資訊
+>
+> # 特別注意：
+> #   · 有沒有預期外的檔案變更？
+> #   · 有沒有不認識的提交？
+> #   · 提交的作者都是預期的人嗎？
+> ```
+
+---
 
 ## 速查表
 
-| 指令 / 參數 | 說明 | 範例 |
-| --- | --- | --- |
-|  |  |  |
+### 兩種標籤
+
+```
+輕量：git tag v1.0.0              只是指標，臨時用
+附註：git tag -a v1.0.0 -m "..."  ★ 完整物件，含建立者/日期/訊息
+簽章：git tag -s v1.0.0 -m "..."  ★★ 正式發布用
+
+★ 正式發布一律用附註（稽核要問「誰發布的」）
+```
+
+### 語意化版號
+
+```
+MAJOR.MINOR.PATCH
+  │     │     └─ 向下相容的錯誤修正
+  │     └─────── 向下相容的新功能
+  └───────────── 不相容的變更
+
+預發布：1.0.0-alpha < -beta < -rc.1 < 1.0.0
+
+★ 機關內部系統可考慮 CalVer：2026.08.28
+★ 混合方案：v2.3.1-20260828
+```
+
+### 標籤操作
+
+| 目的 | 指令 |
+| --- | --- |
+| 建立附註標籤 | `git tag -a v1.0.0 -m "訊息"` |
+| 為過去的提交打標籤 | `git tag -a v1.0.0 <sha> -m "..."` |
+| 依版號排序 | `git tag --sort=-version:refname` |
+| **推送標籤** | **`git push --follow-tags`** ★ |
+| 取得遠端標籤 | `git fetch --tags` |
+| 清除已刪的標籤 | `git fetch --prune --prune-tags` |
+| 刪除 | `git tag -d` / `git push origin --delete <tag>` |
+
+**`git push` 不會自動推送標籤！**
+
+### 版本查詢
+
+```bash
+git describe --tags                     # v1.2.0-5-ga1b2c3d
+git describe --tags --always --dirty    # 加上 -dirty
+git describe --tags --abbrev=0          # 只要標籤名
+
+git log v1.0.0..v1.1.0 --oneline        # 兩版之間的變更
+git diff v1.0.0..v1.1.0 --stat
+git tag --contains <sha>                # 某提交出現在哪些版本
+```
+
+### 發布流程
+
+```
+① 確認 main 最新且 CI 通過
+② 看 git log <上一版>..HEAD
+③ 決定版號
+④ git tag -s vX.Y.Z -m "完整的發布說明"
+⑤ git push --follow-tags
+⑥ gh release create vX.Y.Z --verify-tag
+⑦ 部署並驗證
+```
+
+### 標籤訊息應包含
+
+```
+## 新增功能
+## 錯誤修正
+## 【升級注意事項】（是否停機、是否需要 migration）
+## 【回退方式】
+## 相關單號
+```
+
+### SSH 金鑰簽章
+
+```bash
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global tag.gpgSign true
+git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+
+git tag -s v1.0.0 -m "..."
+git tag -v v1.0.0              # 驗證
+```
+
+### 部署腳本要點
+
+```
+□ 記錄目前版本（用於回退）
+□ 【驗證標籤簽章】
+□ 顯示本次變更（log + diff --stat）
+□ 確認工作區乾淨
+□ 【寫入 version.txt】
+□ 部署後健康檢查
+□ 【輸出回退指令】
+```
+
+### 安全防護
+
+```
+□ 【平台啟用 Tag Protection】（只有授權者能建立 v* 標籤）
+□ 【要求簽章標籤】，部署時驗證
+□ 【部署需人工核准】
+□ 部署紀錄可稽核
+□ 【標籤訊息不寫弱點細節】（等於告訴攻擊者舊版哪裡有洞）
+```
+
+---
 
 ## 練習題
 
-> [!question]- 練習 1
-> <!-- TODO: 待撰寫 -->
+> [!question]- 練習 1：兩種標籤的差異
+> 1. 建立一個輕量標籤 `test-light` 與附註標籤 `test-annotated`
+> 2. `git show` 兩者，**輸出有什麼不同？**
+> 3. `cat .git/refs/tags/test-light` 與 `.git/refs/tags/test-annotated`
+>    —— **內容一樣嗎？**
+> 4. `git cat-file -t <各自的 SHA>` —— **型別是什麼？**
+> 5. `git tag -n` 分別顯示什麼？
+> 6. 結論：**為什麼正式發布要用附註標籤？**
+
+> [!question]- 練習 2：完整的發布流程
+> 在測試 repo 上：
+> 1. 做幾個符合 Conventional Commits 的提交（feat / fix / docs）
+> 2. 用 `git log <上一版>..HEAD --oneline` 整理變更
+> 3. **建立附註標籤**，訊息包含本篇建議的五個段落
+> 4. `git push --follow-tags`
+> 5. **自動產生 CHANGELOG**（用本篇的純 Git 方式）
+> 6. `git describe --tags` 的輸出是什麼？
+> 7. 再做一個提交，`git describe --tags` 變成什麼？
+
+> [!question]- 練習 3：設計你機關的版本規範
+> 回答這些問題並寫成一頁規範：
+> 1. **用 SemVer 還是 CalVer？為什麼？**
+> 2. 什麼情況遞增主版號？（要具體）
+> 3. **標籤訊息要包含哪些欄位？**
+> 4. **誰有權建立標籤？怎麼限制？**
+> 5. hotfix 的版號怎麼處理？
+> 6. **怎麼知道正式環境跑的是哪一版？**
+> 7. **回退的流程是什麼？涉及 migration 時怎麼辦？**
+
+---
 
 ## 小測驗
 
-<!-- 最多 10 題，針對關鍵細節與易錯觀念 -->
+Q1. **標籤與分支的本質差異是什麼**？
 
-Q1. 
-Q2. 
-Q3. 
+Q2. **輕量標籤與附註標籤有哪五個差異？為什麼正式發布一律用附註標籤**？
+
+Q3. SemVer 的三個數字各在什麼情況遞增？**為什麼機關內部系統常常不適用**？
+
+Q4. **`git push` 會推送標籤嗎？正確的推送方式是什麼**？
+
+Q5. **為什麼「不要修改已發布的標籤」**？
+
+Q6. `git describe --tags` 的輸出 `v1.2.0-5-ga1b2c3d` 各部分代表什麼？它在部署上有什麼用？
+
+Q7. **部署腳本應該包含哪七個要點**？
+
+Q8. **為什麼「多台伺服器版本不一致」是危險的？有什麼症狀與對策**？
+
+Q9. **標籤為什麼需要保護？有哪四項防護措施**？
+
+Q10. **安全性修補的發布說明該怎麼拿捏？業界慣例是什麼**？
 
 > [!question]- 測驗答案
-> **Q1.** 
-> **Q2.** 
-> **Q3.** 
+> **Q1.** **兩者都是「指向某個提交的參照」，
+> 但分支會隨著新提交往前移動，標籤永遠不動。**
+> 實體上分支是 `.git/refs/heads/<名>`（內容會變），
+> 標籤是 `.git/refs/tags/<名>`（內容固定）。
+> 標籤等於「這個時間點的永久書籤」。
+>
+> **Q2.** ①**建立方式**：`git tag v1.0.0` vs `git tag -a v1.0.0 -m "..."`；
+> ②**儲存**：輕量只是一個指標，附註是**一個完整的 Git 物件**；
+> ③**內容**：輕量只有提交 SHA，附註含**建立者、日期、訊息、可簽章**；
+> ④**用途**：輕量用於臨時標記，附註用於正式發布；
+> ⑤**`git show`**：輕量只顯示提交，附註**顯示標籤資訊 + 提交**。
+> **正式發布一律用附註**，是因為**稽核時會問
+> 「這個版本是誰發布的、什麼時候」** —— 輕量標籤答不出來。
+>
+> **Q3.** **MAJOR（主版號）**：不相容的變更（破壞性）；
+> **MINOR（次版號）**：向下相容的新功能；
+> **PATCH（修訂號）**：向下相容的錯誤修正。
+> **機關內部系統常常不適用**，是因為 SemVer 是為
+> **「有外部使用者的軟體」**設計的 ——
+> 機關的內部系統**沒有外部 API 使用者**，
+> 「不相容變更」的概念不明顯，
+> 而且**更關心「什麼時候上線的」而非「相不相容」**。
+> 替代方案是 **CalVer（日期版號，如 `2026.08.28`）**
+> 或混合方案（`v2.3.1-20260828`）。
+>
+> **Q4.** **不會**。`git push` 只推送提交，**標籤不會自動推送** ——
+> 這是最常見的困惑（打了標籤、push 了，但遠端看不到）。
+> 正確方式：`git push origin <tag>`（單一）、
+> `git push origin --tags`（全部）、
+> 或**推薦的 `git push --follow-tags`**（推送提交 + 相關的附註標籤）。
+> 可設 `git config --global push.followTags true` 成為預設。
+>
+> **Q5.** 因為**已經 fetch 過的人不會自動更新標籤** ——
+> 結果是**同一個版號在不同人手上是不同的內容**，
+> 部署與除錯時完全混亂
+> （「我這裡的 v1.0.0 沒有這個 bug 啊」）。
+> **正確做法是發布新的版號**（v1.0.1），不要動舊的。
+> 萬不得已要改，必須 `git tag -f` + `git push -f`，
+> 並**通知所有人執行 `git fetch --tags --force`**。
+>
+> **Q6.** `v1.2.0-5-ga1b2c3d`：
+> **`v1.2.0`** = 最近的標籤；
+> **`5`** = 從那個標籤之後又有 5 個提交；
+> **`ga1b2c3d`** = 目前提交的 SHA（`g` 表示 git）。
+> 部署上的用途：**把它寫進 `version.txt` 或健康檢查端點**，
+> 就能**隨時確認「正式環境跑的是哪一版」**，
+> 加 `--dirty` 還能看出工作區有沒有未提交的修改。
+>
+> **Q7.** ①**記錄目前版本**（用於回退）；
+> ②**驗證標籤簽章**；
+> ③**顯示本次變更**（`git log` + `git diff --stat`）；
+> ④**確認工作區乾淨**；
+> ⑤**寫入 version.txt**；
+> ⑥**部署後健康檢查**；
+> ⑦**輸出回退指令**。
+>
+> **Q8.** 危險在於**負載平衡會把請求送到不同版本的機器**。
+> **症狀**：「有時候正常，有時候出錯」、
+> 難以重現的問題、間歇性的錯誤 ——
+> 這類問題極難除錯，因為現象不穩定。
+> **對策**：①**部署腳本一次部署所有機器**；
+> ②**部署後自動驗證所有機器的版本一致**；
+> ③**監控中加入版本一致性檢查**。
+>
+> **Q9.** 因為**如果 CI/CD 設定成「推送標籤就自動部署到正式環境」，
+> 那麼能建立標籤的人 = 能部署任何程式碼到正式環境的人**。
+> 四項防護：
+> ①**平台上啟用 Tag Protection**（只有指定的人或角色能建立 `v*` 標籤）；
+> ②**要求簽章標籤**，部署腳本用 `git tag -v` 驗證；
+> ③**部署需要人工核准**（GitHub Environments 的 required reviewers）；
+> ④**部署紀錄可稽核**（誰、什麼時候、部署了哪一版）。
+>
+> **Q10.** 兩難是：**說太細會幫攻擊者找到舊版的弱點**
+> （等於公告「舊版在這個檔案的這個參數有 SQL Injection」），
+> **說太少則使用者不知道該不該升級**。
+> **業界慣例**：
+> **發布當下**只寫「本版修正一個安全性問題，
+> 建議所有使用者升級。嚴重程度：高」；
+> **一段時間後（例如 30～90 天，等大家都升級了）**
+> 才公布完整的技術細節與 CVE 編號。
+> **機關內部系統**：弱點細節寫在**內部的變更單**，
+> 標籤訊息只寫「修正安全性問題（單號 #1234）」。
+
+---
 
 ## 延伸閱讀
 
-- [[06-部署自動化]]
-- [[08-Git-伺服器端與自動部署]]
+- [[04-Git-遠端協作]] — 推送與平台操作
+- [[08-Git-伺服器端與自動部署]] — 標籤觸發自動部署
+- [[09-Git-團隊規範與實戰情境]] — 分支與發布策略
+- [[00-部署實戰-索引]] — 完整的部署流程與回退
+- [[03-弱點與修補管理流程]] — 安全性修補的發布時機
+- [[10-資安政策文件與制度]] — 把版本規範寫成文件

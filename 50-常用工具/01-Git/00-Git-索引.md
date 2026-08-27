@@ -25,7 +25,7 @@ updated: 2026-08-27
 | 03 | [[03-Git-分支與合併]] | 進階 | 分支的本質、merge 與 rebase 的選擇，以及冷靜解衝突 |
 | 04 | [[04-Git-遠端協作]] | 進階 | fetch 與 pull 的差別、多 remote 管理、SSH 金鑰與 PR 流程 |
 | 05 | [[05-Git-回復與重寫歷史]] | 進階 | reset、revert、restore、reflog，以及徹底清除誤提交的機密 |
-| 06 | [[06-Git-標籤與版本發布]] | 入門 | 輕量與附註標籤、語意化版號與發布流程 |
+| 06 | [[06-Git-標籤與版本發布]] | 進階 | 語意化版號、可追溯的上線標籤，以及與部署流程的串接 |
 | 07 | [[07-Git-進階技巧]] | 進階 | stash、worktree、cherry-pick、bisect、submodule 與 hooks |
 | 08 | [[08-Git-伺服器端與自動部署]] | 進階 | 自架 bare repo、post-receive hook 觸發部署與權限規劃 |
 | 09 | [[09-Git-團隊規範與實戰情境]] | 進階 | 分支策略、commit 訊息規範與十個真實情境的處置方式 |
