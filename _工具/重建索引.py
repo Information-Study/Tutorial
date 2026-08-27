@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 VAULT = Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", ".obsidian", "_範本", "_附件", "_設定檔範例", "_工具"}
+SKIP_DIRS = {".git", ".obsidian", "_範本", "_附件", "_設定檔範例", "_工具", "_規劃", "_表單範本"}
 TABLE_HEADS = ("## 子分類", "## 篇章列表")
 TAIL_HEAD = "## 建議閱讀順序"
 

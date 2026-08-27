@@ -5,12 +5,14 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 VAULT = Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", ".obsidian", "_範本", "_附件", "_設定檔範例", "_工具"}
+SKIP_DIRS = {".git", ".obsidian", "_範本", "_附件", "_設定檔範例", "_工具", "_規劃", "_表單範本"}
 
 by_section = defaultdict(Counter)
 moc = 0
 for p in sorted(VAULT.rglob("*.md")):
     if any(part in SKIP_DIRS for part in p.parts):
+        continue
+    if p.parent == VAULT:          # 根目錄的 README.md / CLAUDE.md 不是教學
         continue
     text = p.read_text(encoding="utf-8")
     if re.search(r"^type:\s*MOC", text, re.M):
