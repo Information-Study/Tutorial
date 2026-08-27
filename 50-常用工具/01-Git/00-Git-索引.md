@@ -20,8 +20,8 @@ updated: 2026-08-27
 
 | # | 篇章 | 難度 | 說明 |
 | --- | --- | --- | --- |
-| 01 | [[01-Git-觀念與初次設定]] | 入門 | 版本控制的心智模型、工作區/暫存區/儲存庫三區與第一次設定 |
-| 02 | [[02-Git-基本工作流程]] | 入門 | add / commit / status / diff / log 的日常循環與 .gitignore |
+| 01 | [[01-Git-觀念與初次設定]] | 入門 | 三個區域的心智模型，以及一次設定好用一輩子的 Git 環境 |
+| 02 | [[02-Git-基本工作流程]] | 入門 | add → commit → push 的完整循環，以及讀懂 status 與 diff |
 | 03 | [[03-Git-分支與合併]] | 入門 | 分支的本質、merge 與 rebase 的差別、衝突處理實戰 |
 | 04 | [[04-Git-遠端協作]] | 入門 | remote / clone / fetch / pull / push 與追蹤分支、PR 流程 |
 | 05 | [[05-Git-回復與重寫歷史]] | 進階 | restore / reset / revert / commit --amend / rebase -i 與 reflog 救援 |
