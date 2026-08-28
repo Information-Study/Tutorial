@@ -519,6 +519,14 @@ SET PERSIST password_require_current  = ON;     -- 改密碼要先驗舊密碼
 SHOW VARIABLES LIKE 'validate_password.%';
 ```
 
+預期輸出（節錄，★★★ `policy` 與 `length` 是稽核最常問的兩項）：
+
+```text
+| validate_password.check_user_name    | ON     |
+| validate_password.length             | 14     |
+| validate_password.policy             | STRONG |
+```
+
 > [!danger] ★★★★ `default_password_lifetime` 設成 90 會讓應用在半夜掛掉
 > 這個參數對**所有帳號**生效，包含 `app_rw` 這種應用帳號。
 > 密碼到期後，應用連進來會收到：
@@ -1392,6 +1400,8 @@ sudo bash -n /usr/local/bin/mysql-hardening-check.sh && echo "語法檢查通過
 ### 步驟 1：取得整改前基線
 
 ```bash
+# ★★★ 報告目錄含帳號清單，權限收緊到 750
+sudo install -d -m 750 -o root -g root /var/log/db-audit
 sudo mysql-hardening-check.sh --out /var/log/db-audit/before_$(date +%F).txt
 sudo cat /var/log/db-audit/before_$(date +%F).txt
 ```

@@ -45,14 +45,13 @@ updated: 2026-08-28
 
 ### ★★★★ 先把這件事講死：複寫不是備份
 
-機關導入複寫之後最常見、也最貴的認知錯誤，就是把從庫當成備份，然後把備份排程停掉。
+機關導入複寫後最常見、也最貴的認知錯誤，就是把從庫當成備份，然後把備份排程停掉。
 
 ```text
   09:41:07.000   有人在正式庫下 DROP TABLE members;
   09:41:07.043   主庫 binlog 寫入這個事件
   09:41:07.061   從庫 IO thread 收到
   09:41:07.088   從庫 applier 忠實地執行 → 從庫的 members 也沒了
-
   ★★★★ 全程 0.088 秒。你有兩台機器，但你有零份 members。
 ```
 
@@ -60,20 +59,23 @@ updated: 2026-08-28
 
 | 威脅 | 複寫擋得住嗎 | 備份擋得住嗎 |
 | --- | --- | --- |
-| 主機硬碟故障、電源掛掉 | ★★★★ 可以，切到從庫即可 | 可以，但要重建，RTO 以小時計 |
+| 主機硬碟故障、電源掛掉 | ★★★★ 可以，切到從庫即可 | 可以，但 RTO 以小時計 |
 | 機房斷網、單點失效 | ★★★★ 可以 | 不行（除非有異地備份 + 異地主機） |
 | `DROP TABLE` / `DELETE` 沒加 `WHERE` | ★★★★★ **完全擋不住** | ★★★★★ 可以（PITR 回到誤操作前一秒） |
 | 勒索軟體加密資料檔 | ★★★★★ **完全擋不住**（加密後的寫入照樣同步） | 可以（離線備份） |
 | 應用程式的邏輯 bug 寫爛資料 | ★★★★★ **完全擋不住** | 可以 |
-| 誤刪整台 VM | 可以 | 可以 |
 
 > [!danger] ★★★★★ 導入複寫不能減少任何一次備份
 > 備份策略、備份驗證與**還原演練**全部在 [[05-MySQL-備份與還原]]，
 > 機關層級的災難復原制度見 [[04-備份災難復原與入侵應變]] 與 [[06-災難復原與異地備援]]。
 > 本篇只負責「硬體故障與單點」這一格。
->
-> 本篇後面會給你一個**折衷武器**：**延遲從庫**（`SOURCE_DELAY=3600`）。
-> 它讓你有一小時的緩衝去撈誤刪的資料，但它仍然**不是備份**，只是縮短了 PITR 的痛苦。
+> 後面會給你一個折衷武器 —— **延遲從庫**（`SOURCE_DELAY=3600`），
+> 它讓你有一小時的緩衝去撈誤刪的資料，但它仍然**不是備份**。
+
+★★ 導入複寫只有兩個值得付出一台機器成本的真實動機：**分流**（報表與備份查詢移到從庫）
+與**頂替**（主機掛了 30 分鐘內有一台能上）。
+如果真實需求是「資料不能不見」，答案是備份 + 異地；
+如果是「查詢很慢」，先看 [[04-效能瓶頸排查方法論]] —— 加從庫不會讓缺索引的查詢變快。
 
 ### 資料是怎麼流過去的
 
@@ -138,17 +140,17 @@ updated: 2026-08-28
 
 ### ★★★★ GTID vs 傳統 binlog file + position
 
-這是本篇最重要的一個選型決定，而且**新建系統沒有第二個選項**。
+這是本篇最重要的選型決定，而且**新建系統沒有第二個選項**。
 
 | | 傳統 file + position | **GTID（本篇主線）** |
 | --- | --- | --- |
 | 從庫怎麼記錄進度 | 「我讀到 `mysql-bin.000123` 的第 197845 個 byte」 | 「我執行過 `3e11fa47-…:1-45210`」 |
-| 換一台主庫時 | ★★★★ 要人工去新主庫上算出**對應的 file + position**，算錯就資料錯亂 | `SOURCE_AUTO_POSITION=1`，從庫自己協商 |
+| 換一台主庫時 | ★★★★ 要人工到新主庫算出**對應的 file + position**，算錯就資料錯亂 | `SOURCE_AUTO_POSITION=1`，從庫自己協商 |
 | 判斷主從是否追平 | 只能比對數字，跨機器沒有意義 | `GTID_SUBTRACT()` 一句話得到答案 |
-| 跳過一筆壞交易 | `sql_replica_skip_counter=1`（很容易跳錯筆數） | 注入空交易，**跳過的是哪一筆有明確紀錄** |
+| 跳過一筆壞交易 | `sql_replica_skip_counter=1`（很容易跳錯筆數） | 注入空交易，**跳過哪一筆有明確紀錄** |
 | 級聯／多來源 | 極易出錯 | 天然支援 |
 
-GTID 長這樣，`來源 UUID:交易序號`：
+GTID 的格式是 `來源 UUID:交易序號`：
 
 ```text
 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45210
@@ -161,38 +163,23 @@ GTID 長這樣，`來源 UUID:交易序號`：
 > **新建一律 `gtid_mode=ON` + `enforce_gtid_consistency=ON`。**
 
 > [!info]- 既有系統從 position 模式切到 GTID 的注意事項
-> MySQL 8.0 支援**線上**啟用 GTID，不需要停機，但必須**依序**在
-> **所有節點（主庫與全部從庫）**上做，而且中間任一步失敗都要停下來查：
->
+> MySQL 8.0 支援線上啟用，不需停機，但必須**依序**在**所有節點（主庫與全部從庫）**上做：
 > ```sql
-> -- 【1】全部節點：先確認沒有違反 GTID 一致性的語句
-> SET @@GLOBAL.ENFORCE_GTID_CONSISTENCY = WARN;
-> -- 觀察數天，錯誤日誌若出現 "Statement violates GTID consistency" 就要先改應用
->
-> -- 【2】全部節點：轉成強制
+> SET @@GLOBAL.ENFORCE_GTID_CONSISTENCY = WARN;   -- 觀察數天，錯誤日誌若出現
+>                                                 -- "Statement violates GTID consistency" 先改應用
 > SET @@GLOBAL.ENFORCE_GTID_CONSISTENCY = ON;
->
-> -- 【3】全部節點，依序執行（每一步都要等所有節點的 ONGOING_ANONYMOUS_TRANSACTION_COUNT 歸零）
-> SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE;
-> SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE;
-> -- 等到所有節點：SELECT @@GLOBAL.GTID_OWNED; 與匿名交易計數都為空
+> SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE;        -- 每一步都要等所有節點的
+> SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE;         -- 匿名交易計數歸零才做下一步
 > SET @@GLOBAL.GTID_MODE = ON;
->
-> -- 【4】從庫上改用 auto position
-> STOP REPLICA;
-> CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1;
-> START REPLICA;
+> -- 從庫上最後改用 auto position
+> STOP REPLICA; CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1; START REPLICA;
 > ```
->
-> ★★★★ 三個常見地雷：
-> **①** `CREATE TABLE ... SELECT` 與**非交易式表（MyISAM）與 InnoDB 混在同一個交易**
-> 會違反 GTID 一致性，`ENFORCE_GTID_CONSISTENCY=ON` 之後直接報錯 —— 所以要先用 `WARN` 觀察。
-> **②** 所有節點的 `gtid_mode` 差距不能超過一階（`OFF` ↔ `OFF_PERMISSIVE` ↔ `ON_PERMISSIVE` ↔ `ON`），
-> 跳著改會直接被拒絕。
-> **③** 改完記得把 `gtid_mode` 與 `enforce_gtid_consistency` **寫進 my.cnf**，
-> 否則下次重啟就打回原形，而且從庫會用 auto position 連一台沒開 GTID 的主庫 → 直接斷線。
-
----
+> ★★★★ 三個地雷：
+> **①** `CREATE TABLE ... SELECT` 與「非交易式表（MyISAM）與 InnoDB 混在同一個交易」
+> 會違反 GTID 一致性 —— 所以要先用 `WARN` 觀察。
+> **②** 所有節點的 `gtid_mode` 差距不能超過一階，跳著改會被直接拒絕。
+> **③** 改完**一定要寫進 my.cnf**，否則重啟就打回原形，
+> 而從庫會用 auto position 連一台沒開 GTID 的主庫 → 直接斷線。
 
 ## 環境準備與安裝
 
@@ -246,40 +233,31 @@ mysql  Ver 8.0.43-0ubuntu0.24.04.1 for Linux on x86_64 ((Ubuntu))
 安裝與初始化（`mysql_secure_installation`、`bind-address`）見 [[01-MySQL-安裝與初始化]]。
 
 > [!warning] ★★★ MySQL 8.4 LTS 把舊語法**移除**了，不是「不建議」而已
-> 從 MySQL 8.0.22 起 `MASTER/SLAVE` 系列被 `SOURCE/REPLICA` 取代，舊語法還能用；
+> 8.0.22 起 `MASTER/SLAVE` 系列被 `SOURCE/REPLICA` 取代，舊語法還能用；
 > 但到了 **MySQL 8.4 LTS，`CHANGE MASTER TO`、`START SLAVE`、`STOP SLAVE`、
 > `SHOW SLAVE STATUS`、`SHOW MASTER STATUS`、`RESET MASTER` 全部直接移除**。
->
-> 影響最大的其實不是你手打的指令，而是**你抄來的監控腳本、Zabbix/Nagios 樣板、
-> 交接文件裡的 SOP**。升級到 8.4 之前，先 `grep -ri "slave status" /usr/local/bin /etc/zabbix`。
-> 本篇一律用**新語法**，下方 callout 給完整對照。
+> 影響最大的不是你手打的指令，而是**監控腳本、Zabbix 樣板、交接文件裡的 SOP**。
+> 升級前先 `grep -ri "slave status" /usr/local/bin /etc/zabbix`。本篇一律用新語法。
 
 > [!info]- ★★★ MySQL 8.0.22+ / 8.4 / MariaDB 完整術語對照表
 > | 舊語法（≤8.0.21、MariaDB 全系列） | 新語法（8.0.22+，8.4 唯一可用） |
 > | --- | --- |
 > | `CHANGE MASTER TO` | `CHANGE REPLICATION SOURCE TO` |
-> | `MASTER_HOST` / `MASTER_PORT` | `SOURCE_HOST` / `SOURCE_PORT` |
-> | `MASTER_USER` / `MASTER_PASSWORD` | `SOURCE_USER` / `SOURCE_PASSWORD` |
-> | `MASTER_AUTO_POSITION` | `SOURCE_AUTO_POSITION` |
-> | `MASTER_SSL` / `MASTER_SSL_CA` | `SOURCE_SSL` / `SOURCE_SSL_CA` |
-> | `MASTER_DELAY` | `SOURCE_DELAY` |
+> | `MASTER_HOST` / `MASTER_PORT` / `MASTER_USER` | `SOURCE_HOST` / `SOURCE_PORT` / `SOURCE_USER` |
+> | `MASTER_AUTO_POSITION` / `MASTER_SSL` / `MASTER_DELAY` | `SOURCE_AUTO_POSITION` / `SOURCE_SSL` / `SOURCE_DELAY` |
 > | `START SLAVE` / `STOP SLAVE` | `START REPLICA` / `STOP REPLICA` |
 > | `RESET SLAVE ALL` | `RESET REPLICA ALL` |
-> | `SHOW SLAVE STATUS` | `SHOW REPLICA STATUS` |
-> | `SHOW SLAVE HOSTS` | `SHOW REPLICAS` |
+> | `SHOW SLAVE STATUS` / `SHOW SLAVE HOSTS` | `SHOW REPLICA STATUS` / `SHOW REPLICAS` |
 > | `SHOW MASTER STATUS` | `SHOW BINARY LOG STATUS`（8.2+；8.0 仍用舊名） |
 > | `RESET MASTER` | `RESET BINARY LOGS AND GTIDS` |
-> | `slave_parallel_workers` | `replica_parallel_workers` |
-> | `log_slave_updates` | `log_replica_updates` |
-> | `slave_skip_errors` | `replica_skip_errors` |
-> | `sql_slave_skip_counter` | `sql_replica_skip_counter` |
+> | `slave_parallel_workers` / `log_slave_updates` | `replica_parallel_workers` / `log_replica_updates` |
+> | `slave_skip_errors` / `sql_slave_skip_counter` | `replica_skip_errors` / `sql_replica_skip_counter` |
 > | `Slave_IO_Running` / `Slave_SQL_Running` | `Replica_IO_Running` / `Replica_SQL_Running` |
 > | `Seconds_Behind_Master` | `Seconds_Behind_Source` |
-> | `Last_IO_Error` / `Last_SQL_Error` | 沒改名 |
 > | 權限 `REPLICATION SLAVE` | ★★★ **沒有改名**，仍然是 `REPLICATION SLAVE` |
 >
-> ★★★★ 最後一列是最容易寫錯的：語法全改了，**權限名稱卻沒改**。
-> 打 `GRANT REPLICATION REPLICA ON *.* TO ...` 會直接語法錯誤。
+> ★★★★ 最後一列最容易寫錯：語法全改了、**權限名稱卻沒改**，
+> 打 `GRANT REPLICATION REPLICA ...` 會直接語法錯誤。
 
 > [!info]- Rocky / AlmaLinux（RHEL 系）對照
 > ```bash
@@ -290,18 +268,14 @@ mysql  Ver 8.0.43-0ubuntu0.24.04.1 for Linux on x86_64 ((Ubuntu))
 > ```
 > | 項目 | Ubuntu 24.04 | Rocky / AlmaLinux 9 |
 > | --- | --- | --- |
-> | 服務名 | `mysql` | `mysqld` |
-> | 主設定檔 | `/etc/mysql/my.cnf` | `/etc/my.cnf` |
+> | 服務名 / 主設定檔 | `mysql` / `/etc/mysql/my.cnf` | `mysqld` / `/etc/my.cnf` |
 > | 客製片段目錄 | `/etc/mysql/mysql.conf.d/` | `/etc/my.cnf.d/` |
-> | datadir | `/var/lib/mysql` | `/var/lib/mysql` |
 > | 錯誤日誌 | `/var/log/mysql/error.log` | `/var/log/mysql/mysqld.log` |
-> | 強制存取控制 | ★★★★ **AppArmor** | ★★★★ **SELinux** |
-> | 防火牆 | `ufw` | `firewalld` |
+> | 強制存取控制 / 防火牆 | ★★★★ AppArmor / `ufw` | ★★★★ SELinux / `firewalld` |
 >
 > ```bash
 > # ★★★★ SELinux：binlog / relay log 放到非預設路徑一定要補標籤，否則 MySQL 起不來
-> sudo semanage fcontext -a -t mysqld_db_t "/data/binlog(/.*)?"
-> sudo restorecon -Rv /data/binlog
+> sudo semanage fcontext -a -t mysqld_db_t "/data/binlog(/.*)?" && sudo restorecon -Rv /data/binlog
 > sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" \
 >   source address="10.0.1.12/32" port protocol="tcp" port="3306" accept'
 > sudo firewall-cmd --reload
@@ -309,22 +283,14 @@ mysql  Ver 8.0.43-0ubuntu0.24.04.1 for Linux on x86_64 ((Ubuntu))
 
 > [!info]- MariaDB 差異（機關的 RHEL 主機預設常常是這個）
 > ★★★★ **MariaDB 的複寫與 MySQL 8.0 不相容，兩者不能互為主從。**
-> 動手前先確認你面前的是哪一個：
->
-> ```bash
-> mysql -e "SELECT VERSION();"
-> # 10.11.x-MariaDB → 是 MariaDB，本篇語法要換
-> ```
+> 動手前先 `mysql -e "SELECT VERSION();"`，看到 `10.11.x-MariaDB` 就要換語法：
 >
 > | 主題 | MySQL 8.0/8.4 | MariaDB 10.x/11.x |
 > | --- | --- | --- |
-> | 指令 | `CHANGE REPLICATION SOURCE TO` | ★★★ **維持 `CHANGE MASTER TO`** |
-> | 狀態 | `SHOW REPLICA STATUS` | ★★★ **維持 `SHOW SLAVE STATUS`** |
-> | GTID 格式 | `uuid:序號` | `domain-server_id-序號`（例：`0-11-45210`），**兩者完全不同** |
-> | 啟用 GTID | `gtid_mode=ON` + `enforce_gtid_consistency=ON` | 沒有這兩個變數，改用 `CHANGE MASTER TO MASTER_USE_GTID=slave_pos` |
-> | 並行 applier | `replica_parallel_workers` | `slave_parallel_threads` |
-> | 半同步 | 外掛 `rpl_semi_sync_source` | 內建，`rpl_semi_sync_master_enabled=ON` |
-> | `super_read_only` | 有 | 有（10.5+） |
+> | 指令 / 狀態 | `CHANGE REPLICATION SOURCE TO` / `SHOW REPLICA STATUS` | ★★★ 維持 `CHANGE MASTER TO` / `SHOW SLAVE STATUS` |
+> | GTID 格式 | `uuid:序號` | `domain-server_id-序號`（例 `0-11-45210`），**兩者完全不同** |
+> | 啟用 GTID | `gtid_mode=ON` + `enforce_gtid_consistency=ON` | 沒有這兩個變數，改用 `MASTER_USE_GTID=slave_pos` |
+> | 並行 applier / 半同步 | `replica_parallel_workers` / 外掛 | `slave_parallel_threads` / 內建 |
 >
 > ★★★ 本篇的**觀念、判讀方法、切換程序、雙寫風險**在 MariaDB 上完全一樣，
 > 只有指令名稱與 GTID 表示法要換。
@@ -356,117 +322,80 @@ Connection to 10.0.1.11 3306 port [tcp/mysql] succeeded!
 
 ### 【1】主庫設定
 
-Ubuntu 的 `/etc/mysql/my.cnf` 會依序讀 `/etc/mysql/conf.d/` 與 `/etc/mysql/mysql.conf.d/`，
-**同名參數後讀到的贏**。所以客製片段用 `zz-` 開頭，確保排在 `mysqld.cnf` 後面：
+Ubuntu 的 `/etc/mysql/my.cnf` 依序讀 `/etc/mysql/conf.d/` 與 `/etc/mysql/mysql.conf.d/`，
+**同名參數後讀到的贏**，所以客製片段用 `zz-` 開頭確保排在 `mysqld.cnf` 之後：
 
 ```bash
 sudo tee /etc/mysql/mysql.conf.d/zz-replication.cnf > /dev/null << 'EOF'
 [mysqld]
-# ─── 身分 ───────────────────────────────────────────────
 server_id                      = 11        # ★★★ 全叢集唯一，撞號會出現無法解釋的斷線
 report_host                    = db1
-
-# ─── binlog ────────────────────────────────────────────
 log_bin                        = /var/log/mysql/mysql-bin
 binlog_format                  = ROW       # ★★★★ 一定是 ROW，理由見下方
 binlog_row_image               = FULL      # 先用 FULL，確定沒問題再考慮 MINIMAL
-sync_binlog                    = 1         # ★★★★ 每筆交易 fsync binlog，掉電不掉交易
+sync_binlog                    = 1         # ★★★★ 每筆交易 fsync binlog
 innodb_flush_log_at_trx_commit = 1         # ★★★★ 與上一行成對，缺一不可
-
-# ─── binlog 保留 ───────────────────────────────────────
-binlog_expire_logs_seconds     = 1209600   # ★★★★ 14 天。預設 2592000（30 天）
+binlog_expire_logs_seconds     = 1209600   # ★★★★ 14 天（預設 2592000 = 30 天）
 max_binlog_size                = 512M
-
-# ─── GTID ──────────────────────────────────────────────
 gtid_mode                      = ON
 enforce_gtid_consistency       = ON
-log_replica_updates            = ON        # ★★★ 為了將來能降級成從庫，主庫也要開
-
-# ─── 並行 applier 的前置（切換後這台會變從庫）─────────
+log_replica_updates            = ON        # ★★★ 為了將來能降級成從庫
 binlog_transaction_dependency_tracking = WRITESET
 EOF
 
 sudo systemctl restart mysql
-```
-
-驗證：
-
-```bash
-mysql -e "SELECT @@server_id, @@gtid_mode, @@enforce_gtid_consistency,
-                 @@binlog_format, @@sync_binlog, @@binlog_expire_logs_seconds\G"
-```
-
-預期輸出：
-
-```text
-*************************** 1. row ***************************
-               @@server_id: 11
-               @@gtid_mode: ON
-@@enforce_gtid_consistency: ON
-           @@binlog_format: ROW
-             @@sync_binlog: 1
-@@binlog_expire_logs_seconds: 1209600
-```
-
-```bash
+mysql -e "SELECT @@server_id, @@gtid_mode, @@binlog_format, @@sync_binlog,
+                 @@binlog_expire_logs_seconds\G"
 mysql -e "SHOW MASTER STATUS\G"      # MySQL 8.2+ / 8.4 改用 SHOW BINARY LOG STATUS
 ```
 
 預期輸出：
 
 ```text
-*************************** 1. row ***************************
+                  @@server_id: 11
+                  @@gtid_mode: ON
+              @@binlog_format: ROW
+                @@sync_binlog: 1
+ @@binlog_expire_logs_seconds: 1209600
+---
              File: mysql-bin.000003
          Position: 1421
-     Executed_Gtid_Set: 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-8
+Executed_Gtid_Set: 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-8
 ```
 
 > [!danger] ★★★ `server_id` 撞號的症狀特別難查
 > 兩台從庫用同一個 `server_id` 連同一台主庫時，**主庫會把先連的那條 dump thread 踢掉**，
-> 於是兩台從庫輪流斷線重連，錯誤日誌只寫
-> `A replica with the same server_uuid/server_id as this replica has connected to the source`。
+> 於是兩台輪流斷線重連，錯誤日誌只寫
+> `A replica with the same server_uuid/server_id ... has connected to the source`。
 > 你會看到「複寫每隔幾分鐘斷一次、重連後又好了」這種完全不像資料問題的現象。
->
-> **做法**：把 `server_id` 寫進主機建置的標準流程，用固定規則（例如 IP 最後一段）產生，
-> 並登記在資產清冊裡。制度面見 [[08-變更管理流程]]。
+> **做法**：`server_id` 用固定規則（例如 IP 最後一段）產生、寫進主機建置標準流程並登記在資產清冊，
+> 制度面見 [[08-變更管理流程]]。
 
 > [!note] ★★★★ 為什麼 `binlog_format` 一定要 ROW
 > | 格式 | binlog 裡記什麼 | 風險 |
 > | --- | --- | --- |
-> | `STATEMENT` | 原始 SQL 文字 | ★★★★★ `NOW()`、`UUID()`、`RAND()`、`LIMIT` 沒有 `ORDER BY`、觸發器 —— **主從算出不同結果，而且不會報錯**，你要幾個月後對帳才會發現 |
-> | `MIXED` | 平常 STATEMENT，遇到不安全語句才 ROW | ★★★ 判斷規則是黑盒子，出事後難以重建現場 |
+> | `STATEMENT` | 原始 SQL 文字 | ★★★★★ `NOW()`、`UUID()`、`RAND()`、沒有 `ORDER BY` 的 `LIMIT`、觸發器 —— **主從算出不同結果而且不會報錯**，要幾個月後對帳才會發現 |
+> | `MIXED` | 平常 STATEMENT，不安全語句才 ROW | ★★★ 判斷規則是黑盒子，出事後難以重建現場 |
 > | **`ROW`** | 「第 12345 列，這些欄位從 A 變成 B」 | **主從逐列一致**，代價是 binlog 較大 |
 >
-> ROW 的代價很實在：一句 `UPDATE orders SET status=1`（影響 50 萬列）在 STATEMENT 下是
-> 50 個 byte，在 ROW 下是 50 萬列的前後映像。這也是本篇「拆大交易」建議的由來。
-> `binlog_row_image=MINIMAL` 可以只記主鍵與有變動的欄位、大幅縮小 binlog，
-> ★★★ 但 `pt-table-sync` 與部分 CDC 工具需要 `FULL` —— 先用 `FULL`，有量測到問題再調。
+> ROW 的代價很實在：一句 `UPDATE orders SET status=1`（影響 50 萬列）在 STATEMENT 下是 50 個 byte，
+> 在 ROW 下是 50 萬列的前後映像 —— 這正是本篇「拆大交易」建議的由來。
+> `binlog_row_image=MINIMAL` 可大幅縮小 binlog，★★★ 但 `pt-table-sync` 與部分 CDC 工具需要 `FULL`。
 
 > [!danger] ★★★★ `binlog_expire_logs_seconds` 設太短 = 從庫追不回來只能整台重做
 > 從庫離線期間，主庫上的 binlog 是它唯一的補課教材。
-> **binlog 保留時間必須 > 「從庫可能離線的最長時間」+「你重建一台從庫需要的時間」。**
+> **保留時間必須 >「從庫可能離線的最長時間」+「重建一台從庫需要的時間」。**
+> 週五 18:00 從庫當機沒人發現、週一 09:00 才開機 = 離線 63 小時；
+> 若只保留 2 天，需要的 GTID 已被清掉 → `Last_IO_Error 1236 ... has purged binary logs`
+> → ★★★★ 唯一解法是重做整台從庫，資料量大就是好幾個小時的停機。
 >
-> ```text
->   週五 18:00  從庫主機當機，沒人發現
->   週一 09:00  上班發現，開機
->              → 離線 63 小時
->   若 binlog_expire_logs_seconds = 172800（2 天）
->              → 需要的 GTID 已經被清掉
->              → Last_IO_Error 1236: The replica is connecting ... but the source
->                has purged binary logs containing GTIDs that the replica requires
->              → ★★★★ 唯一解法：重做整台從庫（重新 dump / XtraBackup），
->                 資料量大的話要停機好幾個小時
-> ```
->
-> 算法：**連假 4 天 + 重建 8 小時 + 緩衝 2 天 ≈ 14 天**，這就是上面 `1209600` 的由來。
-> 代價是磁碟。用下面這句先估算你每天產生多少 binlog：
->
+> 算法：連假 4 天 + 重建 8 小時 + 緩衝 2 天 ≈ **14 天**，這就是 `1209600` 的由來。
+> 先估算每天產生多少 binlog 再決定磁碟：
 > ```bash
 > mysql -e "SHOW BINARY LOGS;" | awk 'NR>1 {s+=$2} END {print s/1024/1024/1024 " GB"}'
 > ```
->
-> 磁碟真的不夠時，**不要縮短保留時間**，改成「binlog 另外掛一顆磁碟」或
-> 「把舊 binlog 複製到備份儲存」（順便讓 PITR 的可回溯範圍變長，見 [[05-MySQL-備份與還原]]）。
+> 磁碟不夠時**不要縮短保留時間**，改成 binlog 掛獨立磁碟，或把舊 binlog 複製到備份儲存
+> （順便讓 PITR 的可回溯範圍變長，見 [[05-MySQL-備份與還原]]）。
 
 ### 【2】複寫帳號
 
@@ -517,39 +446,23 @@ SHOW GRANTS FOR 'repl'@'10.0.1.%';
 | 停機冷拷貝 datadir | 任意 | 無 | ★★★★ 要停機 |
 
 > [!danger] ★★★ 上百 GB 的庫用 mysqldump 做初始同步會把主庫拖垮
-> `--single-transaction` 會開一個 REPEATABLE READ 的長交易。
-> 500 GB 的庫 dump 六個小時 = 主庫要保留六個小時的 undo 版本，
-> `ibdata1` / undo tablespace 暴增，同時線上查詢因為要走 undo 鏈而變慢。
-> 我看過因此把正式庫磁碟撐爆的案例。
->
-> **超過 50 GB 一律用 XtraBackup，並且排在離峰時段（機關通常是 22:00 之後）。**
-> 排程與公告流程走 [[08-變更管理流程]]。
+> `--single-transaction` 會開一個 REPEATABLE READ 的長交易。500 GB 的庫 dump 六小時 =
+> 主庫要保留六小時的 undo 版本，undo tablespace 暴增，線上查詢因為要走 undo 鏈而變慢，
+> 嚴重時直接把正式庫磁碟撐爆。
+> **超過 50 GB 一律用 XtraBackup，並排在離峰時段**，公告流程走 [[08-變更管理流程]]。
 
 #### 路線 A：mysqldump（小資料量）
 
 ```bash
 # ═══ 在 db2（從庫）上，直接對主庫抓 ═══
-sudo mysqldump \
-  --host=10.0.1.11 --user=backup --password \
+sudo mysqldump --host=10.0.1.11 --user=backup --password \
   --single-transaction \
   --source-data=2 \
   --set-gtid-purged=ON \
   --routines --events --triggers \
   --hex-blob --default-character-set=utf8mb4 \
-  --databases appdb appdb_log \
-  > /var/backups/db1-seed.sql
-```
+  --databases appdb appdb_log > /var/backups/db1-seed.sql
 
-| 旗標 | 作用 | 星級 |
-| --- | --- | --- |
-| `--single-transaction` | InnoDB 一致性快照，不鎖表 | ★★★★ |
-| `--source-data=2` | 把 binlog 位置寫成**註解**（8.0.26 前叫 `--master-data`） | ★★ |
-| `--set-gtid-purged=ON` | ★★★★ **關鍵**：在 dump 開頭產生 `SET @@GLOBAL.gtid_purged=...` | ★★★★ |
-| `--routines --events --triggers` | 預設**不會**匯出這三種，漏了會發現預存程序不見了 | ★★★ |
-| `--databases appdb ...` | ★★★ 建議逐一列出，不要用 `--all-databases`（見下方） |  ★★★ |
-
-```bash
-# 確認 gtid_purged 有寫進去
 grep -m1 'gtid_purged' /var/backups/db1-seed.sql
 ```
 
@@ -559,12 +472,17 @@ grep -m1 'gtid_purged' /var/backups/db1-seed.sql
 SET @@GLOBAL.GTID_PURGED=/*!80000 '+'*/ '3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45210';
 ```
 
-> [!warning] ★★★ 為什麼不用 `--all-databases`
-> `--all-databases` 會一併匯出 `mysql` schema 的使用者與權限表。
-> 匯入從庫時可能覆蓋掉從庫自己的帳號（包含你的監控帳號），
-> 而且 8.0 的 `mysql` schema 是 InnoDB 資料字典，直接灌 INSERT 風險很高。
-> **實務作法**：資料用 `--databases` 列出應用 schema，
-> 帳號用 `SHOW CREATE USER` / `pt-show-grants` 另外匯出，見 [[02-MySQL-使用者與權限]]。
+| 旗標 | 作用 | 星級 |
+| --- | --- | --- |
+| `--single-transaction` | InnoDB 一致性快照，不鎖表 | ★★★★ |
+| `--set-gtid-purged=ON` | ★★★★ **關鍵**：在 dump 開頭寫入 `SET @@GLOBAL.gtid_purged` | ★★★★ |
+| `--source-data=2` | 把 binlog 位置寫成註解（8.0.26 前叫 `--master-data`） | ★★ |
+| `--routines --events --triggers` | 預設**不會**匯出這三種，漏了會發現預存程序不見了 | ★★★ |
+| `--databases appdb …` | ★★★ 逐一列出應用 schema，**不要用 `--all-databases`** | ★★★ |
+
+★★★ 不用 `--all-databases` 的理由：它會一併匯出 `mysql` schema 的帳號權限表，
+可能覆蓋掉從庫自己的帳號，而 8.0 的 `mysql` schema 是資料字典，直接灌 INSERT 風險很高。
+帳號改用 `SHOW CREATE USER` / `pt-show-grants` 另外匯出，見 [[02-MySQL-使用者與權限]]。
 
 匯入從庫：
 
@@ -578,23 +496,21 @@ mysql -e "SELECT @@GLOBAL.gtid_purged\G"
 預期輸出：
 
 ```text
-*************************** 1. row ***************************
 @@GLOBAL.gtid_purged: 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45210
 ```
 
-★★★★ 如果這裡是空的，你等一下 `START REPLICA` 之後從庫會**從第 1 筆交易開始重放**，
-結果就是一堆 `1062 duplicate key`。看到空值就停下來，先查 `RESET BINARY LOGS AND GTIDS` 有沒有跑。
+★★★★ 這裡若是空的，`START REPLICA` 之後從庫會**從第 1 筆交易開始重放**，結果是一堆
+`1062 duplicate key`。看到空值就停下來，先查 `RESET BINARY LOGS AND GTIDS` 有沒有跑。
 
 #### 路線 B：Percona XtraBackup（大資料量）
 
 > [!warning] 未實機驗證
 > 本段依 Percona 官方文件撰寫，未在實機環境驗證。
-> ★★★★ **XtraBackup 的主版本必須與 MySQL 對齊**（MySQL 8.0 → XtraBackup 8.0，
-> MySQL 8.4 → XtraBackup 8.4），版本不合會在 `--prepare` 階段失敗或產生無法啟動的資料目錄。
-> 實作前請對照你手上版本的官方文件。
+> ★★★★ **XtraBackup 主版本必須與 MySQL 對齊**（8.0 對 8.0、8.4 對 8.4），
+> 版本不合會在 `--prepare` 階段失敗或產生無法啟動的資料目錄。
 
 ```bash
-# 【1】在 db2 上，串流備份主庫（不落地在主庫、不吃主庫磁碟）
+# 【1】在 db2 上串流備份主庫（不落地在主庫、不吃主庫磁碟）
 ssh db1 "xtrabackup --backup --stream=xbstream --user=bkp --password=xxx --parallel=4" \
   | xbstream -x -C /var/lib/mysql-seed
 
@@ -603,15 +519,8 @@ xtrabackup --prepare --target-dir=/var/lib/mysql-seed
 
 # 【3】★★★★ 記下位置資訊，這是接上複寫的依據
 cat /var/lib/mysql-seed/xtrabackup_binlog_info
-```
+#   mysql-bin.000012	1975	3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45210
 
-預期輸出：
-
-```text
-mysql-bin.000012	1975	3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45210
-```
-
-```bash
 # 【4】換掉從庫的 datadir
 sudo systemctl stop mysql
 sudo mv /var/lib/mysql /var/lib/mysql.old       # ★★★ 先搬不要刪，這是你的回滾路
@@ -632,25 +541,17 @@ sudo tee /etc/mysql/mysql.conf.d/zz-replication.cnf > /dev/null << 'EOF'
 [mysqld]
 server_id                      = 12        # ★★★ 與主庫不同
 report_host                    = db2
-
-# ─── 唯讀保護（★★★★ 兩行都要）─────────────────────
-read_only                      = ON
-super_read_only                = ON
-
-# ─── relay log ─────────────────────────────────────────
+read_only                      = ON        # ★★★★ 這兩行
+super_read_only                = ON        # ★★★★ 缺一不可
 relay_log                      = /var/log/mysql/db2-relay-bin
 relay_log_recovery             = ON        # ★★★★ 從庫崩潰後自動修復 relay log
 relay_log_purge                = ON
-skip_replica_start             = ON        # ★★★ 開機不自動啟動複寫（見下方）
-
-# ─── 並行 applier ──────────────────────────────────────
+skip_replica_start             = ON        # ★★★ 開機不自動啟動複寫
 replica_parallel_workers       = 8
 replica_preserve_commit_order  = ON        # 8.0.27+ 預設就是 ON
 binlog_transaction_dependency_tracking = WRITESET
-
-# ─── GTID + binlog（★★★ 從庫也要開，將來才能升主庫）──
 log_bin                        = /var/log/mysql/mysql-bin
-log_replica_updates            = ON
+log_replica_updates            = ON        # ★★★ 從庫也要開，將來才能升主庫
 gtid_mode                      = ON
 enforce_gtid_consistency       = ON
 binlog_format                  = ROW
@@ -667,44 +568,33 @@ mysql -e "SELECT @@read_only, @@super_read_only, @@skip_replica_start,
 預期輸出：
 
 ```text
-*************************** 1. row ***************************
-              @@read_only: 1
-        @@super_read_only: 1        # ★★★★ 這行是 1 才算數
-     @@skip_replica_start: 1
-      @@relay_log_recovery: 1
- @@replica_parallel_workers: 8
+                @@read_only: 1
+          @@super_read_only: 1        # ★★★★ 這行是 1 才算數
+       @@skip_replica_start: 1
+        @@relay_log_recovery: 1
+   @@replica_parallel_workers: 8
 ```
 
 > [!danger] ★★★★ 只設 `read_only` 而沒設 `super_read_only`，遲早出現主從分歧
-> `read_only=ON` **不會擋住具有 `SUPER` 或 `CONNECTION_ADMIN` 權限的帳號**。
-> 而在多數機關環境裡，那個帳號叫 `root`，而且維運人員每天都用它登入。
->
-> ```sql
-> -- 從庫上，只設了 read_only=ON 時
-> mysql> SELECT @@read_only, @@super_read_only;
-> +-------------+-------------------+
-> | @@read_only | @@super_read_only |
-> |           1 |                 0 |
-> +-------------+-------------------+
->
+> `read_only=ON` **不會擋住具有 `SUPER` 或 `CONNECTION_ADMIN` 權限的帳號**，
+> 而在多數機關環境裡那個帳號叫 `root`，維運人員每天都用它登入：
+> ```text
+> mysql> SELECT @@read_only, @@super_read_only;    -->  1 | 0
 > mysql> UPDATE appdb.settings SET v='x' WHERE k='maint';   -- 用 root 執行
-> Query OK, 1 row affected (0.00 sec)      -- ★★★★ 寫進去了，而且主庫不知道
+> Query OK, 1 row affected (0.00 sec)     -- ★★★★ 寫進去了，而且主庫不知道
 > ```
->
-> 從這一刻起，這台從庫的資料與主庫**永久不同**。
-> 主庫之後如果對同一列做 `UPDATE`，ROW 模式下前映像對不起來 → `1032 record not found`，
-> 複寫直接停住；或更糟的是**永遠不報錯**，你在報表上看到錯的數字。
+> 從這一刻起，這台從庫的資料與主庫**永久不同**。主庫之後對同一列做 `UPDATE` 時，
+> ROW 模式的前映像對不起來 → `1032 record not found` 讓複寫停住；
+> 或更糟的是**永遠不報錯**，你在報表上看到錯的數字。
 >
 > **`super_read_only=ON` 會連 `SUPER` 帳號一起擋**，是唯一正解。
-> 要在從庫做維護時，明確地 `SET GLOBAL super_read_only=OFF`，做完馬上關回去 ——
+> 要在從庫做維護時明確地 `SET GLOBAL super_read_only=OFF`，做完馬上關回去 ——
 > 這一開一關本身就是稽核軌跡。
 
 > [!note] ★★★ 為什麼要 `skip_replica_start=ON`
-> 從庫重開機後**不要自動開始追資料**。
-> 想像你正在做故障切換、剛把 db2 升成主庫，這時 db2 意外重啟 ——
-> 如果沒有 `skip_replica_start`，它會自動重新連回舊主庫繼續當從庫，
-> 而應用此時已經在寫 db2 了 → ★★★★★ **雙寫**。
-> 代價是每次重啟後要手動 `START REPLICA`，這個代價值得付。
+> 從庫重開機後**不要自動開始追資料**。想像你剛把 db2 升成主庫、這時 db2 意外重啟 ——
+> 沒有這個設定它會自動連回舊主庫繼續當從庫，而應用此時已經在寫 db2 → ★★★★★ **雙寫**。
+> 代價是每次重啟後要手動 `START REPLICA`，這個代價值得付；
 > 記得把「重啟後檢查複寫是否啟動」寫進 [[04-健康檢查與可用性監控]] 的檢查項。
 
 ### 【5】建立複寫連線
@@ -721,51 +611,46 @@ CHANGE REPLICATION SOURCE TO
   SOURCE_SSL_CA          = '/etc/mysql/ssl/ca.pem',
   SOURCE_CONNECT_RETRY   = 10,            -- 斷線後每 10 秒重試
   SOURCE_RETRY_COUNT     = 86400,         -- ★★★ 重試 86400 次 ≈ 撐 10 天不放棄
-  SOURCE_HEARTBEAT_PERIOD = 10;           -- 主庫閒置時每 10 秒送心跳，用來偵測假死連線
+  SOURCE_HEARTBEAT_PERIOD = 10;           -- 主庫閒置時每 10 秒送心跳，偵測假死連線
 
 START REPLICA;
 ```
 
 ```bash
-mysql -e "SHOW REPLICA STATUS\G" | grep -E 'Running|Source_Host|Last_.*Error|Gtid'
+mysql -e "SHOW REPLICA STATUS\G" | grep -E 'Running|Source_Host|Last_.*Error|Gtid|Auto_Position'
 ```
 
 預期輸出：
 
 ```text
-              Replica_IO_State: Waiting for source to send event
                    Source_Host: 10.0.1.11
-             Replica_IO_Running: Yes            # ★★★★ 必須 Yes
-            Replica_SQL_Running: Yes            # ★★★★ 必須 Yes
-                  Last_IO_Error:
-                 Last_SQL_Error:
-             Retrieved_Gtid_Set: 3e11fa47-71ca-11e1-9e33-c80aa9429562:45211-45260
-              Executed_Gtid_Set: 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45260
-    Auto_Position: 1
+            Replica_IO_Running: Yes            # ★★★★ 必須 Yes
+           Replica_SQL_Running: Yes            # ★★★★ 必須 Yes
+                 Last_IO_Error:
+                Last_SQL_Error:
+            Retrieved_Gtid_Set: 3e11fa47-71ca-11e1-9e33-c80aa9429562:45211-45260
+             Executed_Gtid_Set: 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45260
+                 Auto_Position: 1
+```
+
+主庫上確認從庫已經接上（每個從庫對應一條 `Binlog Dump GTID`）：
+
+```bash
+mysql -e "SHOW REPLICAS;"
+```
+
+```text
++-----------+------+------+-----------+--------------------------------------+
+| Server_id | Host | Port | Source_id | Replica_UUID                         |
+|        12 | db2  | 3306 |        11 | 7a2c1b90-…                           |
++-----------+------+------+-----------+--------------------------------------+
 ```
 
 > [!tip] ★★★ `SOURCE_HEARTBEAT_PERIOD` 解決「複寫看起來好好的但其實斷了」
-> 主庫沒有寫入時，dump thread 不會送任何東西，
-> 從庫的 TCP 連線可能早就被中間的防火牆／NAT 靜默丟棄，但 IO thread 還顯示 `Yes`。
-> 心跳讓從庫在沒有真實事件時也能確認連線活著，
-> 逾時（預設 `replica_net_timeout`，8.0.26+ 預設 60 秒）後主動重連。
-> ★★★ **機關的防火牆常常有 30~60 分鐘的閒置連線回收**，這個參數不設會定期出事。
-
-主庫上確認從庫已經接上：
-
-```bash
-mysql -e "SHOW REPLICAS; SHOW PROCESSLIST\G" | grep -E 'Binlog Dump|Server_id|Host'
-```
-
-預期輸出：
-
-```text
-Server_id: 12
-     Host: db2
-  Command: Binlog Dump GTID          # ★★★ 主庫上每個從庫對應一條
-```
-
----
+> 主庫沒有寫入時 dump thread 不會送任何東西，TCP 連線可能早就被中間的防火牆／NAT
+> 靜默丟棄，但 IO thread 還顯示 `Yes`。心跳讓從庫在沒有真實事件時也能確認連線活著，
+> 逾時（`replica_net_timeout`，8.0.26+ 預設 60 秒）後主動重連。
+> ★★★ **機關的防火牆常有 30~60 分鐘的閒置連線回收**，這個參數不設會定期出事。
 
 ## ★★★★ SHOW REPLICA STATUS 判讀（本篇最實用的一段）
 
@@ -808,38 +693,28 @@ mysql -e "SHOW REPLICA STATUS\G"
 
 ### 用 GTID 落差算出真正的落後量
 
-```sql
--- 【1】主庫上取得已執行的 GTID 集合
-mysql -h 10.0.1.11 -e "SELECT @@GLOBAL.gtid_executed\G"
-```
+```bash
+# 【1】主庫上取得已執行的 GTID 集合
+mysql -h 10.0.1.11 -N -e "SELECT @@GLOBAL.gtid_executed;"
+#   3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45260
 
-```text
-@@GLOBAL.gtid_executed: 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45260
-```
-
-```sql
--- 【2】從庫上：主庫有、但我還沒執行的部分
+# 【2】從庫上：主庫有、但我還沒執行的部分
 mysql -h 10.0.1.12 -e "SELECT GTID_SUBTRACT(
-    '3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45260',
-    @@GLOBAL.gtid_executed) AS missing\G"
+    '3e11fa47-71ca-11e1-9e33-c80aa9429562:1-45260', @@GLOBAL.gtid_executed) AS missing\G"
 ```
 
-預期輸出（追平時）：
+預期輸出：
 
 ```text
-missing:
-```
-
-沒追平時：
-
-```text
-missing: 3e11fa47-71ca-11e1-9e33-c80aa9429562:45241-45260   # ★ 還差 20 筆交易
+missing:                                                       # ★ 空字串 = 已追平
+missing: 3e11fa47-71ca-11e1-9e33-c80aa9429562:45241-45260      # ★ 還差 20 筆交易
 ```
 
 ★★★★ 這是**唯一不會騙人**的延遲指標，也是計畫性切換時判斷「可以切了」的依據。
 
+想知道「已收進 relay log 但還沒套用」的積壓量（applier 落後多少）：
+
 ```sql
--- 【3】從庫上：已經抓進 relay log 但還沒套用的（applier 的積壓）
 SELECT GTID_SUBTRACT(
   (SELECT RECEIVED_TRANSACTION_SET FROM performance_schema.replication_connection_status),
   @@GLOBAL.gtid_executed) AS relay_backlog\G
@@ -853,22 +728,20 @@ GTID 落差告訴你「差幾筆」，心跳表告訴你「差幾秒」—— �
 -- ★ 主庫上建表（從庫會自動同步過去）
 CREATE DATABASE IF NOT EXISTS ops;
 CREATE TABLE ops.heartbeat (
-  id      TINYINT      NOT NULL PRIMARY KEY,     -- ★★★ 一定要有主鍵，理由見下一節
-  ts      DATETIME(6)  NOT NULL,
-  host    VARCHAR(64)  NOT NULL
+  id   TINYINT     NOT NULL PRIMARY KEY,   -- ★★★ 一定要有主鍵，理由見下一節
+  ts   DATETIME(6) NOT NULL,
+  host VARCHAR(64) NOT NULL
 ) ENGINE=InnoDB;
 INSERT INTO ops.heartbeat VALUES (1, NOW(6), @@hostname);
 
--- ★ 用 MySQL EVENT 每秒更新（需要 event_scheduler=ON）
 SET GLOBAL event_scheduler = ON;
-CREATE EVENT ops.ev_heartbeat
-  ON SCHEDULE EVERY 1 SECOND
+CREATE EVENT ops.ev_heartbeat ON SCHEDULE EVERY 1 SECOND
   DO UPDATE ops.heartbeat SET ts = NOW(6), host = @@hostname WHERE id = 1;
 ```
 
 ```bash
 # 從庫上量真延遲
-mysql -e "SELECT TIMESTAMPDIFF(MICROSECOND, ts, NOW(6))/1000000 AS lag_sec,
+mysql -e "SELECT ROUND(TIMESTAMPDIFF(MICROSECOND, ts, NOW(6))/1000000,2) AS lag_sec,
                  host AS written_by FROM ops.heartbeat WHERE id=1;"
 ```
 
@@ -877,23 +750,14 @@ mysql -e "SELECT TIMESTAMPDIFF(MICROSECOND, ts, NOW(6))/1000000 AS lag_sec,
 ```text
 +---------+------------+
 | lag_sec | written_by |
-+---------+------------+
-|  0.4270 | db1        |    # ★ 0.43 秒，健康
+|    0.43 | db1        |    # ★ 0.43 秒，健康
 +---------+------------+
 ```
 
-★★★★ 注意 `written_by` 欄位：切換之後這裡應該變成 `db2`。
-**如果切換後它還是 `db1`，代表舊主庫還在寫 —— 這就是雙寫的第一個徵兆。**
-
-> [!tip] 也可以用 `pt-heartbeat`（Percona Toolkit）
-> ```bash
-> # 主庫上：常駐更新
-> pt-heartbeat --database ops --table pt_heartbeat --update --daemonize
-> # 從庫上：讀出延遲
-> pt-heartbeat --database ops --table pt_heartbeat --monitor --check
-> ```
-> ★★ 用 EVENT 的好處是不需要額外的常駐程序、切換時自動跟著走；
-> 用 `pt-heartbeat` 的好處是支援多層級聯與更完整的輸出格式。二選一即可。
+★★★★ 注意 `written_by`：切換之後這裡應該變成 `db2`。
+**切換後它還是 `db1`，代表舊主庫還在寫 —— 這是雙寫的第一個徵兆。**
+★★ 也可以改用 Percona Toolkit 的 `pt-heartbeat --update --daemonize` / `--monitor`，
+好處是支援多層級聯；用 EVENT 的好處是不需額外常駐程序、切換時自動跟著走。二選一即可。
 
 告警門檻怎麼設，寫進 [[03-系統監控與告警]]：
 
@@ -905,8 +769,6 @@ mysql -e "SELECT TIMESTAMPDIFF(MICROSECOND, ts, NOW(6))/1000000 AS lag_sec,
 | GTID 落差筆數 | > 1000 | > 50000 | ★★★ |
 | 從庫 `super_read_only` != 1 | ★★★★ 立即 | — | ★★★★ |
 
----
-
 ## 進階設定與調校
 
 ### ★★★★ 延遲元兇第一名：沒有主鍵的表
@@ -917,12 +779,10 @@ ROW 格式的 `UPDATE` / `DELETE` 事件，從庫要先**找到那一列**才能
 
 ```text
   主庫：DELETE FROM access_log WHERE created_at < '2026-01-01';   影響 200 萬列
-        主庫用索引，8 秒跑完
-
-  從庫（access_log 沒有主鍵，共 5000 萬列）：
-        每刪一列 → 掃 5000 萬列找目標
-        200 萬 × 5000 萬 次比對
-        ★★★★ 從庫延遲從 0 秒衝到 6 小時，applier 單執行緒卡死，其他交易全部排隊
+        主庫走索引，8 秒跑完
+  從庫：access_log 沒有主鍵、共 5000 萬列
+        每刪一列 → 掃 5000 萬列找目標 → 200 萬 × 5000 萬 次比對
+        ★★★★ 延遲從 0 秒衝到 6 小時，applier 卡死，其他交易全部排隊
 ```
 
 找出所有沒有主鍵的表：
@@ -932,8 +792,7 @@ SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_ROWS,
        ROUND(t.DATA_LENGTH/1024/1024) AS data_mb
 FROM information_schema.TABLES t
 LEFT JOIN information_schema.TABLE_CONSTRAINTS c
-  ON  t.TABLE_SCHEMA = c.TABLE_SCHEMA
-  AND t.TABLE_NAME   = c.TABLE_NAME
+  ON  t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
   AND c.CONSTRAINT_TYPE = 'PRIMARY KEY'
 WHERE t.TABLE_TYPE = 'BASE TABLE'
   AND t.TABLE_SCHEMA NOT IN ('mysql','sys','information_schema','performance_schema')
@@ -944,28 +803,22 @@ ORDER BY t.DATA_LENGTH DESC;
 預期輸出：
 
 ```text
-+--------------+---------------+------------+---------+
-| TABLE_SCHEMA | TABLE_NAME    | TABLE_ROWS | data_mb |
-+--------------+---------------+------------+---------+
-| appdb        | access_log    |   49821330 |   12480 |   # ★★★★ 這張就是未爆彈
-| appdb        | temp_import   |     102841 |      38 |
-+--------------+---------------+------------+---------+
+| TABLE_SCHEMA | TABLE_NAME  | TABLE_ROWS | data_mb |
+| appdb        | access_log  |   49821330 |   12480 |   # ★★★★ 這張就是未爆彈
+| appdb        | temp_import |     102841 |      38 |
 ```
 
-修法（★★★ 大表要用線上 DDL，並走變更管理流程 [[03-風險與變更管理]]）：
+修法（★★★ 大表要走線上 DDL，並依 [[03-風險與變更管理]] 的流程）：
 
 ```sql
--- 有現成的唯一欄位就直接升為主鍵
 ALTER TABLE appdb.access_log ADD PRIMARY KEY (log_id), ALGORITHM=INPLACE, LOCK=NONE;
-
--- 沒有就補一個代理鍵
+-- 沒有現成唯一欄位時補一個代理鍵
 ALTER TABLE appdb.access_log
   ADD COLUMN id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST;
 ```
 
-> [!warning] ★★★ 這個檢查應該是「新表上線前的把關項目」
-> 不要等到延遲爆炸才來補主鍵 —— 大表加主鍵本身就是一次高風險變更。
-> 把上面那段 SQL 放進 [[07-自動化健康檢查實戰]] 的每日檢查，發現一張處理一張。
+★★★ 這個檢查應該是**新表上線前的把關項目**，不要等到延遲爆炸才來補 ——
+大表加主鍵本身就是一次高風險變更。把上面那段 SQL 放進 [[07-自動化健康檢查實戰]] 的每日檢查。
 
 ### 其他延遲成因與對策
 
@@ -981,6 +834,7 @@ ALTER TABLE appdb.access_log
 ### 開啟並行 applier
 
 ```sql
+-- 從庫
 STOP REPLICA SQL_THREAD;
 SET GLOBAL replica_parallel_workers = 8;         -- 約等於 CPU 核心數，先從 4~8 試
 SET GLOBAL replica_preserve_commit_order = ON;   -- 8.0.27+ 預設 ON
@@ -992,33 +846,26 @@ SET GLOBAL binlog_transaction_dependency_tracking = WRITESET;
 
 > [!note] ★★★ 並行度是主庫決定的，不是從庫
 > `WRITESET` 讓**主庫**在寫 binlog 時分析每筆交易改了哪些列，
-> 沒有衝突的交易標成同一個「可並行群組」。從庫的 worker 只是照著這個標記分工。
-> 所以**只在從庫開 `replica_parallel_workers` 而主庫還是 `COMMIT_ORDER`，效果非常有限**
-> —— 這是最常見的「開了並行但沒變快」的原因。
->
-> MySQL 8.0 的預設是 `COMMIT_ORDER`（要手動改成 `WRITESET`），
-> MySQL 8.2 起 `WRITESET` 成為預設值，該變數本身在新版已標記為 deprecated。
-> ★★ `WRITESET` 需要 `binlog_format=ROW`，這是選 ROW 的另一個理由。
-
-查看每個 worker 在做什麼：
+> 沒有衝突的交易標成同一個「可並行群組」，從庫的 worker 只是照著這個標記分工。
+> 所以**只在從庫開 `replica_parallel_workers`、主庫還是 `COMMIT_ORDER`，效果非常有限** ——
+> 這是最常見的「開了並行但沒變快」的原因。
+> MySQL 8.0 預設 `COMMIT_ORDER`（要手動改 `WRITESET`），8.2 起 `WRITESET` 成為預設值、
+> 該變數本身在新版已標記為 deprecated。★★ `WRITESET` 需要 `binlog_format=ROW`。
 
 ```bash
-mysql -e "SELECT WORKER_ID, THREAD_ID, SERVICE_STATE, LAST_ERROR_MESSAGE
+mysql -e "SELECT WORKER_ID, SERVICE_STATE, LAST_ERROR_MESSAGE
           FROM performance_schema.replication_applier_status_by_worker;"
 ```
 
 預期輸出：
 
 ```text
-+-----------+-----------+---------------+--------------------+
-| WORKER_ID | THREAD_ID | SERVICE_STATE | LAST_ERROR_MESSAGE |
-+-----------+-----------+---------------+--------------------+
-|         1 |        52 | ON            |                    |   # ★ 全部 ON
-|         2 |        53 | ON            |                    |
-...
+| WORKER_ID | SERVICE_STATE | LAST_ERROR_MESSAGE |
+|         1 | ON            |                    |   # ★ 全部要是 ON
+|         2 | ON            |                    |
 ```
 
-★★★★ 並行 applier 出錯時，`SHOW REPLICA STATUS` 的 `Last_SQL_Error` 可能只給你摘要，
+★★★★ 並行 applier 出錯時，`SHOW REPLICA STATUS` 的 `Last_SQL_Error` 可能只給摘要，
 **真正的錯誤在 `replication_applier_status_by_worker` 的 `LAST_ERROR_MESSAGE`**。
 
 ### ★★★★ 延遲從庫：誤操作的救生艇
@@ -1030,52 +877,32 @@ START REPLICA;
 ```
 
 ```bash
-mysql -e "SHOW REPLICA STATUS\G" | grep -E 'SQL_Delay|SQL_Remaining_Delay|Replica_SQL_Running_State'
+mysql -e "SHOW REPLICA STATUS\G" | grep -E 'SQL_Delay|SQL_Remaining_Delay'
 ```
 
 預期輸出：
 
 ```text
-                    SQL_Delay: 3600
-          SQL_Remaining_Delay: 3412            # ★ 距離套用下一筆事件還要等 3412 秒
-    Replica_SQL_Running_State: Waiting until SOURCE_DELAY seconds after source executed event
+            SQL_Delay: 3600
+  SQL_Remaining_Delay: 3412        # ★ 距離套用下一筆事件還要等 3412 秒
 ```
 
-用法：有人 09:41 下了 `DROP TABLE members`，你在 10:05 發現。
-延遲從庫上的 `members` **還在**（它要到 10:41 才會執行那個 DROP）。
+用法：有人 09:41 下了 `DROP TABLE members`，你 10:05 發現。
+延遲從庫上的 `members` **還在**（它要到 10:41 才會執行那個 DROP）：
 
 ```sql
--- 【1】立刻凍住延遲從庫，不要讓它繼續套用
-STOP REPLICA SQL_THREAD;      -- ★★★★★ 這是整個流程最緊急的一步，先做這個
-
--- 【2】確認資料還在
-SELECT COUNT(*) FROM appdb.members;
-
--- 【3】把資料撈出來
--- （在 shell 上）
---   mysqldump -h 10.0.1.12 --single-transaction appdb members > /var/backups/members-rescue.sql
+STOP REPLICA SQL_THREAD;                    -- ★★★★★ 最緊急的一步，先做這個
+SELECT COUNT(*) FROM appdb.members;         -- 確認資料還在，再 mysqldump 撈出來
 ```
 
 | 比較 | 延遲從庫 | PITR（[[05-MySQL-備份與還原]]） |
 | --- | --- | --- |
 | 恢復速度 | ★★★★ 分鐘級，資料就在線上 | 小時級，要還原全備 + 重放 binlog |
 | 可回溯範圍 | 只有 `SOURCE_DELAY` 那段時間 | ★★★★ 整個 binlog 保留期 |
-| 成本 | 一台機器 | 備份儲存空間 |
 | 兩者關係 | **互補，不是二選一** | **互補，不是二選一** |
 
 ★★★ 延遲從庫**不能同時當故障切換的目標**（它永遠落後一小時）。
-需要兩者都要時，架構是「主庫 + 即時從庫（切換用）+ 延遲從庫（救援用）」。
-
-> [!info]- 半同步（`rpl_semi_sync`）什麼時候值得開
-> 金流、不能掉單的表單系統才需要，代價是每筆交易多一個 RTT。
-> MySQL 8.0.26+ 兩端各裝一個外掛（`semisync_source.so` / `semisync_replica.so`，
-> ★★★ **新舊版外掛不能並存**），主庫 `rpl_semi_sync_source_enabled=1`、
-> 從庫 `rpl_semi_sync_replica_enabled=1` 並重啟 IO thread 才生效。
-> ★★★★ **一定要監控 `Rpl_semi_sync_source_status`** ——
-> 逾時（`rpl_semi_sync_source_timeout`）後它會**靜默降級成非同步**，
-> 你以為有半同步，其實沒有。本段依官方文件撰寫，未實機驗證。
-
----
+兩者都要時，架構是「主庫 + 即時從庫（切換用）+ 延遲從庫（救援用）」。
 
 ## 複寫中斷的正確處理
 
@@ -1144,26 +971,22 @@ pt-table-checksum --host=10.0.1.11 --user=checksum --ask-pass \
 預期輸出：
 
 ```text
-            TS ERRORS  DIFFS     ROWS  DIFF_ROWS  CHUNKS SKIPPED    TIME TABLE
-08-29T10:22:41      0      0   184213          0      19       0   6.201 appdb.orders
-08-29T10:22:49      0      2    49821          7       5       0   3.114 appdb.members
-                           ↑
-                    ★★★★ DIFFS 不是 0 = 主從不一致
+            TS ERRORS  DIFFS     ROWS  DIFF_ROWS  CHUNKS    TIME TABLE
+08-29T10:22:41      0      0   184213          0      19   6.201 appdb.orders
+08-29T10:22:49      0      2    49821          7       5   3.114 appdb.members
+                           ↑ ★★★★ DIFFS 不是 0 = 主從不一致
 ```
 
 ```bash
 # 【2】先「只看不改」，確認 pt-table-sync 打算怎麼修
 pt-table-sync --print --replicate=percona.checksums h=10.0.1.11 h=10.0.1.12
-
 # 【3】確認無誤後才執行（★★★★ 一定要從主庫方向推，不要直接寫從庫）
 pt-table-sync --execute --replicate=percona.checksums h=10.0.1.11 h=10.0.1.12
 ```
 
-★★★ `pt-table-checksum` 需要 `binlog_format=ROW`（本篇已設）與一個有適當權限的帳號；
-它會在主庫上寫 `percona.checksums`，這個寫入本身也會複寫過去 —— 這正是它的運作原理。
-★★★ 跑之前先在測試環境試一次，`--max-lag` 設好，否則它會把已經很喘的從庫壓垮。
-
----
+★★★ `pt-table-checksum` 需要 `binlog_format=ROW`（本篇已設）；它會在主庫寫
+`percona.checksums`，這個寫入本身也會複寫過去 —— 這正是它的運作原理。
+★★★ 先在測試環境試一次並設好 `--max-lag`，否則它會把已經很喘的從庫壓垮。
 
 ## ★★★★★ 計畫性切換與故障切換
 
@@ -1186,7 +1009,7 @@ pt-table-sync --execute --replicate=percona.checksums h=10.0.1.11 h=10.0.1.12
 | 步驟 | 動作 | 在哪台 | 驗證 |
 | --- | --- | --- | --- |
 | 【1】 | 應用進維護模式 | app1 | 前台顯示維護頁 |
-| 【2】 | ★★★★ 主庫封寫 | db1 | `super_read_only=1` |
+| 【2】 | ★★★★ 主庫封寫 + 清殘留寫入連線 | db1 | `super_read_only=1` |
 | 【3】 | ★★★★ 等從庫追平 | db2 | GTID 落差為空 |
 | 【4】 | 從庫脫離複寫 | db2 | `SHOW REPLICA STATUS` 為空 |
 | 【5】 | ★★★★ 從庫開放寫入 | db2 | `super_read_only=0` |
@@ -1197,50 +1020,37 @@ pt-table-sync --execute --replicate=percona.checksums h=10.0.1.11 h=10.0.1.12
 ```bash
 # ═══【1】app1：應用進維護模式（Laravel）═══
 php /var/www/app/artisan down --secret="檢查用的隨機字串" --render="errors::503"
-```
 
-```bash
 # ═══【2】db1：封寫（★★★★ 這一步就是防雙寫的核心）═══
 mysql -h 10.0.1.11 -e "SET GLOBAL super_read_only = ON;"
 mysql -h 10.0.1.11 -e "SELECT @@read_only, @@super_read_only;"
-```
-
-預期輸出：
-
-```text
-+-------------+-------------------+
-| @@read_only | @@super_read_only |
-|           1 |                 1 |    # ★★★★ 兩個都要 1
-+-------------+-------------------+
-```
-
-```bash
 # ★★★★ 確認沒有殘留的寫入連線（有的話先 KILL，否則它們的交易還沒進 binlog）
 mysql -h 10.0.1.11 -e "SELECT ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO
   FROM information_schema.PROCESSLIST
   WHERE COMMAND NOT IN ('Sleep','Binlog Dump GTID') AND USER NOT IN ('repl','system user')\G"
 ```
 
+預期輸出：
+
+```text
+| @@read_only | @@super_read_only |
+|           1 |                 1 |      # ★★★★ 兩個都要 1
+Empty set                               # ★★★★ 沒有殘留寫入連線
+```
+
 ```bash
 # ═══【3】db2：等追平（★★★★ 不追平就切 = 資料遺失）═══
 SRC=$(mysql -h 10.0.1.11 -N -e "SELECT @@GLOBAL.gtid_executed;" | tr -d '\n')
 mysql -h 10.0.1.12 -N -e "SELECT GTID_SUBTRACT('$SRC', @@GLOBAL.gtid_executed);"
+mysql -h 10.0.1.12 -N -e "SELECT WAIT_FOR_EXECUTED_GTID_SET('$SRC', 300);"
 ```
 
 預期輸出：
 
 ```text
-                       # ★★★★ 必須是空字串。非空就繼續等，不要跳過這一步
-```
-
-也可以用官方的等待函式（最多等 300 秒，回傳 0 代表已追平）：
-
-```bash
-mysql -h 10.0.1.12 -N -e "SELECT WAIT_FOR_EXECUTED_GTID_SET('$SRC', 300);"
-```
-
-```text
-0        # ★ 0 = 已追平；1 = 逾時，★★★★ 逾時就中止切換並回滾
+                # ★★★★ GTID_SUBTRACT 必須是空字串
+0               # ★ WAIT_FOR_EXECUTED_GTID_SET 回 0 = 已追平；
+                #   回 1 = 逾時，★★★★ 逾時就中止切換並回滾，不要「差一點點應該沒關係」
 ```
 
 ```bash
@@ -1250,17 +1060,8 @@ mysql -h 10.0.1.12 -e "
   RESET REPLICA ALL;              -- ★★★ 清掉複寫設定，避免重啟後又跑去連舊主庫
   SET GLOBAL super_read_only = OFF;
   SET GLOBAL read_only = OFF;"
-
-mysql -h 10.0.1.12 -e "SHOW REPLICA STATUS\G"     # ★ 應該輸出 Empty set
-mysql -h 10.0.1.12 -e "SELECT @@read_only, @@super_read_only;"
-```
-
-```text
-Empty set (0.00 sec)
-+-------------+-------------------+
-| @@read_only | @@super_read_only |
-|           0 |                 0 |
-+-------------+-------------------+
+mysql -h 10.0.1.12 -e "SHOW REPLICA STATUS\G"          # ★ 應輸出 Empty set
+mysql -h 10.0.1.12 -e "SELECT @@read_only, @@super_read_only;"   # ★ 0 | 0
 ```
 
 ★★★★ 同時把 db2 的 `zz-replication.cnf` 裡的 `read_only`／`super_read_only` 改成 `OFF`，
@@ -1270,23 +1071,10 @@ Empty set (0.00 sec)
 # ═══【6】app1：切連線 ═══
 sudo sed -i 's/^DB_HOST=10\.0\.1\.11$/DB_HOST=10.0.1.12/' /var/www/app/.env
 cd /var/www/app && php artisan config:clear && php artisan config:cache
-sudo systemctl reload php8.3-fpm            # ★★★ 見 [[02-PHP-FPM設定與Pool調校]]
-php artisan tinker --execute="DB::statement('SELECT 1'); echo DB::selectOne('SELECT @@hostname h')->h;"
-```
+sudo systemctl reload php8.3-fpm            # ★★★ 見 02-PHP-FPM設定與Pool調校
+php artisan tinker --execute="echo DB::selectOne('SELECT @@hostname h')->h;"
+#   db2        ← ★★★★ 確認真的連到新主庫
 
-```text
-db2        # ★★★★ 確認真的連到新主庫
-```
-
-> [!tip] ★★★ 用 VIP 或 ProxySQL 可以免去改 `.env`
-> `.env` + `config:cache` 的作法簡單、可稽核，但每次切換都要動應用主機。
-> 規模大一點的環境會用 **Keepalived VIP**（切換時把 VIP 飄到新主庫）
-> 或 **ProxySQL**（應用固定連 ProxySQL，由它決定後端）。
-> 這兩種的建置見 [[04-高可用與負載平衡架構]]，本篇不展開。
-> ★★★★ 但要注意：**VIP 飄移本身也可能造成雙寫**（舊主庫沒真的死、VIP 兩邊都在）——
-> 「確認舊主已不可寫」這一步在任何架構下都不能省。
-
-```bash
 # ═══【7】db1：降級為 db2 的從庫 ═══
 mysql -h 10.0.1.11 -e "
   CHANGE REPLICATION SOURCE TO
@@ -1294,26 +1082,22 @@ mysql -h 10.0.1.11 -e "
     SOURCE_AUTO_POSITION=1, SOURCE_SSL=1, SOURCE_SSL_CA='/etc/mysql/ssl/ca.pem';
   START REPLICA;"
 mysql -h 10.0.1.11 -e "SHOW REPLICA STATUS\G" | grep -E 'Running|Source_Host'
-```
+#   Source_Host: 10.0.1.12 / Replica_IO_Running: Yes / Replica_SQL_Running: Yes
+#   ★★★★ 這一步能成功，是因為當初主庫也開了 log_replica_updates
 
-```text
-Source_Host: 10.0.1.12
-Replica_IO_Running: Yes
-Replica_SQL_Running: Yes         # ★★★★ 這一步能成功，是因為當初主庫也開了 log_replica_updates
-```
-
-★★★★ db1 的 `read_only`／`super_read_only` 保持 `ON`，並寫進它的 my.cnf。
-**它現在是從庫，被寫入就是雙寫。**
-
-```bash
 # ═══【8】app1：解除維護模式 ═══
 php /var/www/app/artisan up
-curl -sS -o /dev/null -w '%{http_code}\n' https://app.example.gov.tw/healthz
+curl -sS -o /dev/null -w '%{http_code}\n' https://app.example.gov.tw/healthz    # 200
 ```
 
-```text
-200
-```
+★★★★ db1 的 `read_only`／`super_read_only` 保持 `ON` 並寫進它的 my.cnf ——
+**它現在是從庫，被寫入就是雙寫。**
+
+> [!tip] ★★★ 用 VIP 或 ProxySQL 可以免去改 `.env`
+> `.env` + `config:cache` 簡單、可稽核，但每次切換都要動應用主機。
+> 規模大一點會用 **Keepalived VIP** 或 **ProxySQL**，建置見 [[04-高可用與負載平衡架構]]。
+> ★★★★ 但要注意 **VIP 飄移本身也可能造成雙寫**（舊主庫沒真的死、VIP 兩邊都在）——
+> 「確認舊主已不可寫」這一步在任何架構下都不能省。
 
 ### ★★★★★ 回滾：切換失敗怎麼指回原主庫
 
@@ -1351,6 +1135,13 @@ ping -c3 10.0.1.11
 ssh 10.0.1.11 'systemctl is-active mysql'
 # 連得上但 MySQL 掛了 → 立刻 systemctl stop mysql && systemctl disable mysql
 # 完全連不上 → ★★★★ 從交換器端關掉那個 port，或請機房確認電源已斷（STONITH 的精神）
+
+# 【2】停 IO thread、讓 applier 把已收到的 relay log 跑完（這就是你能救回的最後一筆）
+mysql -h 10.0.1.12 -e "SHOW REPLICA STATUS\G" | grep -E 'Retrieved_Gtid_Set|Executed_Gtid_Set'
+mysql -h 10.0.1.12 -e "STOP REPLICA IO_THREAD;"
+mysql -h 10.0.1.12 -e "SELECT WAIT_FOR_EXECUTED_GTID_SET('<Retrieved_Gtid_Set 的值>', 300);"
+
+# 【3】之後與計畫性切換的【4】~【8】相同
 ```
 
 > [!danger] ★★★★★ 「主庫沒回應」不等於「主庫已停止寫入」
@@ -1359,18 +1150,8 @@ ssh 10.0.1.11 'systemctl is-active mysql'
 > 兩邊 GTID 分岔，**永久分歧**。
 > **在確認舊主庫不可寫之前，一行都不要往新主庫寫。**
 
-```bash
-# 【2】檢查從庫落後多少（這就是你即將遺失的資料量）
-mysql -h 10.0.1.12 -e "SHOW REPLICA STATUS\G" | grep -E 'Retrieved_Gtid_Set|Executed_Gtid_Set'
-# ★★★★ Retrieved 比 Executed 多的部分，是「已收到但還沒套用」→ 先等它跑完
-mysql -h 10.0.1.12 -e "STOP REPLICA IO_THREAD;"     # 停 IO、讓 applier 把 relay log 跑完
-mysql -h 10.0.1.12 -e "SELECT WAIT_FOR_EXECUTED_GTID_SET('<Retrieved_Gtid_Set 的值>', 300);"
-
-# 【3】之後與計畫性切換的【4】~【8】相同
-```
-
-★★★★ 舊主庫救回來之後，**不要直接 `START REPLICA` 讓它接回去**。
-先比對它的 `gtid_executed` 是否為新主庫的子集：
+★★★★ 舊主庫救回來後，**不要直接 `START REPLICA` 讓它接回去**，
+先確認它的 `gtid_executed` 是新主庫的子集：
 
 ```bash
 OLD=$(mysql -h 10.0.1.11 -N -e "SELECT @@GLOBAL.gtid_executed;" | tr -d '\n')
@@ -1378,15 +1159,12 @@ mysql -h 10.0.1.12 -N -e "SELECT GTID_SUBTRACT('$OLD', @@GLOBAL.gtid_executed) A
 ```
 
 ```text
-orphan:                     # ★ 空 = 舊主庫沒有多出來的交易，可以安全接回
-
-orphan: 3e11fa47-…:45261-45268
-        # ★★★★★ 舊主庫上有 8 筆交易沒複寫出去 → 資料已分歧
-        # 不要接回去。用 mysqlbinlog 把這 8 筆挖出來人工判讀，
-        # 決定要補到新主庫還是作廢，然後重做這台從庫。
+orphan:                              # ★ 空 = 舊主庫沒有多出來的交易，可以安全接回
+orphan: 3e11fa47-…:45261-45268       # ★★★★★ 舊主庫有 8 筆交易沒複寫出去 → 資料已分歧
 ```
 
----
+分歧時不要接回去：用 `mysqlbinlog` 把那幾筆挖出來人工判讀，
+決定要補到新主庫還是作廢，然後**重做這台從庫**。
 
 ## 應用端讀寫分離
 
@@ -1414,42 +1192,35 @@ orphan: 3e11fa47-…:45261-45268
 ### ★★★★ 「剛寫入立刻讀取卻讀不到」
 
 這是導入讀寫分離後**必然會遇到**的問題，而且它在測試環境（延遲 0.01 秒）不會出現，
-只會在正式環境流量上來之後出現，症狀是「使用者按了儲存，畫面顯示沒存到，再按一次就變兩筆」。
+只在正式環境流量上來後出現，症狀是「使用者按了儲存，畫面顯示沒存到，再按一次就變兩筆」。
 
 ```text
   t=0.000  POST /orders     → 寫入主庫 db1，訂單 id=9001
   t=0.004  302 導向 /orders/9001
-  t=0.010  GET /orders/9001 → 讀從庫 db2
-                              db2 還沒收到這筆 → 404
-  t=0.180  db2 收到了。使用者重整就看得到 —— 但他已經按了第二次送出
+  t=0.010  GET /orders/9001 → 讀從庫 db2，db2 還沒收到這筆 → 404
+  t=0.180  db2 收到了 —— 但使用者已經按了第二次送出
 ```
 
 | 處理方式 | 有效範圍 | 星級 |
 | --- | --- | --- |
 | `'sticky' => true` | ★★★★ **同一個 request 內**寫入後的所有讀取自動走主庫 | ★★★★ |
-| `DB::connection('mysql')->getPdo()`（強制主庫連線） | 明確指定的那幾個查詢 | ★★★ |
-| 佇列 job 用 `->afterCommit()` + 延遲派送 | ★★★★ **跨 request 的情境，`sticky` 救不到** | ★★★★ |
+| 佇列 job 用 `afterCommit` + 延遲派送 | ★★★★ **跨 request 的情境，`sticky` 救不到** | ★★★★ |
+| 明確指定該查詢走主庫連線 | 明確指定的那幾支查詢 | ★★★ |
 | 寫入後直接用記憶體中的物件，不重新查 | 最省事、最可靠 | ★★★ |
 
 > [!danger] ★★★★ `sticky` 只在「同一個 request」內有效
 > 它對這三種情境**完全無效**：
 > **①** 前端寫入後另外發一個 AJAX 去讀（兩個 request）。
-> **②** 佇列 job：`OrderCreated` 派送後 worker 立刻執行，此時主庫的交易可能還沒 commit。
-> ★★★★ Laravel 的解法是佇列連線設 `'after_commit' => true` 或
-> job 加 `public $afterCommit = true;`，並視延遲加上 `->delay(now()->addSeconds(5))`。
-> **③** 排程任務、API 給第三方回呼。
+> **②** 佇列 job：worker 是另一個行程，主庫的交易可能還沒 commit —— Laravel 的解法是
+> 佇列連線設 `'after_commit' => true` 或 job 加 `public $afterCommit = true;`，
+> 必要時再 `->delay(now()->addSeconds(5))`。
+> **③** 排程任務、第三方回呼。
 >
-> 原則寫成一句話給開發團隊：
-> **「凡是需要看到自己剛寫的資料，就走主庫。」**
-> Eloquent 的細節見 [[04-Laravel-Eloquent與資料庫]]，佇列見 [[03-Laravel-佇列排程與Supervisor]]。
+> 給開發團隊的原則一句話：**「凡是需要看到自己剛寫的資料，就走主庫。」**
+> Eloquent 細節見 [[04-Laravel-Eloquent與資料庫]]，佇列見 [[03-Laravel-佇列排程與Supervisor]]。
 
-★★★ 從庫上跑報表時，記得給查詢設上限，避免一支寫爛的報表把 applier 卡住：
-
-```sql
-SELECT /*+ MAX_EXECUTION_TIME(30000) */ ...   -- 30 秒後自動中止
-```
-
----
+★★★ 從庫上跑報表時給查詢設上限，避免一支寫爛的報表把 applier 卡住：
+`SELECT /*+ MAX_EXECUTION_TIME(30000) */ ...`
 
 ## 完整實戰範例
 
@@ -1572,14 +1343,16 @@ password = ……
 ssl-ca = /etc/mysql/ssl/ca.pem
 ssl-mode = VERIFY_CA
 EOF
-sudo chmod 600 /etc/mysql/repl-check.cnf     # ★★★★ 密碼檔權限
-sudo chown root:root /etc/mysql/repl-check.cnf
+sudo chmod 600 /etc/mysql/repl-check.cnf && sudo chown root:root /etc/mysql/repl-check.cnf
 ```
 
-驗證與排程：
+驗證（★★★ **刻意製造故障來確認腳本真的抓得到**，這一步是演練必做）：
 
 ```bash
 sudo /usr/local/bin/mysql-repl-check.sh; echo "exit=$?"
+mysql -e "STOP REPLICA IO_THREAD;"
+sudo /usr/local/bin/mysql-repl-check.sh; echo "exit=$?"
+mysql -e "START REPLICA IO_THREAD;"
 ```
 
 預期輸出：
@@ -1587,22 +1360,13 @@ sudo /usr/local/bin/mysql-repl-check.sh; echo "exit=$?"
 ```text
 OK 複寫正常 lag=0.31s io=Yes sql=Yes
 exit=0
-```
-
-```bash
-# 刻意製造故障來驗證腳本真的會抓到（★★★ 演練必做）
-mysql -e "STOP REPLICA IO_THREAD;"
-sudo /usr/local/bin/mysql-repl-check.sh; echo "exit=$?"
-mysql -e "START REPLICA IO_THREAD;"
-```
-
-```text
 CRIT: Replica_IO_Running=No；Last_IO_Error=[]
-exit=2
+exit=2                                     # ★★★★ 有抓到才算數
 ```
 
+排程（systemd timer，每分鐘一次；unit 寫法見 [[02-systemd-timer與cron選型]]）：
+
 ```bash
-# systemd timer，每分鐘跑一次（寫法見 [[02-systemd-timer與cron選型]]）
 sudo tee /etc/systemd/system/mysql-repl-check.service > /dev/null << 'EOF'
 [Unit]
 Description=MySQL replication health check
@@ -1611,7 +1375,6 @@ Type=oneshot
 Environment=ALERT_CMD=/usr/local/bin/send-alert.sh
 ExecStart=/usr/local/bin/mysql-repl-check.sh
 EOF
-
 sudo tee /etc/systemd/system/mysql-repl-check.timer > /dev/null << 'EOF'
 [Unit]
 Description=Run MySQL replication check every minute
@@ -1621,9 +1384,7 @@ OnUnitActiveSec=1min
 [Install]
 WantedBy=timers.target
 EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now mysql-repl-check.timer
+sudo systemctl daemon-reload && sudo systemctl enable --now mysql-repl-check.timer
 systemctl list-timers mysql-repl-check.timer --no-pager
 ```
 
@@ -1631,6 +1392,7 @@ systemctl list-timers mysql-repl-check.timer --no-pager
 NEXT                        LEFT  LAST                       PASSED  UNIT
 Sat 2026-08-29 10:41:00 CST  38s  Sat 2026-08-29 10:39:59 CST  22s ago mysql-repl-check.timer
 ```
+
 
 ### 切換演練與耗時紀錄
 
