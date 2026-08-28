@@ -35,7 +35,7 @@ updated: 2026-08-28
 | 01 | [[01-MyGuard套件庫介紹]] | 入門 | 強化版 NGINX 與 Angie 的第三方 APT 套件庫，以及它解決了什麼問題 |
 | 02 | [[02-Angie伺服器入門]] | 進階 | NGINX 的 fork：內建 ACME、RESTful API、動態 upstream 與監控主控台 |
 | 03 | [[03-autocert自動憑證模組]] | 進階 | NGINX 內建的 ACME 客戶端，一行設定取代 certbot 與 cron |
-| 04 | [[04-http-shield攻擊攔截]] | 進階 | 攔截 SQLi、Log4Shell、Shellshock 與 RCE 鏈的輕量防護 |
+| 04 | [[04-http-shield攻擊攔截]] | 進階 | 編譯進去的攻擊特徵攔截，SQLi、Log4Shell、Shellshock 的低誤判防線 |
 | 05 | [[05-error-abuse與sentinel]] | 進階 | 404 濫用限流與用戶端信譽評分、AI 爬蟲 tarpit |
 | 06 | [[06-cache-turbo與壓縮模組]] | 進階 | 共享記憶體邊緣快取、zstd 與 strip-filter |
 | 07 | [[07-動態模組管理]] | 進階 | 100 多個動態模組的載入、順序與相依性處理 |
