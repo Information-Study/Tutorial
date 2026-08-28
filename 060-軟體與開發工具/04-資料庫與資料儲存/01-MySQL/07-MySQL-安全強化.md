@@ -1768,3 +1768,368 @@ sudo mysql-hardening-check.sh; echo "exit=$?"
 預期輸出結尾：`統計：通過 23 ／ 高風險未通過 0 ／ 中風險未通過 0` 與 `exit=0`。
 ★★★ 把這支腳本排進每月的巡檢（cron 或 systemd timer），
 組態飄移（有人臨時改了設定沒改回來）才抓得到。
+
+---
+
+## 安全性注意事項
+
+> [!danger] 絕對不要做的事
+> - ★★★★★ **`ufw allow 3306/tcp`（不帶 `from`）**：等於把資料庫掛上網際網路。
+>   廠商要連請用 SSH 隧道，不要開防火牆。
+> - ★★★★★ **把正式庫的 dump 直接還原到測試機、開發機，或交給廠商**：
+>   這是**個資外洩**，不是「提供測試資料」。見下一段的正確流程。
+> - ★★★★★ **`GRANT ALL PRIVILEGES ON *.* TO 'app'@'%'`**：
+>   注入一次就等於整台主機失守（`FILE` 可寫 webshell、可讀 `/etc/shadow`）。
+> - ★★★★★ **刪掉 keyring 金鑰檔或不備份它**：加密表空間永久打不開，備份也救不了。
+> - ★★★★ **為了排除問題 `setenforce 0` / `aa-complain` / `ufw disable`**：
+>   臨時關掉的東西沒有人會記得開回來，稽核時這一項直接不通過。
+> - ★★★★ **長期開著 `general_log`**：它會把 `WHERE id_no='A123456789'` 原樣寫進檔案，
+>   日誌檔本身變成一份未納管的個資檔案。
+> - ★★★ **在 shell 裡寫 `mysql -uroot -pP@ssw0rd`**：密碼會進 `~/.bash_history`
+>   與 `ps aux`，同機任何使用者都看得到。用 `--login-path` 或互動輸入。
+
+### ★★★★ 個資法情境（機關必答題）
+
+> [!warning] 條號請自行核對
+> 以下法條僅供對話時定位，**請以全國法規資料庫的現行條文為準**；
+> 通報窗口與時限依貴機關的主管機關函文與資安事件通報流程辦理。
+> 完整說明見 [[07-台灣資安法規與個資法]]。
+
+**五個動作，缺一項稽核就會問**：
+
+| # | 動作 | 具體做法 | 星級 |
+| --- | --- | --- | --- |
+| 1 | **盤點哪些表是個資** | 建一份資料表清冊，標註欄位（姓名／身分證字號／電話／地址／病歷）、法定保存期限、負責科室 | ★★★★ |
+| 2 | **存取可追溯** | `conn_log` + binlog + error log 送集中日誌，保存期限寫進文件 | ★★★★ |
+| 3 | **測試／委外資料一律去識別化** | 見下方流程 | ★★★★★ |
+| 4 | **備份與匯出檔的保存與銷毀** | 加密、限定保存期限、到期 `shred -u`，銷毀留紀錄 | ★★★★ |
+| 5 | **外洩應變** | 事前寫好通報流程與聯絡窗口，事後查明範圍並通知當事人 | ★★★★★ |
+
+盤點起手式：
+
+```sql
+SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COLUMN_TYPE
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA NOT IN ('mysql','sys','information_schema','performance_schema')
+  AND (COLUMN_NAME REGEXP 'id_no|idno|ssn|uid_no|birth|phone|mobile|tel|addr|email|name'
+       OR COLUMN_COMMENT REGEXP '身分證|生日|電話|地址|姓名')
+ORDER BY TABLE_SCHEMA, TABLE_NAME;
+```
+
+預期輸出：
+
+```text
++--------------+---------+-------------+--------------+
+| TABLE_SCHEMA | TABLE_NAME | COLUMN_NAME | COLUMN_TYPE |
++--------------+---------+-------------+--------------+
+| appdb        | members | id_no       | varchar(10)  |   ★★★★★ 身分證字號
+| appdb        | members | mobile      | varchar(20)  |
+| appdb        | members | address     | varchar(255) |
++--------------+---------+-------------+--------------+
+```
+
+#### ★★★★★ 交測試環境／廠商的正確流程
+
+```text
+正式庫 ──dump──▶ ①隔離的遮罩主機（不對外、不連測試網段）
+                     │
+                     ├─▶ ②還原 → ③執行遮罩 SQL → ④驗證無殘留
+                     │
+                     └──re-dump──▶ ⑤交付檔（仍要加密傳輸）──▶ 測試環境／廠商
+                                        │
+                                        └─▶ ⑥留下交付紀錄：誰、何時、什麼範圍、何時銷毀
+```
+
+```sql
+-- ③ 遮罩（在遮罩主機上執行，★★★★ 絕對不要在正式庫跑）
+UPDATE appdb.members SET
+  name    = CONCAT(LEFT(name,1), '○○'),
+  id_no   = CONCAT(LEFT(id_no,1), '*********'),
+  mobile  = CONCAT('09', LPAD('', 8, '*')),
+  email   = CONCAT('user', id, '@example.invalid'),
+  address = '（已遮罩）',
+  birth   = DATE_FORMAT(birth, '%Y-01-01');   -- ★★★ 只留年份，保留分析價值
+```
+
+```bash
+# ④ 驗證無殘留：用身分證字號格式去掃交付檔
+grep -ocE '[A-Z][12][0-9]{8}' masked.sql
+```
+
+預期輸出：`0`。
+★★★★ 不是 0 就**不准交付** —— 通常是漏了某張關聯表（`member_logs`、`applications`）。
+
+> [!danger] ★★★★★ 「廠商說他們會自己刪」不是控制措施
+> 一旦未去識別化的正式資料離開你的管理範圍，就已經構成外洩，
+> 之後對方刪不刪都不影響這個事實。**去識別化必須在資料離開之前完成。**
+>
+> 多數情況下廠商只需要**結構**，不需要資料：
+> ```bash
+> $ mysqldump --no-data --routines --triggers appdb > appdb-schema.sql
+> ```
+> 這是最安全、也最常被忽略的答案。
+
+### TWGCB 對應：誠實的說法
+
+> [!warning] ★★★ 不要編造基準條號
+> TWGCB（政府組態基準）目前發布的基準**以作業系統、瀏覽器、網路設備與部分應用軟體為主**。
+> 撰稿當下（2026-08）**無法確認**有針對 MySQL／MariaDB 的專屬基準文件。
+>
+> **動筆前你必須自己做這件事**：到 NCCST 的 GCB 專區
+> <https://www.nccst.nat.gov.tw/GCB> 與「TWGCB-ID 對照表」確認：
+> - 有對應資料庫的基準 → 把編號與版本寫進 frontmatter 的 `baseline_version`，逐項對應
+> - 沒有 → 在文件裡明講「無對應 TWGCB 基準」，改用 **CIS MySQL Benchmark** 或機關自訂檢核表
+>
+> ★★★★★ **絕對不要在稽核回覆表上填一個查證不到的 TWGCB 編號。** 這比留空白嚴重得多。
+
+**沒有資料庫基準時，資料庫主機仍然被 OS 層的 TWGCB 涵蓋**，把這幾類講清楚就能對應：
+
+| OS 層 TWGCB 類別 | 在資料庫主機上怎麼落實 | 佐證 |
+| --- | --- | --- |
+| 帳號與密碼政策 | OS 帳號用 PAM；**資料庫帳號另用 `validate_password` component** 並在文件說明兩者分開 | `SHOW VARIABLES LIKE 'validate_password.%'` |
+| 日誌與稽核 | `log_error_verbosity=3`、`conn_log`、binlog，全部送集中日誌並保存 ≥ 6 個月 | Wazuh 事件、輪替設定 |
+| 檔案與目錄權限 | `datadir` 750、私鑰 600、含密碼設定檔 600 | `stat -c '%a %U:%G'` |
+| 服務最小化 | 停用 X Plugin、關閉 `local_infile`、限制 `secure_file_priv` | 健檢腳本輸出 |
+| 網路存取控制 | `bind-address` + ufw 白名單 + SSH 隧道 | 外部 nmap 結果 |
+| 強制存取控制 | AppArmor／SELinux 維持 enforce | `aa-status` / `sestatus` |
+
+導入與檢測流程見 [[01-TWGCB概念與法規要求]]、[[04-TWGCB-Linux本機導入]]
+與 [[07-TWGCB-Linux檢測與符合性報告]]；符合性報告的組織方式見 [[09-資安稽核與符合性檢核]]
+與 [[08-系統強化與稽核]]。
+
+---
+
+## 速查表
+
+### 關鍵設定項
+
+| 設定項 | 期望值 | 星級 | 備註 |
+| --- | --- | --- | --- |
+| `bind_address` | `127.0.0.1` 或 `127.0.0.1,<內網IP>` | ★★★★★ | 不是動態變數，要重啟 |
+| `mysqlx` | `OFF` | ★★★★ | 用不到就關；要用改 `mysqlx_bind_address=127.0.0.1` |
+| `require_secure_transport` | `ON` | ★★★★★ | 動態；先 `SET GLOBAL` 再 `SET PERSIST` |
+| `tls_version` | `TLSv1.2,TLSv1.3` | ★★★ | 8.0.28 起 TLSv1/1.1 已移除 |
+| `local_infile` | `OFF` | ★★★★ | 客戶端也要關 |
+| `secure_file_priv` | `NULL` 或固定目錄 | ★★★★ | **空字串最危險** |
+| `skip_name_resolve` | `ON` | ★★★ | 開之前先確認沒有用主機名寫的帳號 |
+| `default_password_lifetime` | `0` | ★★★★ | 人用帳號個別設 `PASSWORD EXPIRE INTERVAL` |
+| `log_error_verbosity` | `3` | ★★★ | 2 記不到 Note 級事件 |
+| `general_log` | `OFF` | ★★★★ | 只在排查時短期開 |
+| `admin_address` | `127.0.0.1` | ★★★ | 保留一條管理救生管道（33062） |
+
+### 一行驗證指令
+
+| 要驗證什麼 | 指令 | 星級 |
+| --- | --- | --- |
+| 監聽在哪 | `sudo ss -lntp \| grep mysqld` | ★★★★★ |
+| 外部連不連得到 | `nmap -Pn -p 3306,33060 <host>` | ★★★★★ |
+| 目前用哪張憑證 | `openssl s_client -connect 127.0.0.1:3306 -starttls mysql` | ★★★★ |
+| 我這條連線加密了嗎 | `mysql … -e "\s" \| grep -i ssl` 或 `SHOW STATUS LIKE 'Ssl_cipher'` | ★★★★ |
+| 誰還在用明文 | 「階段 0」的 `performance_schema` 查詢 | ★★★★★ |
+| 有沒有 `'%'` 帳號 | `SELECT user,host FROM mysql.user WHERE host='%'` | ★★★★ |
+| 誰有 FILE 權限 | `SELECT GRANTEE FROM information_schema.USER_PRIVILEGES WHERE PRIVILEGE_TYPE='FILE'` | ★★★★★ |
+| 有人在猜密碼嗎 | `SELECT * FROM information_schema.CONNECTION_CONTROL_FAILED_LOGIN_ATTEMPTS` | ★★★★ |
+| 整體健檢 | `sudo mysql-hardening-check.sh` | ★★★★ |
+
+### 檔案路徑（Ubuntu 主線）
+
+| 路徑 | 內容 | 權限 | 星級 |
+| --- | --- | --- | --- |
+| `/etc/mysql/mysql.conf.d/99-hardening.cnf` | 本篇所有加固設定 | 644 root:root | ★★★★ |
+| `/var/lib/mysql/mysqld-auto.cnf` | `SET PERSIST` 寫入處 | 600 mysql:mysql | ★★★ |
+| `/etc/mysql/ssl/server-key.pem` | 伺服器私鑰 | **600 mysql:mysql** | ★★★★★ |
+| `/var/lib/mysql-keyring/component_keyring_file` | 表空間加密金鑰 | 600 mysql:mysql | ★★★★★ |
+| `/usr/sbin/mysqld.my` | keyring component manifest | 644 root:root | ★★★ |
+| `/var/log/mysql/error.log` | 錯誤與連線事件 | 640 mysql:adm | ★★★★ |
+| `~/.mylogin.cnf` | 混淆過的登入資訊（**非加密**） | 600 | ★★★ |
+
+> [!info]- RHEL 系路徑對照
+> | Ubuntu | RHEL |
+> | --- | --- |
+> | `/etc/mysql/mysql.conf.d/` | `/etc/my.cnf.d/` |
+> | 服務名 `mysql` | 服務名 `mysqld`（MariaDB 為 `mariadb`） |
+> | `/var/log/mysql/error.log` | `/var/log/mysqld.log` |
+> | AppArmor `/etc/apparmor.d/local/` | SELinux `semanage fcontext` |
+> | `ufw` | `firewalld` |
+
+---
+
+## 練習題
+
+> [!question]- 練習 1：找出你這台機器的暴露面
+> 在一台測試用的 MySQL 8 主機上，完成以下事情並把輸出貼進報告：
+> 1. 用 `ss` 列出所有 mysqld 監聽的位址與埠
+> 2. 從**另一台**主機用 `nmap` 掃 3306、33060、33062
+> 3. 判斷這台機器目前屬於「安全」「僅內網暴露」還是「對外暴露」
+>
+> **參考解答**
+> ```bash
+> $ sudo ss -lntp | grep mysqld
+> LISTEN 0 151 0.0.0.0:3306  0.0.0.0:* users:(("mysqld",pid=1183,fd=23))
+> LISTEN 0 70  0.0.0.0:33060 0.0.0.0:* users:(("mysqld",pid=1183,fd=35))
+>
+> $ nmap -Pn -p 3306,33060,33062 192.168.56.20
+> 3306/tcp  open  mysql
+> 33060/tcp open  mysqlx
+> ```
+> 判定：**對外暴露**。★★★★ 兩個埠都 `open`，代表 `bind-address=0.0.0.0` 且防火牆沒擋。
+> 處置順序：先補防火牆規則（立即見效），再改 `bind-address` 與 `mysqlx=OFF`（需重啟）。
+> ★★★ 先防火牆後設定，因為防火牆不用重啟服務，能馬上止血。
+
+> [!question]- 練習 2：分辨「有加密」與「安全」
+> 在同一台 MySQL 上，分別用 `--ssl-mode=PREFERRED` 與 `--ssl-mode=VERIFY_IDENTITY`
+> （帶自動產生的 `/var/lib/mysql/ca.pem`）連線。解釋兩者的結果差在哪、為什麼。
+>
+> **參考解答**
+> ```bash
+> $ mysql --ssl-mode=PREFERRED -h 127.0.0.1 -u ops -p -e "\s" | grep -i ssl
+> SSL:  Cipher in use is TLS_AES_256_GCM_SHA384        # ★ 有加密
+>
+> $ mysql --ssl-mode=VERIFY_IDENTITY --ssl-ca=/var/lib/mysql/ca.pem \
+>         -h 127.0.0.1 -u ops -p -e "SELECT 1"
+> ERROR 2026 (HY000): SSL connection error: Failed to verify the server certificate
+> ```
+> 原因：★★★★ 自動產生的憑證 CN 是 `MySQL_Server_8.0.x_Auto_Generated_Server_Certificate`，
+> 沒有 SAN，也不含主機名，所以主機名比對必定失敗。
+> 這正好證明「PREFERRED 顯示已加密」**不代表你驗證過對方是誰** ——
+> 中間人架一台假伺服器，PREFERRED 一樣會顯示加密成功。
+> 解法是用機關 CA 重簽一張 SAN 涵蓋主機名與 IP 的憑證。
+
+> [!question]- 練習 3：設計一份交給廠商的測試資料
+> 廠商要一份 `members` 表的資料做介面測試（12 萬筆，含身分證字號、手機、地址）。
+> 寫出你的完整流程與驗證方式。
+>
+> **參考解答**
+> 1. ★★★★★ **先問廠商真的需要資料還是只需要結構**。多數情況 `mysqldump --no-data` 就夠。
+> 2. 真的需要資料時：在**隔離主機**還原正式備份 → 執行遮罩 SQL（姓名留姓、身分證留首字、
+>    手機與地址全遮、生日只留年份）→ 檢查所有關聯表（`member_logs`、`applications`）是否也遮了。
+> 3. 驗證：`grep -ocE '[A-Z][12][0-9]{8}' masked.sql` 必須為 `0`；
+>    另外抽 20 筆人工目視。★★★★ 不是 0 就不准交付。
+> 4. 交付檔加密（`age` 或 `gpg`），密碼另管道傳遞。
+> 5. ★★★★ 留下交付紀錄：交付對象、日期、資料範圍、約定銷毀日期、銷毀回覆。
+> 6. 遮罩主機用完立即銷毀（`shred` 或整台 VM 刪除）。
+
+---
+
+## 小測驗
+
+Q1. `nmap` 顯示 3306 是 `open`，但用 `mysql -h` 連過去得到 `ERROR 1130: Host is not allowed to connect`。這台機器算不算安全？為什麼？
+
+Q2. MySQL 8 開機時會自動產生一組憑證。既然「已經有 TLS」，為什麼還要換成機關自建 CA 簽發的憑證？
+
+Q3. 下面這行指令會發生什麼事？`sudo ufw allow 3306/tcp`
+
+Q4. 你把 `bind-address` 從 `0.0.0.0` 改成 `127.0.0.1` 並重啟，但掃描報告仍指出「33060 對外開放」。哪裡漏了？
+
+Q5. （是非）啟用 InnoDB 表空間加密之後，`mysqldump` 產生的備份檔也是加密的。
+
+Q6. 你打算把 `default_password_lifetime` 設成 90 以符合「密碼每 90 天更換」的要求。這樣做有什麼風險？正確做法是什麼？
+
+Q7. `--ssl-mode` 的 `REQUIRED` 與 `VERIFY_CA` 差在哪？哪一個擋得住中間人？
+
+Q8. 你用 `init_connect` 記錄所有連線，但發現管理員 `ops_alice` 的連線完全沒有紀錄。為什麼？
+
+Q9. 「這行指令會發生什麼」：`SET GLOBAL require_secure_transport = ON;` 在一台還有 12 條明文連線的正式資料庫上執行。
+
+Q10. 稽核委員要求你填寫「資料庫已依 TWGCB-XX-XXX 完成組態設定」。你查不到對應 MySQL 的 TWGCB 基準編號。該怎麼回覆？
+
+> [!question]- 測驗答案
+> **Q1. 不安全。★★★★**
+> `open` 代表 TCP 三次握手成功、MySQL 願意跟對方講話 —— 唯一擋住他的是**帳號的 host 限制**，
+> 那是最後一道，不是第一道。攻擊者此時可以讀版本橫幅去找已知漏洞、對 `root` 做密碼噴灑、
+> 用大量連線耗掉 `max_connections`。
+> 唯二可接受的結果是逾時（`ERROR 2003 … (110)`）或連線被拒（`(111)`）。
+> 處置：先 `ufw` 白名單止血（不用重啟），再收 `bind-address`。
+> 見「從外部主機驗證」那張錯誤訊息對照表。
+>
+> **Q2. 因為自動憑證只能加密，不能驗證身分。★★★★**
+> 自動產生的憑證：CN 是 `MySQL_Server_8.0.x_Auto_Generated_Server_Certificate`、
+> **沒有 SAN**、簽發者是每台機器自己產的 CA。
+> 客戶端沒有共同的信任根，也無法比對主機名，所以只能用 `--ssl-mode=PREFERRED`。
+> 結果是：攻擊者在同網段做 ARP 欺騙、架一台假 MySQL，客戶端**一樣顯示連線已加密**，
+> 然後把帳號密碼與查詢送給攻擊者。
+> ★★★★ 加密解決竊聽，驗證解決冒充；只做前者等於只做一半。見「傳輸加密」開頭的 danger callout。
+>
+> **Q3. ★★★★★ 它會把 3306 對「任何來源」放行（`ALLOW IN Anywhere`）。**
+> 沒有 `from` 子句的 `ufw allow` 就是全開。配上 `bind-address=0.0.0.0`，
+> 你的資料庫在幾小時內就會被網路空間搜尋引擎索引到。
+> 正確寫法是 `sudo ufw allow from 10.10.20.21 to any port 3306 proto tcp comment 'app01'`。
+> 廠商要連請用 SSH 隧道，不要開防火牆規則。
+> 檢查方式：`sudo ufw status numbered`，看到 `Anywhere` 就是紅燈。見「防火牆白名單」。
+>
+> **Q4. 漏了 X Plugin。★★★★**
+> MySQL 8 預設載入 X Plugin，額外監聽 **33060/tcp**，它由 `mysqlx_bind_address` 控制，
+> **不受 `bind_address` 影響**。這是稽核掃描最常出現的「未知服務」。
+> 解法：用不到就 `mysqlx = OFF`；要用則 `mysqlx_bind_address = 127.0.0.1`。
+> ★★★ 這兩個都不是動態變數，改完必須重啟服務。
+> 驗證 `sudo ss -lntp | grep 33060` 應該沒有輸出。見「33060 幾乎每次都被忘記」。
+>
+> **Q5. 錯。★★★★**
+> `mysqldump` 是透過**正常的資料庫連線**讀資料，讀到的是**解密後的明文**，
+> 所以 dump 檔完全沒有被表空間加密保護。
+> 表空間加密擋的是「整顆硬碟被搬走」「硬碟送修未消磁」；
+> 備份檔外流要靠**備份檔本身加密**（`age` / `gpg`）。
+> ★★★★ 這兩層擋不同的威脅，必須分開做、分開驗證。
+> 見「靜態資料保護：三層各擋什麼」那張表與 [[05-MySQL-備份與還原]]。
+>
+> **Q6. 風險是應用會在半夜集體掛掉。★★★★**
+> `default_password_lifetime` 對**所有帳號**生效，包含 `app_rw` 這種應用帳號。
+> 到期後應用連進來會拿到 `ERROR 1820: You must reset your password using ALTER USER…`，
+> 而且是**全部應用同時**發生，通常在深夜或連假。
+> 正確做法：全域設 `0`，只對人用帳號個別設定
+> `ALTER USER 'ops_alice'@'10.10.9.%' PASSWORD EXPIRE INTERVAL 90 DAY;`，
+> 應用帳號明寫 `PASSWORD EXPIRE NEVER`，輪換靠變更管理排程做。
+> 見「密碼政策與帳號鎖定」的 danger callout。
+>
+> **Q7. `REQUIRED` 只保證加密，`VERIFY_CA` 才會驗證伺服器憑證是不是你信任的 CA 簽的。★★★★**
+> `REQUIRED` 的連線一定是 TLS，但**不檢查對方是誰** —— 中間人拿一張自簽憑證就能通過。
+> `VERIFY_CA` 會用你給的 `--ssl-ca` 驗證憑證鏈，擋得住中間人；
+> `VERIFY_IDENTITY` 再多驗一步主機名（比對 SAN），是目標狀態。
+> ★★★ `VERIFY_CA` 以上都需要客戶端**實際拿到 CA 憑證檔**，所以 CA 憑證的派送是切換作業的前置工作。
+> 見 `--ssl-mode` 那張對照表與 [[09-根憑證派送與信任]]。
+>
+> **Q8. 因為她的帳號有 `CONNECTION_ADMIN`（或舊的 `SUPER`）權限。★★★★**
+> MySQL 的 `init_connect` **對持有 `CONNECTION_ADMIN` 的帳號不執行** ——
+> 這個設計原本是為了避免管理員被壞掉的 `init_connect` 鎖在門外，
+> 但副作用是**最需要被稽核的那些人剛好不會被記錄**。
+> 補救方式：管理員的連線改從 error log（`log_error_verbosity=3`）與 SSH 登入紀錄比對，
+> 或改用 Percona Audit Log Plugin 這類真正的稽核外掛。
+> 這也是為什麼 `init_connect` 只能算「聊勝於無」的方案。見稽核那節的 danger callout。
+>
+> **Q9. 12 條明文連線不會被立刻切斷，但它們一旦重連就再也連不上。★★★★★**
+> `require_secure_transport` 只在**建立新連線**時檢查，現有連線不受影響。
+> 所以你當下看起來「什麼事都沒有」，直到連線池回收、PHP-FPM 重啟或深夜重連，
+> 才會突然全站白畫面，error log 出現大量
+> `Connections using insecure transport are prohibited while --require_secure_transport=ON`。
+> 正確順序：先用「階段 0」的 `performance_schema` 查詢確認**沒有任何空白 `tls_ver` 的列**，
+> 再開；而且先 `SET GLOBAL`（重啟即失效）觀察一個上班日，沒問題才 `SET PERSIST`。
+> 出事時的止血：`sudo mysql -e "SET GLOBAL require_secure_transport=OFF"`（socket 永遠通得過）。
+>
+> **Q10. 誠實說明沒有對應基準，改用替代檢核並附證據。★★★★★**
+> 絕對不要填一個查證不到的編號 —— 稽核一比對就是「陳述不實」，比留白嚴重得多。
+> 建議回覆的寫法：
+> 1. 說明 TWGCB 現行發布的基準以作業系統／瀏覽器／網路設備／部分應用軟體為主，
+>    經查（附查詢日期與 GCB 網址）無對應 MySQL 之基準文件。
+> 2. 改依 **CIS MySQL Benchmark**（或機關自訂檢核表）執行，附 `mysql-hardening-check.sh` 的
+>    整改前後對照表當佐證。
+> 3. 說明**資料庫主機的 OS 層仍完整套用 TWGCB**，並逐項對應帳號、日誌、檔案權限、
+>    服務最小化、網路存取控制、強制存取控制六類。
+> ★★★ 動筆前一定要自己上 <https://www.nccst.nat.gov.tw/GCB> 查一次現況，不要引用本篇的判斷當結論。
+> 見「TWGCB 對應：誠實的說法」。
+
+---
+
+## 延伸閱讀
+
+- [[02-MySQL-使用者與權限]] — 本篇只做盤點與收斂，帳號與角色的完整設計在那裡
+- [[05-MySQL-備份與還原]] — 備份加密、保存期限與**還原演練**，本篇的第 5 層靠它落實
+- [[04-備份災難復原與入侵應變]] — 資料庫被拖庫或勒索後的應變順序
+- [[08-用自建CA簽發伺服器憑證]] — 本篇用到的資料庫憑證從哪來
+- [[10-憑證部署到各服務]] — 同一張 CA 怎麼同時服務 Nginx、MySQL 與內部工具
+- [[05-Wazuh-日誌蒐集與解析]] — 把 error log 與連線紀錄變成會告警的規則
+- [[07-台灣資安法規與個資法]] — 個資盤點、通報時限與委外管理的法規面
+- [[09-資安稽核與符合性檢核]] — 把本篇的健檢輸出組織成一份完整的符合性報告
+- MySQL 8.0 Reference Manual — Security：<https://dev.mysql.com/doc/refman/8.0/en/security.html>
+- MySQL 8.0 — Using Encrypted Connections：<https://dev.mysql.com/doc/refman/8.0/en/encrypted-connections.html>
+- MySQL 8.0 — InnoDB Data-at-Rest Encryption：<https://dev.mysql.com/doc/refman/8.0/en/innodb-data-encryption.html>
+- 政府組態基準（GCB）專區：<https://www.nccst.nat.gov.tw/GCB>
