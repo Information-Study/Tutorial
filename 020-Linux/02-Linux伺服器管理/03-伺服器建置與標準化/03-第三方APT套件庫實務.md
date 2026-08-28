@@ -1,87 +1,2133 @@
 ---
 title: "第三方 APT 套件庫實務"
-desc: "keyrings 與 signed-by 的正確寫法、apt pinning、信任評估與安全移除"
-aliases: []
-tags: [群組/Linux, linux/伺服器, 主題/建置標準化]
+desc: "第三方套件庫的治理程序：指紋雙管道驗證、deb822 與 signed-by 綁定、pinning 有限度信任、盤點稽核與安全撤除"
+aliases: [signed-by, deb822, apt pinning, apt-key, keyrings, 第三方套件庫, third-party repo]
+tags: [群組/Linux, linux/伺服器, 主題/建置標準化, 主題/供應鏈]
 category: 伺服器建置與標準化
 difficulty: 進階
-status: 待撰寫
+status: 完成
 distro: [ubuntu, rhel]
-prerequisites: []
-updated: 2026-08-27
+prerequisites: ["[[14-套件管理]]", "[[01-新機建置標準流程]]"]
+updated: 2026-08-28
 ---
 
 # 第三方 APT 套件庫實務
 
 > [!abstract] 這篇你會學到
-> - 用現代方式加入第三方套件庫
-> - 理解 signed-by 為什麼取代 apt-key
-> - 用 pinning 控制套件來源優先序
-> - 評估第三方套件庫的風險並安全移除
+> - **★★★★★ 把「金鑰指紋驗證」做對**：從第二個獨立管道取得指紋逐字比對，而不是「用 https 抓下來就算驗證過」
+> - **★★★★ 用 deb822 `.sources` + 每庫獨立 keyring + `Signed-By` 綁定**，取代全域信任的 `apt-key` 模型
+> - **★★★★ 用 pinning 建立「有限度信任」**：整個庫壓到 100、只把需要的套件放行到 700，並用 `apt policy` 證明它真的生效
+> - 交得出一份**第三方套件庫風險評估表**與**來源登錄表**，回答稽核「你身上有幾個非官方來源、各裝了什麼」
+> - **★★★★ 走完七步撤除流程**，不留下收不到任何更新的孤兒套件
+> - 三支可直接部署的治理腳本：`apt-repo-add` / `apt-repo-audit` / `apt-repo-remove`
+
+> [!warning] 未實機驗證
+> 本篇的**通用程序、指令旗標與設定檔語法**依 Debian／Ubuntu 官方文件（`sources.list(5)`、`apt_preferences(5)`）撰寫。
+> 但**任何第三方套件庫的實際 URI、suite 名稱、GPG 金鑰指紋都會隨時間變動** ——
+> 文中出現的 MyGuard 相關數值僅為示範格式，實作前**必須**到 <https://deb.myguard.nl/how-to-use/> 核對當前值，
+> 並對照 [[01-MyGuard套件庫介紹]]。★★★★ 照抄一組過期的指紋，比不驗證還危險。
+
+---
 
 ## 前置知識
 
-<!-- TODO: 待撰寫 -->
+| 篇章 | 你需要從那裡帶過來的東西 |
+| --- | --- |
+| [[14-套件管理]] | ★★★ apt / dpkg 三層架構、`sources.list` 基本語法、`signed-by=` 與 pinning 的**入門語法** |
+| [[01-新機建置標準流程]] | ★★★ 新機交接 SOP 的骨架 —— 第三方庫是其中一個「需要簽核的變更」 |
+| [[02-基準設定與範本化]] | ★★ 基準範本要把「允許哪些套件來源」寫進去 |
+| [[08-變更管理流程]] | ★★★★ 加入／撤除套件庫是**組態變更**，要走變更單 |
+| [[11-委外與供應鏈資安]] | ★★★★ 第三方庫屬於軟體供應鏈，稽核會直接問這一項 |
+
+> [!note] 這篇不重講什麼
+> ```
+> ★★  apt / dpkg 的日常指令      → [[14-套件管理]]（已寫滿 1175 行）
+> ★★  signed-by 與 pinning 的「入門語法」→ 同上，本篇只做一句回顧就直接進治理層
+> ★★  MyGuard 各模組的功能與設定  → [[01-MyGuard套件庫介紹]] 起的 MyGuard 章
+> ★★  怎麼自己架一個 APT 套件庫   → [[04-自建APT套件庫]]
+> ★★★ 本篇的主題是【治理與驗證】，不是【怎麼加一行 deb 進去】
+> ```
+
+---
 
 ## 觀念說明
 
-<!-- TODO: 待撰寫 -->
+### ★★★★★ 核心命題：加一個第三方庫，等於在供應鏈上開一道門
 
-## 環境準備與安裝
+```
+★★★★★ 【一句話】APT 套件庫的維護者，實質上擁有你這台機器的 root。
 
-<!-- TODO: 待撰寫 -->
+  一個 .deb 套件在安裝時可以：
+    · 把任意檔案寫到系統的任何路徑（包含 /usr/sbin、/etc、systemd unit）
+    · ★★★★★ 執行 preinst / postinst / prerm / postrm maintainer script
+      → 這些 script 是【以 root 身分執行的任意程式碼】
+    · 用 Replaces / Provides 取代系統既有的套件
+    · 透過相依關係把其它套件一起拉進來
 
-> [!info]- 平台差異對照
-> <!-- TODO: 待撰寫 -->
+  → ★★★★★ 所以「加一個第三方套件庫」不是「多裝一個程式」，
+     是【把一個外部組織加進你的 root 信任清單，而且是持續性的】。
+     今天審過的套件沒問題，不代表下個月自動更新推下來的那版沒問題。
+```
 
-## 基礎設定
+機關環境要面對的不只是技術問題，還有**證明題**：稽核會問「你身上有幾個非官方來源？誰核准的？出事怎麼關掉？」
+本篇的產出就是為了回答這三題。
 
-<!-- TODO: 待撰寫 -->
+### ★★★★ 為什麼 `apt-key` 被廢：全域信任模型
+
+```
+★★★★ 【舊模型 apt-key】—— 一把金鑰可以簽【任何套件庫】的【任何套件】
+
+  /etc/apt/trusted.gpg          ← 所有 apt-key add 的金鑰通通丟這裡
+  /etc/apt/trusted.gpg.d/*.gpg  ← 套件安裝時放的金鑰，同樣是全域信任
+
+     ┌──────────────────────────────────────────────┐
+     │           全域信任池（trusted keyring）        │
+     │  Ubuntu 官方金鑰                              │
+     │  Docker 金鑰                                  │
+     │  某個三年前試用完忘了移除的 PPA 金鑰  ← ★★★★★ │
+     └──────────────────────────────────────────────┘
+                       ↓ 任何一把都能驗證
+     ┌────────────┐  ┌────────────┐  ┌────────────┐
+     │ Ubuntu 官方 │  │  Docker    │  │ 隨便一個庫 │
+     └────────────┘  └────────────┘  └────────────┘
+
+  ★★★★★ 攻擊情境：
+    那個三年前的 PPA 金鑰若外流或維護者被入侵，
+    持有金鑰的人可以簽一個【假的 openssh-server】，
+    只要能讓你的機器連到他控制的 mirror（DNS 劫持、內網 proxy、打錯的鏡像設定），
+    apt 就會【驗簽通過】並安裝它。
+    → 因為 apt 只問「這個簽章在信任池裡找得到對應的金鑰嗎」，
+      【不問「這把金鑰是不是這個庫該用的那把」】。
+```
+
+```
+★★★★ 【新模型 signed-by】—— 每個庫綁定自己的金鑰
+
+  /etc/apt/keyrings/docker.gpg   ──綁定──▶  https://download.docker.com/...
+  /etc/apt/keyrings/myguard.gpg  ──綁定──▶  https://deb.myguard.nl/apt
+
+  ★★★★ Docker 的金鑰【只能】驗證 Docker 那個 URI 的 Release 檔。
+       拿去簽 Ubuntu 官方庫的東西 → apt 直接判定不信任。
+  → 信任範圍從「全系統」縮成「一個 URI」，這就是最小權限原則在 apt 上的實作。
+```
+
+`apt-key` 的實際狀態（★★★ 依版本而異，別假設）：
+
+| 版本 | `apt-key` 狀態 | 你會看到什麼 |
+| --- | --- | --- |
+| Ubuntu 22.04 / 24.04、Debian 12 | ★★★ 仍存在，但每次執行都印棄用警告 | `Warning: apt-key is deprecated…` |
+| Debian 13 (trixie) 起 | ★★★★ **已完全移除** | `apt-key: command not found` |
+| Ubuntu 26.04 (resolute) 起 | ★★★★ **已完全移除** | 同上 |
+
+> [!danger] ★★★★★ 即使 apt-key 還在，也不要再用
+> 你在網路上找到的安裝說明若還寫 `curl … | sudo apt-key add -`，那份文件至少落後五年。
+> 照著做的後果是：**在你的機器上新增一把可以簽任何套件的全域金鑰**，
+> 而且它不會出現在任何以 `signed-by` 為前提的盤點腳本裡 —— 這是最典型的「稽核盤點漏掉的那一把」。
+
+### ★★★ 三個檔案、三個問題
+
+```
+★★★ 一個第三方庫在你機器上留下的痕跡，只有三處：
+
+  ① /etc/apt/sources.list.d/<名稱>.sources   ← 「要去哪裡拿」
+  ② /etc/apt/keyrings/<名稱>.gpg             ← 「拿到的東西誰簽的」
+  ③ /etc/apt/preferences.d/<名稱>            ← 「拿到後有多大的權力」  ★★★★ 最常被漏掉的一個
+
+  ★★★★ 大多數教學只教 ①②，於是這個庫拿到【和官方庫一樣的 500 優先權】，
+       可以無聲無息地把你的 openssl、systemd、libc6 換成它的版本。
+       ③ 才是把門開成【小窗】而不是【大門】的那一塊。
+```
+
+### ★★★ InRelease / Release 與 Valid-Until：庫的心跳訊號
+
+```
+★★★ apt update 抓到的第一個檔案是 InRelease（clearsign，簽章與內容同檔）
+    舊式的庫可能只有 Release + Release.gpg（分離簽章）
+
+  InRelease 標頭關鍵欄位：
+    Origin: MyGuard            ← ★★★ pinning 的 o=  、unattended-upgrades 的 origin=
+    Label:  MyGuard            ← ★★  pinning 的 l=
+    Suite:  noble              ← ★★★ pinning 的 a=
+    Codename: noble            ← ★★  pinning 的 n=
+    Components: main           ← ★★  pinning 的 c=
+    Date: Fri, 28 Aug 2026 03:00:12 UTC
+    Valid-Until: Fri, 04 Sep 2026 03:00:12 UTC   ← ★★★★ 這個庫的「有效期限」
+
+★★★★ Valid-Until 的真正意義：
+    「維護者承諾在這個時間之前一定會重新產生並簽署 Release 檔」
+    → 一旦過期，代表【沒有人在重新簽了】
+    → ★★★★ 這是「這個庫已經死了」或「維護者出事了」的【第一個訊號】，
+      而且通常比 GitHub 上停止提交早被你發現。
+```
+
+> [!danger] ★★★★ 看到 Release 過期，絕對不要用 `Acquire::Check-Valid-Until "false";` 蓋掉
+> ```
+> ★★★★★ 這個設定的實際作用是：
+>   「我不在乎我拿到的套件清單是不是一年前的舊快照」
+>   → 攻擊者可以把你導到一份【舊的、含有已知 CVE 版本】的 Packages 清單（replay attack），
+>     你的 apt 會很開心地驗簽通過，然後永遠不再看到修補版本。
+>
+> ★★★★ 正確反應是【啟動撤除評估】，見本篇「撤除流程」。
+>       唯一可以短暫使用的場合：你自己維護的離線鏡像，且已知它是刻意凍結的快照，
+>       此時應改用【只對該來源】的 Snapshot／固定期限設定，而不是全域關閉。
+> ```
+
+### ★★★ 一句話回顧（入門語法在 [[14-套件管理]]）
+
+```bash
+# ★★ one-line 格式（舊，仍可用）
+deb [arch=amd64 signed-by=/etc/apt/keyrings/example.gpg] https://repo.example.com/apt noble main
+```
+
+本篇從這裡**往上一層**寫：指紋怎麼算驗證過、deb822 怎麼寫、pinning 怎麼設計成有限度信任、
+過期怎麼判讀、自動更新怎麼互動、盤點怎麼交、撤除怎麼撤乾淨。
+
+---
+
+## 基礎操作
+
+### ★★★★ 步驟零：先盤點這台機器現有的殘留（接手舊機一定要做）
+
+**【1】檢查全域信任池有沒有殘留金鑰**
+
+```bash
+ls -l /etc/apt/trusted.gpg /etc/apt/trusted.gpg.d/ 2>/dev/null
+```
+
+預期輸出（★★★★ 乾淨的機器應該只有發行版自己放的那幾把）：
+
+```text
+-rw-r--r-- 1 root root 12288 Mar  4  2023 /etc/apt/trusted.gpg      # ★★★★ 這個檔存在就是警訊
+/etc/apt/trusted.gpg.d/:
+-rw-r--r-- 1 root root  2794 Apr 24  2024 ubuntu-keyring-2012-cdimage.gpg
+-rw-r--r-- 1 root root  1733 Apr 24  2024 ubuntu-keyring-2018-archive.gpg
+-rw-r--r-- 1 root root  2210 Sep 11  2021 docker.gpg               # ★★★★ 這一把是誰放的？
+```
+
+**【2】把 `trusted.gpg` 裡的金鑰逐一列出來**
+
+```bash
+gpg --no-default-keyring --keyring /etc/apt/trusted.gpg \
+    --list-keys --with-fingerprint --with-colons \
+  | awk -F: '/^pub/{d=$6} /^fpr/{print $10} /^uid/{print "   uid:", $10, "(created " strftime("%F", d) ")"}'
+```
+
+預期輸出：
+
+```text
+9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+   uid: Docker Release (CE deb) <docker@docker.com> (created 2017-02-22)
+7EA0A9C3F273FCD8                                     # ★★★ 只有短 ID？表示是很舊的匯入
+   uid: 某個已離職同事的測試 PPA (created 2019-06-03)   # ★★★★★ 這種就是要清掉的
+```
+
+**【3】逐一比對「還有沒有在用」**
+
+```bash
+# ★★★ 把所有來源的網域列出來，再回頭看哪把金鑰對得上
+grep -rhoE 'https?://[^ ]+' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
+  | awk -F/ '{print $3}' | sort -u
+```
+
+預期輸出：
+
+```text
+archive.ubuntu.com
+deb.myguard.nl
+security.ubuntu.com
+```
+
+判讀：上面 Docker 的金鑰還在 `trusted.gpg.d/`，但來源清單裡**已經沒有 download.docker.com**
+→ ★★★★ 這是一把**沒有對應來源的孤兒金鑰**，應移除。
+
+**【4】移除（先備份）**
+
+```bash
+sudo install -d -m 0700 /root/apt-key-backup
+sudo cp -a /etc/apt/trusted.gpg /etc/apt/trusted.gpg.d/ /root/apt-key-backup/   # ★★★ 先備份再刪
+
+# 從 trusted.gpg 移除單一把（用完整指紋，★★★★ 不要用短 ID）
+sudo gpg --no-default-keyring --keyring /etc/apt/trusted.gpg \
+        --batch --yes --delete-key 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+
+sudo rm -f /etc/apt/trusted.gpg.d/docker.gpg
+sudo apt update    # ★★★★ 一定要跑，確認沒有任何來源因此變成 NO_PUBKEY
+```
+
+預期輸出（成功）：
+
+```text
+Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:2 https://deb.myguard.nl/apt noble InRelease
+Reading package lists... Done
+# ★★★ 沒有出現 NO_PUBKEY、沒有出現 legacy trusted.gpg keyring 警告 = 清乾淨了
+```
+
+> [!tip] ★★★ 如果 `trusted.gpg` 清空後變成 0 個金鑰，直接把整個檔案刪掉
+> 空的 `trusted.gpg` 仍會讓某些工具誤判「有 legacy keyring」。
+> `sudo rm -f /etc/apt/trusted.gpg` 後再跑一次 `apt update` 確認無誤即可。
+
+### ★★★★★ 步驟一：金鑰驗證 —— 「用 https 抓下來」不叫驗證
+
+```
+★★★★★ 【最重要的一段】
+
+  很多教學寫：
+      curl -fsSL https://repo.example.com/key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/x.gpg
+  然後就結束了。
+
+  ★★★★★ 這【不是驗證】。https 保證的是：
+      「我確實連到了持有 repo.example.com 憑證的那台主機」
+  它【完全沒有】保證：
+      · 那台主機沒有被入侵
+      · DNS 沒有被汙染（企業內網 split-DNS、被劫持的解析器）
+      · 你的流量沒有經過一個裝了自訂 CA 的 TLS 攔截 proxy  ← ★★★★★ 機關環境非常常見
+      · 你打的網域沒有拼錯（typosquatting）
+
+  ★★★★★ 真正的驗證 = 【第二個獨立管道 + 逐字比對指紋】
+    第一管道：你剛剛用 curl 抓下來的金鑰檔
+    第二管道（擇一或多重）：
+      · 官網的 how-to-use / installation 文件頁（★★ 和金鑰檔不同的 URL 路徑）
+      · 專案 GitHub repo 的 README 或 SECURITY.md（★★★ 不同的主機、不同的組織）
+      · 發行公告郵件列表、GPG 簽署的 release announcement（★★★ 最強）
+      · ★★★★ 廠商的正式函文／合約附件（機關採購案最該用這個，因為【留得下稽核軌跡】）
+      · Debian/Ubuntu 官方 keyring 套件（若該庫有進官方）
+```
+
+**【1】下載金鑰並轉檔**
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://deb.myguard.nl/deb.myguard.nl.gpg -o /tmp/repo.key
+file /tmp/repo.key
+```
+
+預期輸出（★★★ 先看它是哪種格式，決定要不要 `--dearmor`）：
+
+```text
+/tmp/repo.key: PGP public key block Public-Key (old)
+# ★★ 「PGP public key block」= 二進位格式，不需要 dearmor
+# ★★ 若顯示 "PGP public key block Public-Key (old)" 以外的
+#    "ASCII text" / 開頭是 -----BEGIN PGP PUBLIC KEY BLOCK-----，就【需要】dearmor
+```
+
+> [!note] ★★★ `--dearmor` 到底在做什麼
+> ```
+> ASCII armor 格式（.asc）：文字檔，-----BEGIN PGP PUBLIC KEY BLOCK----- 開頭，base64 內容
+> 二進位格式（.gpg）：apt 實際要餵給 gpgv 的格式
+>
+> gpg --dearmor  = 把 ASCII armor 轉成二進位
+> gpg --enarmor  = 反過來
+>
+> ★★★ 何時需要：下載到的是 .asc / 文字檔 → 需要
+>     下載到的已經是二進位 .gpg → 【不要再 dearmor】，會直接報 "no valid OpenPGP data found"
+> ★★ 判斷方法：head -c 5 file，看到 "-----" 就是 armor。
+> ★★★ 現代 apt（>= 2.4）其實兩種格式都吃，但 keyring 檔統一成二進位比較好稽核。
+> ```
+
+```bash
+head -c 40 /tmp/repo.key | cat -v      # ★★★ 一眼判斷格式
+```
+
+預期輸出（二進位）：
+
+```text
+^]^A^R^D^S^A^H^N^V^X^@^@...
+```
+
+若是 armor 則會看到：
+
+```text
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+```
+
+**【2】★★★★★ 顯示指紋，逐字比對**
+
+```bash
+gpg --show-keys --with-fingerprint --with-colons /tmp/repo.key \
+  | awk -F: '/^fpr:/{print $10}'
+```
+
+預期輸出：
+
+```text
+A1B2C3D4E5F60718293A4B5C6D7E8F9012345678
+# ★★★★★ 這 40 個十六進位字元，必須和【第二管道】公布的完全一致
+# ★★★★ 比對方法：不要用眼睛掃！用 diff 或程式比對（見下）
+```
+
+```bash
+# ★★★★ 正確的比對方式：把預期指紋寫成變數，用字串比對，不符就中止
+EXPECTED='A1B2C3D4E5F60718293A4B5C6D7E8F9012345678'
+ACTUAL=$(gpg --show-keys --with-fingerprint --with-colons /tmp/repo.key | awk -F: '/^fpr:/{print $10}' | head -n1)
+if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+  echo "★★★★★ 指紋不符！預期 $EXPECTED 實得 $ACTUAL — 立即停止，不要安裝" >&2
+  exit 1
+fi
+echo "指紋比對通過"
+```
+
+預期輸出：
+
+```text
+指紋比對通過
+```
+
+> [!danger] ★★★★★ 三個常見的自我欺騙
+> ```
+> ✗ 「我從官網的安裝說明頁複製指令，指令裡有指紋，所以有驗證」
+>    → ★★★★★ 指令和指紋在【同一頁】= 同一個管道。那頁被改，兩者一起被改。
+>
+> ✗ 「我用眼睛比對前 8 碼和後 8 碼，一樣就是對的」
+>    → ★★★★ 短 ID 碰撞是【已被實證的攻擊】（2016 年 evil32 專案批量產生了碰撞的 32-bit ID）。
+>      必須比對【完整 40 字元指紋】。
+>
+> ✗ 「金鑰是從 keyserver 拉的，keyserver 會驗證」
+>    → ★★★★★ 公開 keyserver【不做任何身分驗證】，任何人都能上傳任何 uid 的金鑰。
+> ```
+
+**【3】安裝金鑰檔並設定權限**
+
+```bash
+sudo install -m 0644 -o root -g root /tmp/repo.key /etc/apt/keyrings/myguard.gpg
+ls -l /etc/apt/keyrings/myguard.gpg
+```
+
+預期輸出：
+
+```text
+-rw-r--r-- 1 root root 2848 Aug 28 10:14 /etc/apt/keyrings/myguard.gpg
+# ★★★★ 必須是 0644 root:root
+#   · 0600 → _apt 使用者讀不到，apt update 會報 "The following signatures couldn't be verified"
+#   · 0664 或群組可寫 → ★★★★★ 非 root 帳號能換掉金鑰 = 能讓機器信任假套件庫
+```
+
+> [!danger] ★★★★ 為什麼不要丟進 `/etc/apt/trusted.gpg.d/`
+> ```
+> ★★★★ 放進 /etc/apt/trusted.gpg.d/ 的金鑰是【全域信任】的，
+>      等同於 apt-key add，只是換了個目錄。
+>      → 它可以驗證【任何來源】的 Release 檔，包含 archive.ubuntu.com。
+>
+> ★★★★ 正確位置是 /etc/apt/keyrings/（Debian policy 建議的第三方 keyring 目錄），
+>      再用 Signed-By: 明確綁到那一個來源。
+> ★★  /usr/share/keyrings/ 是【由套件提供】的 keyring 的位置（例如 ubuntu-keyring）。
+>     管理員手動放的請用 /etc/apt/keyrings/ —— 一眼分得出「這把是誰放的」。
+> ```
+
+### ★★★★ 步驟二：deb822 `.sources` 完整欄位
+
+```bash
+sudo tee /etc/apt/sources.list.d/myguard.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://deb.myguard.nl/apt
+Suites: noble
+Components: main
+Architectures: amd64
+Signed-By: /etc/apt/keyrings/myguard.gpg
+Enabled: yes
+EOF
+```
+
+**完整欄位對照（★ 標示重要度）**
+
+| 欄位 | 對應 one-line 的位置 | 說明 | 重要度 |
+| --- | --- | --- | --- |
+| `Types` | `deb` / `deb-src` | 可空白分隔並列 `deb deb-src` | ★★ |
+| `URIs` | URL | ★★★ 可以多個（空白分隔）作為 mirror | ★★★ |
+| `Suites` | 第一個欄位 | ★★★ 可多個 `noble noble-updates`；結尾 `/` 表示 flat repo（無 dists 結構） | ★★★ |
+| `Components` | 之後的欄位 | `main contrib non-free`；flat repo 時**留空** | ★★★ |
+| `Architectures` | `[arch=...]` | ★★★★ 不寫的話 apt 會依 dpkg 的 foreign-arch 去抓 i386，多數第三方庫沒有 → 一堆 404 警告 | ★★★★ |
+| `Signed-By` | `[signed-by=...]` | ★★★★★ 路徑，或**直接內嵌 ASCII armor 金鑰** | ★★★★★ |
+| `Enabled` | 無對應 | `yes`／`no`。★★★★ **暫時停用不必刪檔**，稽核看得到「曾經有這個來源、目前關閉」 | ★★★★ |
+| `Trusted` | `[trusted=yes]` | ★★★★★ **永遠不要設 yes** —— 等於完全跳過簽章驗證 | ★★★★★ |
+| `Languages` | 無 | `none` 可避免抓一堆 Translation-* 檔 | ★★ |
+| `Targets` | 無 | 限定要抓哪些索引（`Packages`），可減少流量 | ★★ |
+| `PDiffs` | 無 | `no` 可避免某些庫的 pdiff 損毀問題 | ★★ |
+| `By-Hash` | 無 | `yes`/`no`/`force`，走 CDN 時避免快取不一致 | ★★ |
+
+**★★★ 內嵌金鑰的寫法**（單一檔案自包含，很適合用 Ansible 派送）
+
+```text
+Types: deb
+URIs: https://repo.example.com/apt
+Suites: noble
+Components: main
+Architectures: amd64
+Enabled: yes
+Signed-By:
+ -----BEGIN PGP PUBLIC KEY BLOCK-----
+ .
+ mQINBGKxxxxxBEACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ =AbCd
+ -----END PGP PUBLIC KEY BLOCK-----
+```
+
+```
+★★★★ 內嵌金鑰的格式規則（寫錯 apt update 直接失敗）：
+  · 金鑰必須是【ASCII armor】格式（不是 dearmor 過的二進位）
+  · ★★★★ 每一行【前面加一個空格】
+  · ★★★★ 金鑰內原本的【空白行】要寫成「一個空格 + 一個點」→ " ."
+  · 檔案權限仍是 0644 root:root
+```
+
+> [!tip] ★★★ 機關為什麼建議統一改用 deb822
+> ```
+> ① 欄位化 → ★★★ 用 grep/awk 就能寫盤點腳本，不必解析那串 [arch=... signed-by=...]
+> ② 可內嵌金鑰 → ★★ 一個檔搞定，組態管理（Ansible template）好派送
+> ③ Enabled: no → ★★★★ 事故時「先關掉、保留紀錄」，比 mv 成 .bak 好稽核
+> ④ 一個來源一個檔、一個 stanza → ★★★ 變更差異（git diff）看得懂
+> ⑤ ★★★ Ubuntu 24.04 官方來源本身已改成 /etc/apt/sources.list.d/ubuntu.sources（deb822），
+>    Debian 13 / Ubuntu 25.04 起的 apt 3.0 還提供 `apt modernize-sources` 自動轉換
+> ```
+
+**★★★ 轉換既有 `.list`（apt 3.0 以上才有）**
+
+```bash
+sudo apt modernize-sources
+```
+
+預期輸出：
+
+```text
+Modernizing /etc/apt/sources.list.d/myguard.list...
+The following files need modernizing:
+  /etc/apt/sources.list.d/myguard.list
+Modernizing will replace them with .sources files and keep .list.bak backups.
+Continue? [Y/n]
+# ★★★ apt < 3.0（Ubuntu 24.04）沒有這個子指令，會報 E: Invalid operation modernize-sources
+#     → 手動轉換即可，欄位對照見上表
+```
+
+**【驗證】確認來源真的被讀進去了**
+
+```bash
+sudo apt update
+apt-get indextargets --no-release-info --format '$(URI) $(SUITE) $(COMPONENT) $(TARGET_OF)' \
+  | grep -i myguard
+```
+
+預期輸出：
+
+```text
+https://deb.myguard.nl/apt noble main deb
+# ★★★ 空的 = 這個 .sources 沒被讀到（副檔名錯／欄位拼錯／Enabled: no）
+```
+
+> [!info]- Rocky / AlmaLinux（RHEL 系）對照 ★★★
+> ```ini
+> # /etc/yum.repos.d/myrepo.repo
+> [myrepo]
+> name=My Third-Party Repo
+> baseurl=https://repo.example.com/el9/$basearch/
+> enabled=1                      # ★★★★ 對應 deb822 的 Enabled
+> gpgcheck=1                     # ★★★★★ 絕對不要設 0，等同 apt 的 Trusted: yes
+> repo_gpgcheck=1                # ★★★ 額外驗證 repomd.xml 的簽章（apt 的 InRelease 相當於此，dnf 預設是關的）
+> gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-myrepo
+> priority=99                    # ★★★ 需要 dnf-plugin-priorities；數字【越小越優先】，和 apt 相反
+> exclude=openssl* glibc*        # ★★★★ RHEL 系限制影響範圍主要靠 exclude / includepkgs
+> includepkgs=nginx angie        # ★★★★ 白名單模式，相當於 apt 的「只放行需要的套件」
+> ```
+>
+> ```bash
+> # ★★★★ 匯入前先比指紋（和 apt 一樣是雙管道原則）
+> $ curl -fsSLo /etc/pki/rpm-gpg/RPM-GPG-KEY-myrepo https://repo.example.com/RPM-GPG-KEY
+> $ gpg --show-keys --with-fingerprint /etc/pki/rpm-gpg/RPM-GPG-KEY-myrepo
+> $ sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-myrepo
+> $ rpm -q gpg-pubkey --qf '%{NAME}-%{VERSION}-%{RELEASE} %{SUMMARY}\n'   # ★★★ 盤點已匯入的金鑰
+> ```
+>
+> ★★★★ RHEL 系的重大差異：`rpm --import` 匯入的金鑰是**全系統信任**的（等同 apt-key 的舊模型），
+> 沒有 `signed-by` 那種「每庫綁定」。所以 RHEL 上更要靠 `includepkgs` / `exclude` 限制範圍，
+> 並用 `rpm -q gpg-pubkey` 定期盤點。
+
+---
 
 ## 進階設定與調校
 
-<!-- TODO: 待撰寫 -->
+### ★★★★ 有限度信任：pinning 的完整設計
+
+**Pin 的三種寫法**
+
+```ini
+# ★★ 寫法一：origin —— 比對【主機名稱】（不是 Release 檔的 Origin 欄位，這是最常見的誤解）
+Package: *
+Pin: origin "deb.myguard.nl"
+Pin-Priority: 100
+
+# ★★★★ 寫法二：release —— 比對 Release 檔的欄位（推薦，最精準）
+Package: *
+Pin: release o=MyGuard,a=noble,n=noble,c=main,l=MyGuard
+Pin-Priority: 100
+
+# ★★ 寫法三：package + version —— 釘死特定版本
+Package: nginx
+Pin: version 1.29.*
+Pin-Priority: 1001
+```
+
+```
+★★★★ 【最常見的坑】Pin: origin "..." 裡的 origin 是【主機名】，
+     Pin: release o=... 裡的 o 才是【Release 檔的 Origin 欄位】。
+     兩個都叫 origin，意義完全不同。
+     · 本機檔案來源（file:// 或 dpkg status）的主機名是【空字串】→ Pin: origin ""
+```
+
+**★★★ 怎麼查一個庫的 o / a / n / c / l**
+
+```bash
+apt-cache policy | sed -n '/myguard/,+2p'
+```
+
+預期輸出：
+
+```text
+ 500 https://deb.myguard.nl/apt noble/main amd64 Packages
+     release o=MyGuard,a=noble,n=noble,c=main,b=amd64
+     origin deb.myguard.nl
+# ★★★★ 「release o=…」這一整行就是你要抄進 Pin: release 的內容
+# ★★★ 預設是 500 —— 和官方庫一樣大 = 它有權覆蓋你的 libc6
+```
+
+**★★★★ Pin-Priority 各級距的實際行為**
+
+| 優先權 | `apt_preferences(5)` 的定義 | 白話與用途 | 重要度 |
+| --- | --- | --- | --- |
+| `P < 0` | 永不安裝該版本 | ★★★★ 撤除流程用的「封鎖」值，慣用 `-1` | ★★★★ |
+| `P = 0` | **行為未定義** | ★★★★ 官方明說不要用，想封鎖請用 `-1` | ★★★★ |
+| `0 < P < 100` | 只有在**該套件尚未安裝**時才會被選中 | ★★★ 「可以手動裝，但永遠不會被拿來升級」（因為已安裝版本本身就是 100） | ★★★ |
+| `P = 100` | 100≤P<500：除非**別的來源**有，否則採用 | ★★★★ **有限度信任的預設值**：官方有的走官方，只有這個庫獨有的套件才會用它 | ★★★★ |
+| `100 ≤ P < 500` | 同上 | 同上（backports 與「已安裝版本」的預設值也是 100） | ★★★ |
+| `500 ≤ P < 990` | 除非目標版本有，否則採用 | ★★★ **所有一般套件庫的預設值**（含官方與未 pin 的第三方） | ★★★ |
+| `990 ≤ P < 1000` | 即使不屬於目標版本也採用 | ★★★ `-t noble-backports` / `APT::Default-Release` 指定的目標版本 | ★★★ |
+| `P ≥ 1000` | **允許降版** | ★★★★ 只有這一級能降版；撤除流程中「強制降回官方版」會用到 | ★★★★ |
+
+```
+★★★ 選版規則（依序判斷，man apt_preferences）：
+  ① 不降版，除非有版本的優先權 >= 1000
+  ② 選【優先權最高】的版本
+  ③ 同優先權 → 選【版本號最高】的
+  ④ 同優先權同版本 → 選未安裝的那個（metadata 有差異或指定 --reinstall 時）
+
+★★★★ 由 ② 可以推出「壓到 100」的真正效果：
+   官方庫 500 > 第三方 100 → 【只要官方有該套件，永遠走官方】
+   官方庫沒有的套件（例如 angie）→ 第三方 100 是唯一候選 → 【仍可安裝與升級】
+   → 這就是「有限度信任」：不讓它碰系統核心套件，但它獨有的東西照樣好用。
+```
+
+**★★★★ 有限度信任的完整 preferences 檔**
+
+```ini
+# /etc/apt/preferences.d/myguard
+# ★★★★【第一段】整個庫壓到 100 —— 預設不准覆蓋官方任何套件
+Package: *
+Pin: release o=MyGuard
+Pin-Priority: 100
+
+# ★★★★【第二段】只把【明確需要】的套件放行到 700
+#   700 > 500（官方）→ 這幾個套件走 MyGuard
+#   700 < 990       → 仍低於目標版本，不會蓋掉 -t 指定的東西
+#   700 < 1000      → ★★★ 不允許降版，避免意外把已安裝的新版降下來
+Package: nginx nginx-* libnginx-mod-* angie angie-* libangie-mod-*
+Pin: release o=MyGuard
+Pin-Priority: 700
+
+# ★★★★★【第三段】明確封鎖絕對不接受第三方版本的核心套件（防呆）
+#   即使將來有人把第二段的萬用字元寫得太寬，這一段也擋得住
+Package: libc6 libc-bin libssl3* openssl systemd systemd-* login passwd sudo openssh-*
+Pin: release o=MyGuard
+Pin-Priority: -1
+```
+
+> [!warning] ★★★★ 三段的順序不重要，但「最精確的 Package 比對」會勝出
+> apt 對同一個套件套用**最後被讀到的、且 Package 欄位有比對到**的那筆 pin；
+> 檔案讀取順序是 `/etc/apt/preferences` 再 `/etc/apt/preferences.d/` 依**檔名字典序**。
+> ★★★★ 所以**不要**把同一個庫的 pin 拆到多個檔案，會很難推理。一個庫一個檔，內含多個 stanza。
+
+**【驗證】★★★★ 用 `apt policy` 判讀 candidate 究竟來自哪裡**
+
+```bash
+apt policy nginx
+```
+
+預期輸出（放行的套件）：
+
+```text
+nginx:
+  Installed: 1.29.1-1~noble
+  Candidate: 1.29.1-1~noble
+  Version table:
+ *** 1.29.1-1~noble 700
+        700 https://deb.myguard.nl/apt noble/main amd64 Packages   # ★★★★ 700 = 放行生效
+        100 /var/lib/dpkg/status
+     1.24.0-2ubuntu7.5 500
+        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages
+```
+
+```bash
+apt policy openssl
+```
+
+預期輸出（被封鎖的核心套件）：
+
+```text
+openssl:
+  Installed: 3.0.13-0ubuntu3.5
+  Candidate: 3.0.13-0ubuntu3.5
+  Version table:
+ *** 3.0.13-0ubuntu3.5 500
+        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages
+        100 /var/lib/dpkg/status
+     3.5.0-1~noble -1                                              # ★★★★ -1 = 永不安裝
+        -1 https://deb.myguard.nl/apt noble/main amd64 Packages
+```
+
+```bash
+apt policy curl        # ★★★ 兩邊都有、未特別放行的套件
+```
+
+預期輸出：
+
+```text
+curl:
+  Candidate: 8.5.0-2ubuntu10.6
+  Version table:
+     8.5.0-2ubuntu10.6 500
+        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages   # ★★★★ 走官方
+     8.14.1-1~noble 100
+        100 https://deb.myguard.nl/apt noble/main amd64 Packages                 # ★★★ 被壓到 100
+```
+
+> [!danger] ★★★★ 判讀重點：不要只看 Candidate，要看它旁邊的優先權數字
+> ```
+> ★★★★ Candidate 行只告訴你「會裝哪一版」，
+>      Version table 裡【那個版本下方的來源行】才告訴你「從哪個庫拿」。
+>      每次改完 preferences，一定要對【至少三個套件】做這個驗證：
+>        ① 你放行的套件（應該顯示第三方 + 700）
+>        ② 一個核心套件（應該顯示官方 + 500，第三方那行是 -1）
+>        ③ 一個兩邊都有但你沒放行的套件（應該顯示官方 500 勝過第三方 100）
+> ```
+
+### ★★★★ unattended-upgrades 與第三方庫的互動
+
+```
+★★★★ 【最危險的誤解】
+   「我裝了 unattended-upgrades，所以所有套件都會自動補漏洞」
+   → 錯。★★★★ 預設的 Allowed-Origins 只含【官方 security pocket】，
+     你的第三方庫【一次都不會被自動更新】。
+     結果：MyGuard 的 nginx 爆了 CVE，官方 nginx 早就修好了，
+          你的機器卻因為裝的是第三方版本而【三個月沒收到任何更新】。
+```
+
+**Ubuntu 預設值**（`/etc/apt/apt.conf.d/50unattended-upgrades`）
+
+```text
+Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}";
+        "${distro_id}:${distro_codename}-security";
+        "${distro_id}ESMApps:${distro_codename}-apps-security";
+        "${distro_id}ESM:${distro_codename}-infra-security";
+//      "${distro_id}:${distro_codename}-updates";
+//      "${distro_id}:${distro_codename}-proposed";
+//      "${distro_id}:${distro_codename}-backports";
+};
+```
+
+**取捨（★★★★ 這是要簽核的決策，不是技術偏好）**
+
+| 選項 | 好處 | 風險 | 建議 |
+| --- | --- | --- | --- |
+| **不納入** | ★★ 半夜不會被推未測版本 | ★★★★ 已知漏洞放著沒補，稽核會被開缺失 | 僅限「有人工每月修補流程」且**寫進 SOP** |
+| **全納入** | ★★★ 漏洞自動補 | ★★★★★ 第三方庫每日重建，可能半夜推一個沒測過的 mainline | ★★★★ 不建議裸用 |
+| **★★★★ 納入 + 黑名單 + 重啟策略** | 兼顧 | 需要維護黑名單 | ★★★★ **本手冊的建議做法** |
+
+```bash
+sudo tee /etc/apt/apt.conf.d/52third-party-unattended >/dev/null <<'EOF'
+// ★★★★ 把第三方庫納入自動更新（origin 值用 apt-cache policy 的 o= 抄）
+Unattended-Upgrade::Allowed-Origins {
+        "MyGuard:noble";
+};
+
+// ★★★★ 黑名單：正則比對套件名，命中就【永不自動更新】，留給人工排維護窗
+Unattended-Upgrade::Package-Blacklist {
+        "^angie$";                 // ★★★ 換版要重啟服務，不讓它半夜自己來
+        "^libnginx-mod-modsecurity";  // ★★★★ WAF 模組換版可能誤擋正常流量
+};
+
+// ★★★ 有需要重啟的服務時，只在維護窗重啟
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+
+// ★★★ 失敗要有人知道
+Unattended-Upgrade::Mail "sysadmin@example.gov.tw";
+Unattended-Upgrade::MailReport "on-change";
+EOF
+```
+
+> [!warning] ★★★★ Debian 用的是 `Origins-Pattern`，而且覆寫前必須先 clear
+> ```
+> // Debian：
+> #clear "Unattended-Upgrade::Origins-Pattern";      // ★★★★ 沒有這行 = 【追加】而不是【取代】
+> Unattended-Upgrade::Origins-Pattern {
+>         "origin=Debian,codename=${distro_codename},label=Debian-Security";
+>         "origin=MyGuard";
+> };
+> ```
+> ★★★★ 同樣的規則也適用於 Ubuntu 的 `Allowed-Origins` —— 你在 `52-` 檔裡寫的是**追加**，
+> 不是取代 `50unattended-upgrades` 的內容。這通常正是你要的，但要知道它是追加。
+
+**【驗證】★★★★ 先用 dry-run 確認範圍**
+
+```bash
+sudo unattended-upgrades --dry-run --debug 2>&1 | head -40
+```
+
+預期輸出：
+
+```text
+Initial blacklist: ^angie$ ^libnginx-mod-modsecurity
+Initial whitelist (not strict):
+Starting unattended upgrades script
+Allowed origins are: o=Ubuntu,a=noble, o=Ubuntu,a=noble-security, o=MyGuard,a=noble   # ★★★★ 確認第三方在裡面
+Packages that will be upgraded: libnginx-mod-http-cache-turbo nginx
+Package angie is blacklisted, skipping                                                # ★★★ 黑名單生效
+# ★★★★ 「Packages that will be upgraded」這行就是半夜會被動到的東西，逐一確認
+```
+
+> [!tip] ★★★★ 上線前一定要在測試機跑滿 48 小時
+> ```
+> ★★★★ 為什麼是 48 小時：第三方庫多半是【每日重建】，
+>      跑滿兩個週期才看得到「連續兩天的自動更新」都不會弄壞服務。
+> ★★★ 測試期間每天檢查：
+>      · /var/log/unattended-upgrades/unattended-upgrades.log
+>      · systemctl is-active <你的服務>
+>      · nginx -t（設定檔語法是否因新版模組而失效）
+> ★★★★ 通過後才把同一份設定推到正式機，並在【變更單】註明測試起訖時間。
+> ```
+
+### ★★★ 內網與離線環境
+
+```bash
+# ★★★ 全域 apt proxy
+sudo tee /etc/apt/apt.conf.d/01proxy >/dev/null <<'EOF'
+Acquire::http::Proxy  "http://proxy.example.gov.tw:3128";
+Acquire::https::Proxy "http://proxy.example.gov.tw:3128";
+// ★★★ 單一來源例外（內網鏡像不要走 proxy）
+Acquire::http::Proxy::mirror.internal.example "DIRECT";
+EOF
+```
+
+```
+★★★ apt-cacher-ng 的定位（預設 port 3142）：
+    它是【快取 proxy】，不是【鏡像】。
+      · 第一台機器抓過的 .deb 會被快取，第二台直接命中 → 省頻寬、加快大量佈建
+      · ★★★★ 它【不改變信任模型】：InRelease 的簽章仍由各機器自己驗
+      · ★★★ 它【不能解決完全離線】：第一次還是要能連到上游
+
+★★★★ 完全不能連外的環境（機關內網、機敏區）：
+    → 唯一正解是【自己建一份鏡像／自建庫】，用實體媒體或單向閘道搬進去，
+      並且【自己重新簽署 Release】（因為你會需要控制 Valid-Until）
+    → 做法見 [[04-自建APT套件庫]]
+    → ★★★★ 此時「第三方庫的風險評估」不會消失，只是【評估對象變成你自己的搬運程序】：
+      誰負責從外網下載、怎麼比指紋、怎麼證明搬進來的檔案沒被改。
+```
+
+```bash
+# ★★ 驗證 proxy 有生效
+apt-config dump | grep -i '^Acquire::http'
+```
+
+預期輸出：
+
+```text
+Acquire::http "";
+Acquire::http::Proxy "http://proxy.example.gov.tw:3128";
+```
+
+### ★★★★ 第三方套件庫風險評估表（機關要能交得出來的那一份）
+
+| 評估項目 | 要問的問題 | 不合格的徵兆 | 重要度 |
+| --- | --- | --- | --- |
+| **維護者身分** | 是組織還是個人？可追溯嗎？有法人登記嗎？ | ★★★★ 只有一個匿名 GitHub 帳號 | ★★★★ |
+| **法遵所在地** | 主機與維護者在哪個法域？受哪國出口管制／制裁影響？ | ★★★ 機關採購案禁用的來源國 | ★★★★ |
+| **原始碼與可重建性** | 建置腳本公開嗎？能不能自己重建出同樣的套件？ | ★★★ 只給二進位、無 build recipe | ★★★ |
+| **資安公告管道** | 有 security@ 信箱／SECURITY.md／郵件列表嗎？CVE 怎麼通報？ | ★★★★ 沒有任何公告管道 | ★★★★ |
+| **更新頻率與斷更史** | 過去 24 個月有沒有連續斷更超過 90 天？ | ★★★★ 有斷更前科 = 退場風險高 | ★★★★ |
+| **簽章金鑰輪替政策** | 金鑰有效期多久？換金鑰時怎麼公告？有沒有備援金鑰？ | ★★★★ 金鑰無到期日、沒有輪替說明 | ★★★★ |
+| **★★★★★ 是否覆蓋官方核心套件** | 庫內有沒有 libc6 / openssl / systemd 的替代版本？ | ★★★★★ 有 → **必須**用 pinning 封鎖 | ★★★★★ |
+| **套件數量與範圍** | 幾個套件？範圍收斂（只做 nginx）還是包山包海？ | ★★★ 上千個套件、範圍不明 | ★★★ |
+| **退場成本** | 移除後這些套件在官方庫有沒有對應版本？降版會不會壞設定？ | ★★★★ 官方完全沒有對應品 | ★★★★ |
+| **替代方案** | 官方版 + 自行編譯模組的代價是多少人天？ | ★★ 替代成本低 → 就不要用第三方 | ★★★ |
+| **契約管理** | 有沒有納入採購契約／委外契約的資訊安全條款？ | ★★★★ 免費第三方庫**沒有任何契約義務** | ★★★★ |
+| **變更紀錄** | 加入這個庫走過變更單了嗎？誰簽核？ | ★★★★ 沒有紀錄＝稽核直接開缺失 | ★★★★ |
+
+> [!tip] ★★★ 這張表怎麼用
+> 不是拿來打勾就好。**每一列要寫一句實際的回答**，例如
+> 「維護者身分：myguard-labs，GitHub 組織，主要維護者可追溯，但為個人維護、無法人實體」。
+> 這份填好的表就是[[11-委外與供應鏈資安]]要求的**供應商評鑑紀錄**，也是[[08-變更管理流程]]變更單的附件。
+
+---
 
 ## 完整實戰範例
 
-<!-- TODO: 待撰寫 -->
+**情境**：一台 Ubuntu 24.04 (noble) 的 Web 主機，需要 HTTP/3 與 ModSecurity，
+評估後決定納入 MyGuard 套件庫。我們不用「照抄官網三行指令」的做法，
+而是建立一套**參數化、可稽核、可撤除**的通用治理程序。
+
+產出三支腳本：
+
+| 腳本 | 用途 |
+| --- | --- |
+| `/usr/local/sbin/apt-repo-add` | ★★★★ 加入（含指紋比對、pinning、寫入來源登錄表） |
+| `/usr/local/sbin/apt-repo-audit` | ★★★★ 盤點（來源、金鑰指紋與到期日、Valid-Until、各來源實際裝了什麼） |
+| `/usr/local/sbin/apt-repo-remove` | ★★★★ 撤除（七步流程，含降版與孤兒檢查，支援 `--dry-run`） |
+
+### 腳本一：`/usr/local/sbin/apt-repo-add`
+
+```bash
+#!/usr/bin/env bash
+# apt-repo-add —— 以可稽核的方式加入一個第三方 APT 套件庫
+# 用法：
+#   apt-repo-add --name myguard \
+#                --uri https://deb.myguard.nl/apt \
+#                --suite noble --components main --arch amd64 \
+#                --key-url https://deb.myguard.nl/deb.myguard.nl.gpg \
+#                --fingerprint A1B2C3D4E5F60718293A4B5C6D7E8F9012345678 \
+#                --allow 'nginx nginx-* libnginx-mod-* angie angie-*' \
+#                --ticket CHG-2026-0431 --owner "資訊室 王小明"
+set -euo pipefail
+
+KEYRING_DIR=/etc/apt/keyrings
+SOURCES_DIR=/etc/apt/sources.list.d
+PREFS_DIR=/etc/apt/preferences.d
+REGISTRY=/etc/apt/repo-registry.md
+# ★★★★ 這些套件永遠不接受第三方版本（防呆，即使 --allow 寫太寬也擋得住）
+CORE_BLOCK='libc6 libc-bin libc6-dev libssl3* openssl systemd systemd-* login passwd sudo openssh-* dpkg apt apt-*'
+
+NAME='' URI='' SUITE='' COMPONENTS=main ARCH=amd64
+KEY_URL='' FPR='' ALLOW='' TICKET='' OWNER='' PIN_BASE=100 PIN_ALLOW=700
+
+die()  { echo "[FATAL] $*" >&2; exit 1; }
+info() { echo "[ $(date +%H:%M:%S) ] $*"; }
+step() { echo; echo "═══ $* ═══"; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name)        NAME=$2;        shift 2 ;;
+    --uri)         URI=$2;         shift 2 ;;
+    --suite)       SUITE=$2;       shift 2 ;;
+    --components)  COMPONENTS=$2;  shift 2 ;;
+    --arch)        ARCH=$2;        shift 2 ;;
+    --key-url)     KEY_URL=$2;     shift 2 ;;
+    --fingerprint) FPR=${2// /};   shift 2 ;;   # ★★ 容許使用者貼有空格的指紋
+    --allow)       ALLOW=$2;       shift 2 ;;
+    --ticket)      TICKET=$2;      shift 2 ;;
+    --owner)       OWNER=$2;       shift 2 ;;
+    *) die "未知參數：$1" ;;
+  esac
+done
+
+[[ $EUID -eq 0 ]] || die "必須以 root 執行"
+for v in NAME URI SUITE KEY_URL FPR TICKET OWNER; do
+  [[ -n "${!v}" ]] || die "缺少必要參數：--${v,,}"
+done
+# ★★★★ 指紋必須是 40 個十六進位字元 —— 拒絕短 ID，短 ID 可被碰撞
+[[ "$FPR" =~ ^[0-9A-Fa-f]{40}$ ]] || die "指紋必須是 40 字元完整指紋，收到：$FPR"
+FPR=${FPR^^}
+
+KEYRING="$KEYRING_DIR/${NAME}.gpg"
+SOURCE="$SOURCES_DIR/${NAME}.sources"
+PREF="$PREFS_DIR/${NAME}"
+TMPDIR_R=$(mktemp -d); trap 'rm -rf "$TMPDIR_R"' EXIT
+
+# ── 回滾：任何一步失敗就把這次寫進去的檔案清掉 ────────────────────
+rollback() {
+  echo "[ROLLBACK] 還原變更…" >&2
+  rm -f "$SOURCE" "$PREF"
+  [[ -n "${KEY_WAS_NEW:-}" ]] && rm -f "$KEYRING"
+  apt-get update -qq || true
+}
+
+step "【1】前置檢查"
+command -v gpg   >/dev/null || die "缺少 gnupg：apt install -y gnupg"
+command -v curl  >/dev/null || die "缺少 curl：apt install -y curl"
+[[ -e "$SOURCE" ]] && die "來源已存在：$SOURCE（要重設請先跑 apt-repo-remove）"
+# ★★★★ 同一個 URI 若已被別的檔案定義，apt 會報 Conflicting values for Signed-By
+if grep -rqsF "$URI" "$SOURCES_DIR" /etc/apt/sources.list 2>/dev/null; then
+  die "URI $URI 已被其它來源檔定義 —— 重複定義會造成 Signed-By 衝突"
+fi
+install -d -m 0755 "$KEYRING_DIR" "$PREFS_DIR"
+info "OK"
+
+step "【2】下載金鑰"
+curl -fsSL --proto '=https' --tlsv1.2 "$KEY_URL" -o "$TMPDIR_R/raw.key" \
+  || die "金鑰下載失敗：$KEY_URL"
+[[ -s "$TMPDIR_R/raw.key" ]] || die "下載到空檔案"
+# ★★★ 自動判斷是否需要 dearmor（開頭 5 字元是 ----- 就是 ASCII armor）
+if [[ "$(head -c 5 "$TMPDIR_R/raw.key")" == '-----' ]]; then
+  info "偵測到 ASCII armor，執行 --dearmor"
+  gpg --dearmor < "$TMPDIR_R/raw.key" > "$TMPDIR_R/key.gpg" || die "dearmor 失敗"
+else
+  info "偵測到二進位格式，不需 dearmor"
+  cp "$TMPDIR_R/raw.key" "$TMPDIR_R/key.gpg"
+fi
+
+step "【3】★★★★★ 指紋驗證（雙管道）"
+mapfile -t GOT < <(gpg --show-keys --with-fingerprint --with-colons "$TMPDIR_R/key.gpg" \
+                     | awk -F: '/^fpr:/{print $10}')
+[[ ${#GOT[@]} -gt 0 ]] || die "檔案裡找不到任何 OpenPGP 金鑰（下載到的可能是 HTML 錯誤頁）"
+printf '  金鑰檔內含指紋：%s\n' "${GOT[@]}"
+printf '  預期指紋      ：%s\n' "$FPR"
+MATCH=no
+for f in "${GOT[@]}"; do [[ "${f^^}" == "$FPR" ]] && MATCH=yes; done
+if [[ "$MATCH" != yes ]]; then
+  die "★★★★★ 指紋不符 —— 中止。可能是中間人攻擊、金鑰已輪替、或你抄錯了指紋。
+       請到官方文件頁／專案 GitHub／廠商正式函文重新取得指紋後再試。"
+fi
+# ★★★ 順便警告金鑰即將到期
+NOW=$(date +%s)
+gpg --show-keys --with-colons "$TMPDIR_R/key.gpg" | awk -F: -v now="$NOW" '
+  /^pub:/ && $7 != "" {
+    d=int(($7-now)/86400)
+    if (d < 0)       print "  [WARN] ★★★★ 金鑰已於 " strftime("%F",$7) " 過期"
+    else if (d < 90) print "  [WARN] ★★★ 金鑰將於 " strftime("%F",$7) " 到期（剩 " d " 天）"
+    else             print "  金鑰到期日：" strftime("%F",$7)
+  }
+  /^pub:/ && $7 == "" { print "  [WARN] ★★★ 此金鑰【沒有設定到期日】—— 無法自動察覺輪替" }'
+info "指紋比對通過"
+
+step "【4】安裝金鑰檔"
+KEY_WAS_NEW=1
+install -m 0644 -o root -g root "$TMPDIR_R/key.gpg" "$KEYRING"
+ls -l "$KEYRING"
+
+trap 'rollback; rm -rf "$TMPDIR_R"' ERR
+
+step "【5】寫入 deb822 來源檔"
+cat > "$SOURCE" <<EOF
+# 由 apt-repo-add 產生於 $(date -Is)
+# 變更單：$TICKET    負責人：$OWNER
+Types: deb
+URIs: $URI
+Suites: $SUITE
+Components: $COMPONENTS
+Architectures: $ARCH
+Signed-By: $KEYRING
+Enabled: yes
+EOF
+chmod 0644 "$SOURCE"; cat "$SOURCE"
+
+step "【6】寫入 pinning（有限度信任）"
+# ★★★ 先抓 Release 的 Origin 欄位；抓不到就退回用主機名 pin
+HOST=$(awk -F/ '{print $3}' <<<"$URI")
+cat > "$PREF" <<EOF
+# 由 apt-repo-add 產生於 $(date -Is) — 變更單：$TICKET
+# ★★★★ 預設：整個庫壓到 $PIN_BASE，不准覆蓋官方套件
+Package: *
+Pin: origin "$HOST"
+Pin-Priority: $PIN_BASE
+EOF
+if [[ -n "$ALLOW" ]]; then
+cat >> "$PREF" <<EOF
+
+# ★★★★ 放行清單：只有這些套件可以贏過官方（$PIN_ALLOW > 500）
+Package: $ALLOW
+Pin: origin "$HOST"
+Pin-Priority: $PIN_ALLOW
+EOF
+fi
+cat >> "$PREF" <<EOF
+
+# ★★★★★ 防呆：核心套件永不接受此來源的版本
+Package: $CORE_BLOCK
+Pin: origin "$HOST"
+Pin-Priority: -1
+EOF
+chmod 0644 "$PREF"; cat "$PREF"
+
+step "【7】apt update"
+apt-get update -o Dir::Etc::sourcelist=/dev/null \
+               -o Dir::Etc::sourceparts="$SOURCES_DIR" -qq \
+  || die "apt update 失敗 —— 檢查 URI / Suites 是否正確、該 codename 是否被支援"
+apt-get update -qq
+
+step "【8】驗證 pinning 是否生效"
+apt-cache policy | grep -A2 "$HOST" || die "來源沒有出現在 apt-cache policy —— 來源檔可能沒被讀到"
+if [[ -n "$ALLOW" ]]; then
+  FIRST=$(awk '{print $1}' <<<"$ALLOW")
+  echo "--- apt policy $FIRST ---"; apt policy "$FIRST" || true
+fi
+echo "--- apt policy openssl（★★★★ 第三方那行必須是 -1）---"; apt policy openssl || true
+
+step "【9】寫入來源登錄表"
+if [[ ! -f "$REGISTRY" ]]; then
+  cat > "$REGISTRY" <<'EOF'
+# 本機第三方套件來源登錄表
+
+| 名稱 | URI | Suite | 金鑰指紋 | 放行套件 | 變更單 | 負責人 | 加入日期 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+EOF
+fi
+printf '| %s | %s | %s | `%s` | `%s` | %s | %s | %s |\n' \
+  "$NAME" "$URI" "$SUITE" "$FPR" "${ALLOW:-（無，僅 100）}" "$TICKET" "$OWNER" "$(date +%F)" \
+  >> "$REGISTRY"
+chmod 0644 "$REGISTRY"
+
+trap 'rm -rf "$TMPDIR_R"' EXIT
+echo
+info "完成。★★★ 請把 $REGISTRY 這一列附進變更單，並執行 apt-repo-audit 存檔。"
+```
+
+**執行**
+
+```bash
+sudo install -m 0755 /tmp/apt-repo-add /usr/local/sbin/apt-repo-add
+sudo apt-repo-add --name myguard \
+  --uri https://deb.myguard.nl/apt --suite noble --components main --arch amd64 \
+  --key-url https://deb.myguard.nl/deb.myguard.nl.gpg \
+  --fingerprint A1B2C3D4E5F60718293A4B5C6D7E8F9012345678 \
+  --allow 'nginx nginx-* libnginx-mod-* angie angie-*' \
+  --ticket CHG-2026-0431 --owner "資訊室 王小明"
+```
+
+預期輸出（節錄）：
+
+```text
+═══ 【3】★★★★★ 指紋驗證（雙管道） ═══
+  金鑰檔內含指紋：A1B2C3D4E5F60718293A4B5C6D7E8F9012345678
+  預期指紋      ：A1B2C3D4E5F60718293A4B5C6D7E8F9012345678
+  金鑰到期日：2028-03-11
+[ 10:14:52 ] 指紋比對通過
+...
+═══ 【8】驗證 pinning 是否生效 ═══
+ 100 https://deb.myguard.nl/apt noble/main amd64 Packages
+     release o=MyGuard,a=noble,n=noble,c=main,b=amd64
+     origin deb.myguard.nl
+--- apt policy nginx ---
+  Candidate: 1.29.1-1~noble
+     1.29.1-1~noble 700                         # ★★★★ 放行生效
+--- apt policy openssl ---
+     3.5.0-1~noble -1                           # ★★★★ 防呆生效
+[ 10:14:58 ] 完成。
+```
+
+指紋不符時（★★★★★ 這才是這支腳本真正的價值）：
+
+```text
+═══ 【3】★★★★★ 指紋驗證（雙管道） ═══
+  金鑰檔內含指紋：99887766554433221100FFEEDDCCBBAA99887766
+  預期指紋      ：A1B2C3D4E5F60718293A4B5C6D7E8F9012345678
+[FATAL] ★★★★★ 指紋不符 —— 中止。…
+$ echo $?
+1
+$ ls /etc/apt/sources.list.d/myguard.sources
+ls: cannot access ...: No such file or directory     # ★★★★ 什麼都沒被寫入
+```
+
+### 腳本二：`/usr/local/sbin/apt-repo-audit`
+
+```bash
+#!/usr/bin/env bash
+# apt-repo-audit —— 列出本機所有套件來源、對應金鑰指紋與到期日、Release Valid-Until，
+#                   以及【由每個來源實際安裝了哪些套件】。輸出 Markdown 表格供稽核歸檔。
+set -euo pipefail
+LISTS=/var/lib/apt/lists
+NOW=$(date +%s)
+
+echo "# APT 套件來源稽核報告"
+echo
+echo "- 主機：\`$(hostname -f)\`"
+echo "- 產生時間：$(date -Is)"
+echo "- 作業系統：$(. /etc/os-release; echo "$PRETTY_NAME")"
+echo
+
+# ── ★★★★ 第一段：全域信任池殘留（apt-key 舊模型） ───────────────
+echo "## 1. 全域信任金鑰殘留（★★★★ 應為空）"
+echo
+FOUND=0
+for kr in /etc/apt/trusted.gpg /etc/apt/trusted.gpg.d/*.gpg /etc/apt/trusted.gpg.d/*.asc; do
+  [[ -e "$kr" ]] || continue
+  case "$kr" in */ubuntu-keyring-*|*/debian-archive-*) continue ;; esac   # ★★ 發行版自己的不算
+  FOUND=1
+  echo "### \`$kr\`"; echo
+  gpg --no-default-keyring --keyring "$kr" --list-keys --with-colons 2>/dev/null \
+    | awk -F: '/^fpr:/{f=$10} /^uid:/{printf "- `%s` %s\n", f, $10}'
+  echo
+done
+[[ $FOUND -eq 0 ]] && echo "（無殘留，★★★ 良好）" && echo
+
+# ── ★★★★ 第二段：來源清單 ───────────────────────────────────────
+echo "## 2. 套件來源"
+echo
+echo "| 來源檔 | 啟用 | URI | Suite | Signed-By | 指紋 | 金鑰到期 | Valid-Until |"
+echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
+
+fpr_of() {  # $1 = keyring 路徑
+  [[ -r "$1" ]] || { echo "★★★★ 讀不到"; return; }
+  gpg --show-keys --with-fingerprint --with-colons "$1" 2>/dev/null \
+    | awk -F: '/^fpr:/{printf "%s ", substr($10,25)} END{print ""}'   # ★★ 表格只顯示末 16 碼
+}
+exp_of() {
+  [[ -r "$1" ]] || { echo "-"; return; }
+  gpg --show-keys --with-colons "$1" 2>/dev/null | awk -F: -v now="$NOW" '
+    /^pub:/ { if ($7=="") print "無到期日★★★"; else if ($7<now) print strftime("%F",$7) "★★★★已過期"; else print strftime("%F",$7); exit }'
+}
+valid_until_of() {  # $1 = URI
+  local slug; slug=$(sed -e 's|^https\?://||' -e 's|/$||' -e 's|[/]|_|g' <<<"$1")
+  local f; f=$(ls "$LISTS/${slug}"*InRelease "$LISTS/${slug}"*Release 2>/dev/null | head -n1) || true
+  [[ -n "${f:-}" ]] || { echo "-"; return; }
+  local vu; vu=$(awk -F': ' '/^Valid-Until:/{print $2; exit}' "$f")
+  [[ -n "$vu" ]] || { echo "未設定★★"; return; }
+  local ts; ts=$(date -d "$vu" +%s 2>/dev/null || echo 0)
+  if   [[ $ts -eq 0 ]];    then echo "$vu"
+  elif [[ $ts -lt $NOW ]]; then echo "★★★★已過期 $(date -d "@$ts" +%F)"
+  else echo "$(date -d "@$ts" +%F)（剩 $(( (ts-NOW)/86400 )) 天）"; fi
+}
+
+# ★★★ 同時處理 .sources（deb822）與 .list（one-line）
+for f in /etc/apt/sources.list.d/*.sources; do
+  [[ -e "$f" ]] || continue
+  awk -v FILE="$f" '
+    BEGIN{RS=""; FS="\n"}
+    { u=""; s=""; sb=""; en="yes"
+      for(i=1;i<=NF;i++){
+        if($i ~ /^URIs:/)      {sub(/^URIs: */,"",$i);      u=$i}
+        if($i ~ /^Suites:/)    {sub(/^Suites: */,"",$i);    s=$i}
+        if($i ~ /^Signed-By:/) {sub(/^Signed-By: */,"",$i); sb=$i}
+        if($i ~ /^Enabled:/)   {sub(/^Enabled: */,"",$i);   en=$i}
+      }
+      if(u!="") print FILE "\t" en "\t" u "\t" s "\t" sb
+    }' "$f"
+done > /tmp/.repo_rows
+
+grep -hE '^\s*deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null \
+  | while read -r _ rest; do
+      opts=$(grep -o '\[[^]]*\]' <<<"$rest" || true)
+      sb=$(grep -o 'signed-by=[^] ]*' <<<"$opts" | cut -d= -f2- || true)
+      clean=$(sed 's/\[[^]]*\]//' <<<"$rest")
+      echo -e "（.list 舊格式★★★）\tyes\t$(awk '{print $1}' <<<"$clean")\t$(awk '{print $2}' <<<"$clean")\t${sb:-★★★★未綁定}"
+    done >> /tmp/.repo_rows
+
+while IFS=$'\t' read -r file en uri suite sb; do
+  printf '| `%s` | %s | %s | %s | `%s` | `%s` | %s | %s |\n' \
+    "$(basename "$file")" "$en" "$uri" "$suite" "${sb:-★★★★未綁定}" \
+    "$(fpr_of "$sb")" "$(exp_of "$sb")" "$(valid_until_of "$uri")"
+done < /tmp/.repo_rows
+rm -f /tmp/.repo_rows
+echo
+
+# ── ★★★★ 第三段：每個來源實際安裝了哪些套件 ─────────────────────
+echo "## 3. 各來源實際安裝的套件（★★★★ 稽核最常問的一題）"
+echo
+dpkg-query -W -f='${binary:Package}\n' 2>/dev/null | sed 's/:.*//' | sort -u > /tmp/.pkgs
+apt-cache policy $(cat /tmp/.pkgs) 2>/dev/null | awk '
+  /^[^ ]/            { pkg=$0; sub(/:$/,"",pkg); inst=""; st=0; next }
+  /^  Installed: /   { inst=$2; next }
+  /^ \*\*\* /        { st = ($2==inst) ? 1 : 0; next }
+  /^     [^ ]/       { st=0; next }
+  st==1 && /^        / {
+      src=$2
+      if (src=="/var/lib/dpkg/status") src="__ORPHAN__"
+      else { gsub(/^https?:\/\//,"",src); sub(/\/.*/,"",src) }
+      cnt[src]++; list[src]=list[src] " " pkg
+  }
+  END { for (s in cnt) printf "%s\t%d\t%s\n", s, cnt[s], list[s] }
+' | sort -k2,2nr > /tmp/.bysrc
+rm -f /tmp/.pkgs
+
+echo "| 來源 | 套件數 | 說明 |"
+echo "| --- | --- | --- |"
+while IFS=$'\t' read -r src cnt _; do
+  case "$src" in
+    __ORPHAN__) note="★★★★★ 孤兒：已安裝但【沒有任何來源提供】，永遠收不到更新" ;;
+    archive.ubuntu.com|security.ubuntu.com|*.archive.ubuntu.com|deb.debian.org|security.debian.org) note="官方" ;;
+    *)          note="★★★★ 非官方來源" ;;
+  esac
+  printf '| %s | %d | %s |\n' "$src" "$cnt" "$note"
+done < /tmp/.bysrc
+echo
+
+echo "### 非官方來源與孤兒套件明細"
+echo
+while IFS=$'\t' read -r src cnt list; do
+  case "$src" in archive.ubuntu.com|security.ubuntu.com|*.archive.ubuntu.com|deb.debian.org|security.debian.org) continue ;; esac
+  echo "**$src**（$cnt 個）"; echo
+  echo '```text'; tr ' ' '\n' <<<"$list" | sed '/^$/d' | sort | column -c 100; echo '```'; echo
+done < /tmp/.bysrc
+rm -f /tmp/.bysrc
+
+echo "## 4. 全域設定風險檢查"
+echo
+apt-config dump | grep -iE 'Check-Valid-Until|AllowInsecure|AllowUnauthenticated|Acquire::.*Proxy' \
+  | sed 's/^/- `/; s/$/`/' || echo "（無特殊設定）"
+echo
+echo "> ★★★★ \`Acquire::Check-Valid-Until \"false\"\` 出現在上面 = 有人在掩蓋過期的套件庫，必須追查。"
+```
+
+**執行**
+
+```bash
+sudo install -m 0755 /tmp/apt-repo-audit /usr/local/sbin/apt-repo-audit
+sudo apt-repo-audit | sudo tee /var/log/apt-repo-audit-$(date +%F).md >/dev/null
+sudo head -32 /var/log/apt-repo-audit-$(date +%F).md
+```
+
+預期輸出：
+
+```text
+# APT 套件來源稽核報告
+
+- 主機：`web01.example.gov.tw`
+- 產生時間：2026-08-28T10:22:41+08:00
+- 作業系統：Ubuntu 24.04.3 LTS
+
+## 1. 全域信任金鑰殘留（★★★★ 應為空）
+
+（無殘留，★★★ 良好）
+
+## 2. 套件來源
+
+| 來源檔 | 啟用 | URI | Suite | Signed-By | 指紋 | 金鑰到期 | Valid-Until |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `ubuntu.sources` | yes | http://archive.ubuntu.com/ubuntu | noble | `/usr/share/keyrings/ubuntu-archive-keyring.gpg` | `871920D1991BC93C` | 無到期日★★★ | 2026-09-04（剩 7 天） |
+| `myguard.sources` | yes | https://deb.myguard.nl/apt | noble | `/etc/apt/keyrings/myguard.gpg` | `6D7E8F9012345678` | 2028-03-11 | 2026-09-02（剩 5 天） |
+
+## 3. 各來源實際安裝的套件（★★★★ 稽核最常問的一題）
+
+| 來源 | 套件數 | 說明 |
+| --- | --- | --- |
+| archive.ubuntu.com | 631 | 官方 |
+| security.ubuntu.com | 148 | 官方 |
+| deb.myguard.nl | 11 | ★★★★ 非官方來源 |
+| __ORPHAN__ | 3 | ★★★★★ 孤兒：已安裝但【沒有任何來源提供】，永遠收不到更新 |
+```
+
+> [!danger] ★★★★★ `__ORPHAN__` 那一列就是你要立刻處理的東西
+> 這些套件**已經裝在系統上，但沒有任何設定中的來源提供它** ——
+> 可能是：手動 `dpkg -i` 裝的、某個已被移除的第三方庫留下的、或某個 PPA 停止支援此 codename。
+> ★★★★★ 它們**永遠不會收到安全更新**，卻會出現在漏洞掃描報告上，
+> 而且 `apt upgrade` 不會有任何抱怨 —— 這是機關最常見的「掃出一堆高風險但沒人知道哪來的」根因。
+
+### 腳本三：`/usr/local/sbin/apt-repo-remove`
+
+```bash
+#!/usr/bin/env bash
+# apt-repo-remove —— 依七步流程安全撤除一個第三方 APT 套件庫
+# 用法：apt-repo-remove --name myguard [--mode downgrade|purge] [--dry-run] [--ticket CHG-xxxx]
+set -euo pipefail
+
+NAME='' MODE=downgrade DRY=0 TICKET='(未填)'
+SOURCES_DIR=/etc/apt/sources.list.d
+PREFS_DIR=/etc/apt/preferences.d
+KEYRING_DIR=/etc/apt/keyrings
+REGISTRY=/etc/apt/repo-registry.md
+
+die(){ echo "[FATAL] $*" >&2; exit 1; }
+step(){ echo; echo "═══ $* ═══"; }
+run(){ if [[ $DRY -eq 1 ]]; then echo "  [DRY-RUN] $*"; else echo "  + $*"; eval "$@"; fi; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name)   NAME=$2;   shift 2 ;;
+    --mode)   MODE=$2;   shift 2 ;;
+    --ticket) TICKET=$2; shift 2 ;;
+    --dry-run) DRY=1;    shift ;;
+    *) die "未知參數：$1" ;;
+  esac
+done
+[[ $EUID -eq 0 ]] || die "必須以 root 執行"
+[[ -n "$NAME" ]]  || die "缺少 --name"
+SOURCE="$SOURCES_DIR/${NAME}.sources"; PREF="$PREFS_DIR/${NAME}"; KEYRING="$KEYRING_DIR/${NAME}.gpg"
+[[ -e "$SOURCE" ]] || die "找不到來源檔：$SOURCE"
+URI=$(awk -F': *' '/^URIs:/{print $2; exit}' "$SOURCE")
+HOST=$(awk -F/ '{print $3}' <<<"$URI")
+[[ -n "$HOST" ]] || die "無法從 $SOURCE 解析主機名"
+BK=/root/apt-repo-remove-$NAME-$(date +%F-%H%M); mkdir -p "$BK"
+echo "備份目錄：$BK   模式：$MODE   dry-run：$DRY   變更單：$TICKET"
+
+step "【1】找出由 $HOST 安裝的所有套件"
+apt-get update -qq
+dpkg-query -W -f='${binary:Package}\n' | sed 's/:.*//' | sort -u > "$BK/all-pkgs.txt"
+apt-cache policy $(cat "$BK/all-pkgs.txt") 2>/dev/null | awk -v h="$HOST" '
+  /^[^ ]/          { pkg=$0; sub(/:$/,"",pkg); inst=""; st=0; next }
+  /^  Installed: / { inst=$2; next }
+  /^ \*\*\* /      { st=($2==inst)?1:0; ver=$2; next }
+  /^     [^ ]/     { st=0; next }
+  st==1 && index($2,h) { print pkg "\t" ver }
+' | sort -u > "$BK/affected.txt"
+COUNT=$(wc -l < "$BK/affected.txt")
+echo "  受影響套件：$COUNT 個"
+column -t "$BK/affected.txt" | sed 's/^/    /'
+[[ $COUNT -eq 0 ]] && echo "  （沒有任何套件來自這個庫，可直接進行第 5 步）"
+
+step "【2】決定每個套件的去向"
+: > "$BK/plan.txt"
+while IFS=$'\t' read -r pkg ver; do
+  OFF=$(apt-cache madison "$pkg" 2>/dev/null \
+        | grep -v "$HOST" | awk -F'|' 'NR==1{gsub(/ /,"",$2); print $2}')
+  if [[ -n "$OFF" ]]; then
+    echo -e "$pkg\tDOWNGRADE\t$ver\t$OFF" >> "$BK/plan.txt"
+  else
+    echo -e "$pkg\tNO-OFFICIAL\t$ver\t-" >> "$BK/plan.txt"   # ★★★★ 官方沒有替代品
+  fi
+done < "$BK/affected.txt"
+echo "  計畫："; column -t "$BK/plan.txt" | sed 's/^/    /'
+if grep -q 'NO-OFFICIAL' "$BK/plan.txt"; then
+  echo "  [WARN] ★★★★★ 上列 NO-OFFICIAL 的套件官方庫【沒有】對應版本。"
+  echo "         --mode downgrade 會【保留】它們 → 它們會變成孤兒套件（永不更新）。"
+  echo "         --mode purge     會【移除】它們 → 相依的服務可能停擺。"
+  [[ "$MODE" == "downgrade" && $DRY -eq 0 ]] && {
+    read -r -p "  仍要繼續？輸入 yes 確認：" a; [[ "$a" == yes ]] || die "使用者中止"; }
+fi
+
+step "【3】把該庫 Pin-Priority 設為 -1（先斷金流，再處理存貨）"
+cp -a "$PREF" "$BK/" 2>/dev/null || true
+run "cat > '$PREF' <<'P'
+# 撤除中（$TICKET）— 由 apt-repo-remove 於 $(date -Is) 產生
+Package: *
+Pin: origin \"$HOST\"
+Pin-Priority: -1
+P"
+run "apt-get update -qq"
+echo "  驗證：$(apt-cache policy 2>/dev/null | grep -c "$HOST") 行來自 $HOST（優先權應為 -1）"
+
+step "【4】降版／移除"
+if [[ "$MODE" == purge ]]; then
+  PKGS=$(cut -f1 "$BK/plan.txt" | tr '\n' ' ')
+  [[ -n "${PKGS// /}" ]] && run "apt-get remove --purge -y $PKGS"
+else
+  TARGETS=$(awk -F'\t' '$2=="DOWNGRADE"{printf "%s=%s ", $1, $4}' "$BK/plan.txt")
+  if [[ -n "${TARGETS// /}" ]]; then
+    # ★★★★ 降版必須加 --allow-downgrades，且一次全部指定以便 apt 一起解相依
+    run "apt-get install -y --allow-downgrades $TARGETS"
+  fi
+fi
+
+step "【5】移除來源檔與 keyring"
+run "cp -a '$SOURCE' '$BK/'"
+run "rm -f '$SOURCE'"
+run "rm -f '$KEYRING'"
+run "rm -f '$PREF'"
+run "apt-get update -qq"
+
+step "【6】驗證無殘留"
+if apt-cache policy 2>/dev/null | grep -q "$HOST"; then
+  echo "  [FAIL] ★★★★ $HOST 仍出現在 apt-cache policy —— 檢查是否有其它 .list/.sources 定義它"
+else
+  echo "  [OK] apt-cache policy 已無 $HOST"
+fi
+ORPH=$(apt-cache policy $(cat "$BK/all-pkgs.txt") 2>/dev/null | awk '
+  /^[^ ]/{p=$0; sub(/:$/,"",p); inst=""; st=0; n=0; next}
+  /^  Installed: /{inst=$2; next}
+  /^ \*\*\* /{st=($2==inst)?1:0; n=0; next}
+  /^     [^ ]/{st=0; next}
+  st==1 && /^        /{ if($2!="/var/lib/dpkg/status") n++; else o[p]=1 }
+  END{for(k in o) if(!(k in seen)) print k}' | sort -u)
+if [[ -n "$ORPH" ]]; then
+  echo "  [WARN] ★★★★★ 以下套件已無任何來源提供（孤兒），請人工決定移除或改用官方替代品："
+  tr ' ' '\n' <<<"$ORPH" | sed '/^$/d' | sed 's/^/    /'
+else
+  echo "  [OK] 無孤兒套件"
+fi
+
+step "【7】更新來源登錄表"
+if [[ -f "$REGISTRY" ]]; then
+  run "sed -i 's|^| %s |' /dev/null"   # no-op，保持結構一致
+  if [[ $DRY -eq 0 ]]; then
+    printf '\n> %s：`%s` 已於 %s 撤除（變更單 %s，模式 %s，備份 %s）\n' \
+      "撤除紀錄" "$NAME" "$(date +%F)" "$TICKET" "$MODE" "$BK" >> "$REGISTRY"
+  fi
+fi
+echo
+echo "完成。★★★★ 回滾方式：cp -a $BK/*.sources $SOURCES_DIR/ ; cp -a $BK/$NAME $PREFS_DIR/ ; apt update"
+```
+
+**執行（先 dry-run）**
+
+```bash
+sudo install -m 0755 /tmp/apt-repo-remove /usr/local/sbin/apt-repo-remove
+sudo apt-repo-remove --name myguard --mode downgrade --dry-run --ticket CHG-2026-0512
+```
+
+預期輸出（節錄）：
+
+```text
+═══ 【1】找出由 deb.myguard.nl 安裝的所有套件 ═══
+  受影響套件：11 個
+    nginx                          1.29.1-1~noble
+    nginx-common                   1.29.1-1~noble
+    libnginx-mod-http-cache-turbo  1.29.1-1~noble
+    angie                          1.10.1-1~noble
+    ...
+
+═══ 【2】決定每個套件的去向 ═══
+  計畫：
+    nginx                          DOWNGRADE    1.29.1-1~noble  1.24.0-2ubuntu7.5
+    nginx-common                   DOWNGRADE    1.29.1-1~noble  1.24.0-2ubuntu7.5
+    libnginx-mod-http-cache-turbo  NO-OFFICIAL  1.29.1-1~noble  -
+    angie                          NO-OFFICIAL  1.10.1-1~noble  -
+  [WARN] ★★★★★ 上列 NO-OFFICIAL 的套件官方庫【沒有】對應版本。
+
+═══ 【4】降版／移除 ═══
+  [DRY-RUN] apt-get install -y --allow-downgrades nginx=1.24.0-2ubuntu7.5 nginx-common=1.24.0-2ubuntu7.5
+```
+
+### ★★★★ 驗收檢查表
+
+| # | 檢查項 | 指令 | 預期結果 | 重要度 |
+| --- | --- | --- | --- | --- |
+| 1 | 金鑰檔權限正確 | `stat -c '%a %U:%G' /etc/apt/keyrings/myguard.gpg` | `644 root:root` | ★★★★ |
+| 2 | 金鑰指紋與登錄表一致 | `gpg --show-keys --with-colons /etc/apt/keyrings/myguard.gpg \| awk -F: '/^fpr/{print $10}'` | 與 `repo-registry.md` 同一列相符 | ★★★★★ |
+| 3 | 金鑰未過期且 >90 天 | `apt-repo-audit \| grep 金鑰到期` | 顯示日期，非「已過期」 | ★★★ |
+| 4 | 來源檔為 deb822 且有 Signed-By | `grep -c '^Signed-By:' /etc/apt/sources.list.d/myguard.sources` | `1` | ★★★★ |
+| 5 | 沒有殘留 `.list` 舊格式定義同一 URI | `grep -rl deb.myguard.nl /etc/apt/sources.list.d/*.list` | 無結果 | ★★★★ |
+| 6 | 全域信任池無殘留 | `ls /etc/apt/trusted.gpg /etc/apt/trusted.gpg.d/*.gpg` | 只有發行版自己的 keyring | ★★★★ |
+| 7 | 庫的預設優先權 = 100 | `apt-cache policy \| grep -A1 deb.myguard.nl` | 開頭是 ` 100 ` | ★★★★ |
+| 8 | 放行套件優先權 = 700 | `apt policy nginx` | Candidate 那行的來源優先權是 700 | ★★★★ |
+| 9 | 核心套件被封鎖 | `apt policy openssl libc6 systemd` | 第三方那行為 `-1` | ★★★★★ |
+| 10 | `apt update` 無警告 | `sudo apt update 2>&1 \| grep -E '^(W:\|E:)'` | 無輸出 | ★★★★ |
+| 11 | Release 未過期 | `apt-repo-audit \| grep Valid-Until -A5` | 剩餘天數 > 0 | ★★★★ |
+| 12 | 無孤兒套件 | `apt-repo-audit \| grep -c __ORPHAN__` | `0`（或已列管） | ★★★★★ |
+| 13 | 未使用 Check-Valid-Until=false | `apt-config dump \| grep -i check-valid-until` | 無輸出或 `"true"` | ★★★★ |
+| 14 | 自動更新範圍如預期 | `sudo unattended-upgrades --dry-run --debug \| grep 'Allowed origins'` | 與設計一致 | ★★★★ |
+| 15 | 來源登錄表已更新 | `cat /etc/apt/repo-registry.md` | 含本次變更單號與負責人 | ★★★ |
+| 16 | 稽核報告已歸檔 | `ls -l /var/log/apt-repo-audit-*.md` | 有本次日期的檔案 | ★★★ |
+
+### ★★★★ 加入前必須完成的風險評估欄位（表單）
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│  第三方套件來源 導入申請單                        變更單號：________  │
+├─────────────────────────────────────────────────────────────────────┤
+│  1. 套件庫名稱／URI            ：____________________________________ │
+│  2. 導入理由（★★★★ 要具體）    ：需要 __________ 功能，官方庫無提供    │
+│  3. 替代方案與成本比較         ：自行編譯需 ____ 人天／年維護 ____ 人天│
+│  4. 維護者身分與法遵所在地     ：____________________________________ │
+│  5. 資安公告與 CVE 通報管道    ：____________________________________ │
+│  6. 近 24 個月更新頻率／斷更史 ：____________________________________ │
+│  7. 簽章金鑰指紋（40 字元）    ：____________________________________ │
+│  8. ★★★★★ 指紋第二取得管道    ：□ 官方文件頁 □ 專案 GitHub           │
+│                                  □ 發行公告  □ 廠商正式函文 ________ │
+│  9. 金鑰到期日／輪替政策       ：____________________________________ │
+│ 10. ★★★★ 是否覆蓋官方核心套件 ：□ 否  □ 是 → 已於 preferences 封鎖：__│
+│ 11. 放行套件清單（白名單）     ：____________________________________ │
+│ 12. Pin-Priority 設計          ：庫 ____ ／放行 ____ ／封鎖 ____      │
+│ 13. 納入 unattended-upgrades？ ：□ 否 □ 是 → 黑名單：______________  │
+│ 14. 測試環境驗證起訖           ：____/__/__ ~ ____/__/__（★★★★ ≥48h）│
+│ 15. 退場方案與預估工時         ：____________________________________ │
+│ 16. 影響主機清單               ：____________________________________ │
+├─────────────────────────────────────────────────────────────────────┤
+│  申請人：________  單位主管：________  資安人員：________  日期：____ │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+★★★ 這張表填完後，隨 `apt-repo-audit` 的輸出一起歸檔，就是[[11-委外與供應鏈資安]]
+與[[09-資安稽核與符合性檢核]]所需的完整佐證。
+
+### ★★★ MyGuard 作為本篇通用程序的實例
+
+```
+★★★ 本手冊【唯一長期使用】的第三方 APT 套件庫就是 MyGuard，
+    它存在的理由很明確：HTTP/3 + ModSecurity + Brotli + autocert，官方庫三個都沒有。
+
+★★★★ 用本篇程序導入它時，要特別注意三件事：
+  ① 它【每日重建】→ 版本跳動快 → ★★★★ unattended-upgrades 一定要配黑名單
+  ② 它提供的是【NGINX 與 Angie 的替代版本】→ 會覆蓋官方的 nginx*
+     → ★★★★ 這正是「放行到 700」要涵蓋的範圍，不要用整庫 500
+  ③ 它有 bootstrap／keyring 套件（一鍵加入）→ ★★★★ 機關環境【不建議用】，
+     因為它把「加入來源」這一步藏進 postinst，你就少了指紋驗證與 pinning 設計的機會。
+     ★★★ 請用本篇的 apt-repo-add 手動導入。
+
+★★★ 細節請看：
+  · 套件庫本身、支援 codename、路徑 → [[01-MyGuard套件庫介紹]]
+  · Angie 這個 NGINX 分支是什麼      → [[02-Angie伺服器入門]]
+  · 動態模組怎麼裝與啟用             → [[07-動態模組管理]]
+  · 實戰組合                         → [[08-MyGuard實戰組合]]
+```
+
+---
 
 ## 常見錯誤與排錯
 
 | 現象 | 原因 | 解法 |
 | --- | --- | --- |
-|  |  |  |
+| ★★★★★ `apt update` 正常，但某天服務啟不起來，發現 `openssl` 被換成第三方版本 | 沒設 pinning，第三方庫拿到預設 500，版本號比官方新就贏了 | 立即 `apt policy openssl` 確認來源；建立 `preferences.d/<庫>` 把庫壓到 100、核心套件設 -1；用 `apt install openssl=<官方版本> --allow-downgrades` 換回 |
+| ★★★★★ 漏洞掃描報出一堆高風險套件，`apt upgrade` 卻說沒東西可升 | 這些是**孤兒套件**（來源已被 `rm` 掉，或手動 `dpkg -i` 安裝） | 跑 `apt-repo-audit` 看 `__ORPHAN__` 那列；逐一決定「移除」或「找回官方替代品」 |
+| ★★★★ `E: Release file for … is expired (invalid since 32d 4h)` | 套件庫的 `Valid-Until` 已過期 —— 維護者停止重新簽署 | **不要**設 `Check-Valid-Until "false"`；先確認官方是否公告停止維護，然後啟動撤除評估 |
+| ★★★★ `E: Conflicting values set for option Signed-By regarding source https://… : /etc/apt/keyrings/a.gpg != /etc/apt/keyrings/b.gpg` | 同一個 URI 被兩個檔案定義（常見：舊 `.list` 沒刪，又寫了 `.sources`） | `grep -rl '<主機名>' /etc/apt/sources.list /etc/apt/sources.list.d/` 找出全部定義，只保留一份 |
+| ★★★★ `The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1234ABCD` | keyring 路徑錯／權限 0600 `_apt` 讀不到／金鑰已輪替 | `stat -c '%a %U:%G'` 確認是 `644 root:root`；路徑與 `Signed-By:` 完全一致；到官方確認是否換金鑰 |
+| ★★★★ `gpg: no valid OpenPGP data found` | 對已經是二進位的 `.gpg` 又跑了一次 `--dearmor`，或下載到 HTML 錯誤頁 | `head -c 5 file` 判斷格式；`file` 確認不是 HTML；`curl -f` 才會在 404 時回非 0 |
+| ★★★★ 明明加了第三方庫，`apt install <套件>` 卻說 `Unable to locate package` | `.sources` 沒被讀到（副檔名不是 `.sources`／`Enabled: no`／欄位拼錯），或該 codename 該庫不支援 | `apt-get indextargets --no-release-info` 看來源在不在；檢查副檔名與 `Enabled`；到官方確認支援哪些 codename |
+| ★★★★ 套用 pinning 後 `apt install` 報 `Unable to correct problems, you have held broken packages` | 放行清單漏了相依套件（例如放行 `nginx` 卻沒放行 `nginx-common`） | `apt policy <相依套件>` 找出被壓到 100 的那個；把整組加進放行清單（用 `nginx-*` 這類萬用字元） |
+| ★★★ `N: Skipping acquire of configured file 'main/binary-i386/Packages'` | 沒寫 `Architectures:`，dpkg 有 foreign arch，apt 去抓庫裡沒有的 i386 索引 | 在 `.sources` 加 `Architectures: amd64` |
+| ★★★★ `E: Repository '…' changed its 'Suite' value from 'stable' to 'oldstable'` | 上游把 suite 改名（通常是發行版換代） | 先確認是**預期中的**變更，再跑 `sudo apt update --allow-releaseinfo-change`；★★★★ 不要無腦加進 cron |
+| ★★★ `E: Release file for … is not valid yet (invalid for another 5h 12m)` | **本機時鐘不對**（虛擬機恢復快照後很常見），不是庫的問題 | `timedatectl status` 檢查；`sudo systemctl restart systemd-timesyncd` 或 `chronyc makestep` |
+| ★★★★ `W: … Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg)` | 還有金鑰留在全域信任池（可能是 `apt-key add` 的遺產） | 依「步驟零」盤點，確認還有沒有來源需要它，沒有就刪；有的話搬到 `/etc/apt/keyrings/` 並改用 `Signed-By` |
+| ★★★★ 半夜服務被換版本重啟，沒人知道是誰做的 | `unattended-upgrades` 把第三方庫納入了自動更新，且沒設黑名單 | 檢查 `/var/log/unattended-upgrades/unattended-upgrades.log`；加 `Package-Blacklist`；把 `Automatic-Reboot` 關掉 |
+| ★★★ `apt-key: command not found` | Debian 13 / Ubuntu 26.04 起已移除 | 這是**正確狀態**。把安裝文件改寫成 `signed-by` + `/etc/apt/keyrings/` 的做法 |
+| ★★★★ 撤除套件庫後 `nginx -t` 失敗，設定檔報 `unknown directive "autocert"` | 降回官方版後，第三方模組提供的指令不存在了 | 撤除**前**先把設定檔中的第三方指令註解掉；或用 `--mode purge` 並改用官方替代方案 |
+
+### 排查步驟
+
+**【1】先確認來源到底有沒有被 apt 讀進去**
+
+```bash
+apt-get indextargets --no-release-info --format '$(URI) $(SUITE) $(COMPONENT)' | sort -u
+```
+
+預期輸出：
+
+```text
+http://archive.ubuntu.com/ubuntu noble main
+http://archive.ubuntu.com/ubuntu noble-updates main
+https://deb.myguard.nl/apt noble main
+```
+
+判讀：
+- 看到你的來源 → 前進【2】
+- **沒看到** → 問題在**來源檔本身**：副檔名是不是 `.sources`／`Enabled` 是不是 `no`／
+  欄位名稱有沒有拼錯（★★★ `URI:` 是錯的，正確是 `URIs:`）／檔案權限是不是 root 讀得到。
+
+**【2】確認簽章驗證有沒有過**
+
+```bash
+sudo apt update 2>&1 | grep -E '^(W:|E:)' || echo "無警告"
+```
+
+預期輸出（正常）：
+
+```text
+無警告
+```
+
+判讀：
+- `NO_PUBKEY` → 金鑰問題，前進【3】
+- `is expired` / `is not valid yet` → 前進【4】
+- `Conflicting values … Signed-By` → 重複定義，跳到【7】
+- 無警告 → 簽章沒問題，前進【5】
+
+**【3】金鑰問題三連查**
+
+```bash
+KR=/etc/apt/keyrings/myguard.gpg
+stat -c '%a %U:%G %n' "$KR"
+sudo -u _apt test -r "$KR" && echo "_apt 可讀" || echo "★★★★ _apt 讀不到"
+gpg --show-keys --with-fingerprint --with-colons "$KR" | awk -F: '/^fpr:/{print $10}'
+```
+
+預期輸出：
+
+```text
+644 root:root /etc/apt/keyrings/myguard.gpg
+_apt 可讀
+A1B2C3D4E5F60718293A4B5C6D7E8F9012345678
+```
+
+判讀：
+- 權限不是 `644 root:root` → `sudo chmod 644 "$KR"; sudo chown root:root "$KR"`
+- `_apt 讀不到` → 上層目錄權限也要檢查（`/etc/apt/keyrings` 應為 `755`）
+- **指紋和登錄表不一樣** → ★★★★★ **不要直接更新金鑰**。先確認上游是否公告輪替，
+  用第二管道取得新指紋，走變更單後才更換。
+
+**【4】過期問題：先分清楚是「庫死了」還是「你的時鐘壞了」**
+
+```bash
+timedatectl status | grep -E 'Local time|System clock|NTP service'
+grep -m1 '^Valid-Until:' /var/lib/apt/lists/deb.myguard.nl_apt_dists_noble_InRelease
+```
+
+預期輸出：
+
+```text
+               Local time: Fri 2026-08-28 10:31:02 CST
+System clock synchronized: yes
+              NTP service: active
+Valid-Until: Wed, 02 Sep 2026 03:00:12 UTC
+```
+
+判讀：
+- `System clock synchronized: no` 且時間明顯不對 → 是**時鐘問題**，修時間即可
+- 時鐘正確、`Valid-Until` 在**過去** → ★★★★ 這個庫**沒人在維護了**。
+  到官方 GitHub／狀態頁確認；★★★★ 不要用 `Check-Valid-Until "false"` 掩蓋，走撤除評估。
+
+**【5】確認 pinning 真的照你的設計生效**
+
+```bash
+apt-cache policy | grep -B0 -A2 deb.myguard.nl
+apt policy nginx openssl curl 2>/dev/null | grep -E '^[a-z].*:$|^ \*\*\*|^     [0-9]|^        '
+```
+
+預期輸出：
+
+```text
+ 100 https://deb.myguard.nl/apt noble/main amd64 Packages       # ★★★★ 庫的預設 = 100
+     release o=MyGuard,a=noble,n=noble,c=main,b=amd64
+nginx:
+ *** 1.29.1-1~noble 700
+        700 https://deb.myguard.nl/apt noble/main amd64 Packages   # ★★★★ 放行 = 700
+openssl:
+     3.5.0-1~noble -1
+        -1 https://deb.myguard.nl/apt noble/main amd64 Packages    # ★★★★ 封鎖 = -1
+```
+
+判讀：
+- 庫顯示 `500` → preferences 沒生效。★★★ 最常見原因：`Pin: origin "…"` 寫的是
+  Release 的 Origin 欄位而不是**主機名**。改用 `Pin: release o=MyGuard` 精準比對。
+- 放行套件仍是 `100` → `Package:` 那行的萬用字元沒涵蓋到（注意 `nginx-*` 不含 `nginx` 本身）
+- 封鎖套件不是 `-1` → 檔名字典序被後面的檔案覆蓋，檢查 `ls /etc/apt/preferences.d/`
+
+**【6】確認「這個庫到底裝了什麼在我機器上」**
+
+```bash
+sudo apt-repo-audit | sed -n '/## 3/,/## 4/p'
+```
+
+預期輸出：
+
+```text
+| 來源 | 套件數 | 說明 |
+| deb.myguard.nl | 11 | ★★★★ 非官方來源 |
+| __ORPHAN__ | 0 |  |
+```
+
+判讀：套件數比你預期的多 → 有東西透過相依關係被連帶拉進來了。
+★★★★ 這是「放行清單寫太寬」的訊號，回頭收斂 `Package:` 那一行。
+
+**【7】重複定義與殘留掃描（撤除後一定要做）**
+
+```bash
+HOST=deb.myguard.nl
+grep -rn "$HOST" /etc/apt/sources.list /etc/apt/sources.list.d/ /etc/apt/preferences /etc/apt/preferences.d/ 2>/dev/null
+ls -l /etc/apt/keyrings/ | grep -i myguard
+apt-cache policy | grep -c "$HOST"
+```
+
+預期輸出（撤除乾淨）：
+
+```text
+0
+```
+
+判讀：任何一個指令有輸出 → 還有殘留。★★★★ 特別注意 Ansible／Puppet 之類的組態管理工具
+可能在下次執行時**把來源檔又寫回來** —— 撤除必須同時改組態管理的程式碼，
+見 [[05-自動化佈建入門]]。
+
+---
 
 ## 安全性注意事項
 
-> [!warning] 注意
-> <!-- TODO: 待撰寫 -->
+> [!danger] ★★★★★ 絕對禁止
+> ```
+> ✗ curl … | sudo apt-key add -
+>   → ★★★★★ 在系統新增一把【可以簽任何套件庫的任何套件】的全域金鑰。
+>     那把金鑰若外流，攻擊者能簽一個假的 openssh-server 讓你的 apt 驗簽通過。
+>
+> ✗ 在 sources 加上 [trusted=yes] 或 deb822 的 Trusted: yes
+>   → ★★★★★ 完全跳過簽章驗證。任何能攔截你 HTTP 流量的人（內網 ARP 欺騙、
+>     惡意 proxy、被劫持的 DNS）都能對你的機器【推送任意 root 程式碼】。
+>
+> ✗ Acquire::Check-Valid-Until "false";
+>   → ★★★★ 讓 replay attack 生效：攻擊者餵你一份【一年前的、含已知 CVE 版本】的
+>     Packages 清單，簽章仍然合法，你從此收不到修補。
+>
+> ✗ apt-get install --allow-unauthenticated / -o APT::Get::AllowUnauthenticated=true
+>   → ★★★★★ 逐次跳過驗證，和 trusted=yes 同級。出現在任何腳本裡都要當成事故處理。
+>
+> ✗ 把金鑰檔設成 0666 / 群組可寫，或放在 /home、/tmp、/opt 底下
+>   → ★★★★★ 任何本機使用者都能替換它 → 提權為 root 的完整路徑。
+>
+> ✗ 只比對金鑰指紋的前 8 碼或後 8 碼
+>   → ★★★★ 32-bit short ID 碰撞在 2016 年就被大規模實證（evil32）。必須比對完整 40 字元。
+>
+> ✗ 直接 rm 掉來源檔就當作「移除了套件庫」
+>   → ★★★★★ 由該庫安裝的套件全部變成孤兒，永遠收不到安全更新，
+>     而且 apt 完全不會提醒你。這是機關漏洞掃描報告上「不明來源高風險套件」的主因。
+> ```
+
+> [!warning] ★★★★ 機關環境的額外要求
+> ```
+> ★★★★ 【稽核軌跡】加入／撤除第三方庫是【組態變更】，必須有變更單與簽核。
+>       本篇的 /etc/apt/repo-registry.md 與 apt-repo-audit 報告就是佐證。
+>       → 對應 [[08-變更管理流程]] 與 [[03-風險與變更管理]]
+>
+> ★★★★ 【最小權限】pinning 的「庫 100 / 放行 700 / 核心 -1」就是最小權限原則在 apt 上的具體化。
+>       不做 pinning = 給第三方庫和 Ubuntu 官方一模一樣的權力。
+>
+> ★★★★ 【供應鏈】第三方庫屬於軟體供應鏈。委外廠商在你機器上加的套件庫【也算】，
+>       而且經常是「廠商裝完就走、沒人知道那是什麼」的來源。
+>       → 驗收時必須跑一次 apt-repo-audit 並比對契約。見 [[11-委外與供應鏈資安]]
+>
+> ★★★ 【個資與機敏】apt 的 User-Agent 會送出作業系統版本，且套件清單本身
+>      會洩漏「你裝了什麼服務」。機敏區應走內部鏡像，不要讓每台機器直連外網。
+>
+> ★★★★ 【弱點管理】第三方庫的套件【不在】發行版的 CVE 追蹤範圍內。
+>       你必須自己訂閱上游公告，並把這些套件納入弱點管理清冊。
+>       → 見 [[03-弱點與修補管理流程]]
+>
+> ★★★ 【基準符合性】TWGCB 之類的組態基準會檢查「是否使用未經核准的套件來源」。
+>      apt-repo-audit 的輸出可以直接當作該項目的佐證。見 [[08-系統強化與稽核]]
+> ```
+
+---
 
 ## 速查表
 
-| 指令 / 設定項 | 說明 | 範例 |
+### 檔案路徑
+
+| 路徑 | 用途 | 重要度 |
 | --- | --- | --- |
-|  |  |  |
+| `/etc/apt/sources.list.d/*.sources` | ★★★★ deb822 來源檔（建議統一用這個） | ★★★★ |
+| `/etc/apt/sources.list.d/*.list` | one-line 舊格式來源檔 | ★★ |
+| `/etc/apt/keyrings/` | ★★★★ **管理員手動放置**的第三方 keyring | ★★★★ |
+| `/usr/share/keyrings/` | 由**套件提供**的 keyring（如 `ubuntu-keyring`） | ★★ |
+| `/etc/apt/trusted.gpg.d/` | ★★★★ 全域信任 —— **不要往這裡放第三方金鑰** | ★★★★ |
+| `/etc/apt/trusted.gpg` | ★★★★ `apt-key add` 的遺產，應清空並刪除 | ★★★★ |
+| `/etc/apt/preferences.d/<庫名>` | ★★★★ pinning 設定，一個庫一個檔 | ★★★★ |
+| `/etc/apt/apt.conf.d/50unattended-upgrades` | 自動更新主設定 | ★★★ |
+| `/etc/apt/apt.conf.d/01proxy` | apt proxy | ★★ |
+| `/var/lib/apt/lists/*_InRelease` | ★★★ 下載回來的 Release 檔，看 `Valid-Until` 就在這 | ★★★ |
+| `/var/log/unattended-upgrades/` | ★★★ 「半夜到底動了什麼」的答案在這 | ★★★ |
+| `/etc/apt/repo-registry.md` | ★★★ 本篇建立的來源登錄表（非標準路徑，自訂） | ★★★ |
+
+### 判讀指令
+
+| 指令 | 回答什麼問題 | 重要度 |
+| --- | --- | --- |
+| `apt policy <pkg>` | ★★★★ 這個套件會裝哪一版、來自哪個庫、優先權多少 | ★★★★ |
+| `apt-cache policy` | ★★★★ 所有來源的優先權與 `o=/a=/n=/c=/l=` 值 | ★★★★ |
+| `apt-cache madison <pkg>` | 各來源分別提供哪些版本（降版時抄版本號用） | ★★★ |
+| `apt-get indextargets --no-release-info` | ★★★ 來源到底有沒有被 apt 讀進去 | ★★★ |
+| `apt-config dump \| grep -i <項目>` | 目前生效的 apt 設定（含所有 apt.conf.d 疊加後的結果） | ★★★ |
+| `gpg --show-keys --with-fingerprint <檔>` | ★★★★★ keyring 裡的指紋與到期日 | ★★★★★ |
+| `apt-forktracer` | ★★★ 列出「已安裝版本與官方不同」的套件（需 `apt install apt-forktracer`） | ★★★ |
+| `unattended-upgrades --dry-run --debug` | ★★★★ 半夜會動到哪些套件 | ★★★★ |
+| `dpkg -S <檔案>` / `dpkg -L <套件>` | 檔案屬於哪個套件／套件裝了哪些檔案 | ★★ |
+| `apt list --upgradable -a` | 可升級套件與其所有候選來源 | ★★★ |
+
+### Pin-Priority 決策表
+
+| 你想要 | Pin-Priority | 備註 | 重要度 |
+| --- | --- | --- | --- |
+| 完全封鎖某套件來自此庫 | `-1` | ★★★★ 撤除流程與核心套件防呆 | ★★★★ |
+| 可手動裝，但永不用來升級 | `1`～`99` | ★★★ 已安裝版本本身是 100 | ★★★ |
+| **有限度信任的預設** | `100` | ★★★★ 官方有的走官方，只用它獨有的套件 | ★★★★ |
+| 放行特定套件贏過官方 | `600`～`900`（本篇用 `700`） | ★★★★ 大於 500 小於 990 | ★★★★ |
+| 與官方同級（**不建議**） | `500` | ★★★★ 這就是「不設 pinning」的預設狀態 | ★★★★ |
+| 允許降版／強制指定版本 | `≥1001` | ★★★★ 只有這一級能降版 | ★★★★ |
+
+### deb822 欄位速記
+
+| 欄位 | 值 | 重要度 |
+| --- | --- | --- |
+| `Types` | `deb` / `deb deb-src` | ★★ |
+| `URIs` | 可多個（mirror） | ★★★ |
+| `Suites` | 可多個；結尾 `/` = flat repo | ★★★ |
+| `Components` | flat repo 時留空 | ★★★ |
+| `Architectures` | ★★★★ 明確寫 `amd64`，避免 i386 404 | ★★★★ |
+| `Signed-By` | ★★★★★ 路徑或內嵌 armor（每行前置一空格、空行寫 ` .`） | ★★★★★ |
+| `Enabled` | ★★★★ `no` = 停用但保留紀錄 | ★★★★ |
+| `Trusted` | ★★★★★ **永遠不要設 yes** | ★★★★★ |
+
+---
 
 ## 練習題
 
-> [!question]- 練習 1
-> <!-- TODO: 待撰寫 -->
+> [!question]- 練習 1：盤點一台接手的舊機
+> **題目**：你接手一台跑了四年的 Ubuntu 伺服器。請在**不改動任何設定**的前提下，
+> 產出一份報告回答三個問題：(a) 有幾個非官方套件來源？(b) 全域信任池有沒有殘留金鑰？
+> (c) 有沒有孤兒套件？
+>
+> **參考解答**
+>
+> ```bash
+> # (a) 非官方來源 —— .sources 與 .list 都要看
+> grep -rhoE 'https?://[^ ]+' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
+>   | awk -F/ '{print $3}' | sort -u \
+>   | grep -vE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com'
+>
+> # (b) 全域信任池殘留（排除發行版自己的 keyring）
+> ls /etc/apt/trusted.gpg /etc/apt/trusted.gpg.d/ 2>/dev/null \
+>   | grep -vE 'ubuntu-keyring|debian-archive'
+> gpg --no-default-keyring --keyring /etc/apt/trusted.gpg --list-keys 2>/dev/null
+>
+> # (c) 孤兒套件 —— 已安裝版本只在 dpkg status 找得到
+> apt-cache policy $(dpkg-query -W -f='${binary:Package}\n' | sed 's/:.*//' | sort -u) 2>/dev/null \
+>   | awk '/^[^ ]/{p=$0;sub(/:$/,"",p);i="";s=0;next}
+>          /^  Installed: /{i=$2;next}
+>          /^ \*\*\* /{s=($2==i)?1:0;n=0;next}
+>          /^     [^ ]/{s=0;next}
+>          s==1&&/^        /{if($2!="/var/lib/dpkg/status")n++;else o[p]=1}
+>          END{for(k in o)print k}' | sort
+> ```
+>
+> ★★★★ **重點**：(c) 通常會嚇到人 —— 四年的機器常有十幾個孤兒套件。
+> 每一個都是漏洞掃描報告上的紅字，而且 `apt upgrade` 完全不會提醒。
+> ★★★ 報告產出後不要急著刪，先查清楚每個孤兒是哪個服務在用。
+
+> [!question]- 練習 2：設計一份「有限度信任」的 preferences
+> **題目**：某廠商提供一個 APT 庫，裡面有你要的 `foo-server` 與 `libfoo1`，
+> 但也包含 `openssl`、`libssl3`、`curl`、`systemd` 的「效能最佳化版」。
+> 請寫出 `/etc/apt/preferences.d/vendor-foo`，並說明你會怎麼驗證它。
+>
+> **參考解答**
+>
+> ```ini
+> # /etc/apt/preferences.d/vendor-foo
+> # ★★★★ 整庫壓到 100 —— 官方有的一律走官方
+> Package: *
+> Pin: release o=VendorFoo
+> Pin-Priority: 100
+>
+> # ★★★★ 只放行真正需要的兩個套件
+> Package: foo-server libfoo1
+> Pin: release o=VendorFoo
+> Pin-Priority: 700
+>
+> # ★★★★★ 明確封鎖它的「最佳化版」核心套件
+> Package: openssl libssl* curl libcurl* systemd systemd-* libc6 libc-bin
+> Pin: release o=VendorFoo
+> Pin-Priority: -1
+> ```
+>
+> **驗證**（三個必查）：
+>
+> ```bash
+> apt policy foo-server   # 期待：700，來源 = 廠商庫
+> apt policy openssl      # 期待：官方 500 為 candidate，廠商那行是 -1
+> apt policy curl         # 期待：官方 500 勝過廠商 -1
+> apt-cache policy | grep -A1 VendorFoo   # 期待：開頭是 100
+> ```
+>
+> ★★★★ **加分**：`apt install foo-server` 後再跑一次 `apt-repo-audit`，
+> 確認來自廠商庫的套件數**只有你放行的那幾個**。若多出東西，
+> 表示相依關係把別的套件也拉進來了，要回頭收斂放行清單。
+
+> [!question]- 練習 3：撤除一個已死的套件庫
+> **題目**：`apt update` 開始報 `Release file ... is expired (invalid since 47d)`，
+> 上游 GitHub 已 14 個月沒有提交。該庫裝了 6 個套件，其中 2 個官方庫沒有。
+> 請寫出你的完整處置步驟與變更單要寫的內容。
+>
+> **參考解答**
+>
+> ```text
+> ★★★★ 【絕對不做】加 Acquire::Check-Valid-Until "false"；那只是把警訊關掉。
+>
+> 【1】確認事實並留證
+>      sudo apt-repo-audit | tee /var/log/apt-repo-audit-before.md
+>      → 記錄：Valid-Until 過期日、6 個套件清單、哪 2 個 NO-OFFICIAL
+>
+> 【2】評估與決策（寫進變更單）
+>      · 這 2 個沒有官方替代品的套件，服務還需要嗎？
+>      · 若需要 → 選項：(a) 自行編譯並自建庫 [[04-自建APT套件庫]]
+>                        (b) 換用其它有維護的來源
+>                        (c) 凍結現況並列入弱點管理清冊（★★★★ 最差，要有期限）
+>      · 若不需要 → --mode purge 整組移除
+>
+> 【3】測試環境先跑
+>      sudo apt-repo-remove --name deadrepo --mode downgrade --dry-run
+>      → 確認降版計畫、確認相依不會炸掉
+>
+> 【4】維護窗執行（先備份）
+>      · 服務設定檔中若用到該庫獨有的功能，先註解掉
+>      · sudo apt-repo-remove --name deadrepo --mode downgrade --ticket CHG-2026-0577
+>
+> 【5】驗證
+>      apt-cache policy | grep -c <主機名>        → 0
+>      sudo apt-repo-audit | grep __ORPHAN__      → 0 或已列管
+>      systemctl status <服務> ; <服務> 的設定檔語法檢查
+>
+> 【6】收尾
+>      · 更新 /etc/apt/repo-registry.md
+>      · ★★★★ 修改 Ansible／Puppet 的程式碼，否則下次派送會把來源寫回來
+>      · 把 before/after 兩份稽核報告附進變更單
+> ```
+>
+> ★★★★ **變更單重點**：要寫「為什麼現在撤除」（Valid-Until 過期 + 上游停更 = 供應鏈風險）、
+> 「不撤除的風險」（收不到安全更新）、「撤除的風險」（2 個套件無替代品）、以及**回滾方式**
+> （備份目錄在 `/root/apt-repo-remove-*`，還原 `.sources` 與 preferences 後 `apt update`）。
+
+---
 
 ## 小測驗
 
-<!-- 最多 10 題，針對關鍵細節與易錯觀念 -->
+Q1. 為什麼「我用 https 從官網下載金鑰」不算完成金鑰驗證？請說出至少兩個 https 無法保證的事情。
 
-Q1. 
-Q2. 
-Q3. 
+Q2. 以下兩行 pin 設定，`origin` 的意義一樣嗎？
+```ini
+Pin: origin "deb.example.com"
+Pin: release o=ExampleOrg
+```
+
+Q3. 是非題：把第三方庫的 Pin-Priority 設成 100，代表這個庫裡的套件完全不會被安裝。
+
+Q4. 這行指令會發生什麼事？後果多嚴重？
+```bash
+echo 'Acquire::Check-Valid-Until "false";' | sudo tee /etc/apt/apt.conf.d/99no-expiry
+```
+
+Q5. 你在 `.sources` 裡寫了 `Signed-By: /etc/apt/keyrings/x.gpg`，權限設成 `0600 root:root`，
+`apt update` 卻報 `NO_PUBKEY`。金鑰檔內容是對的，問題在哪？
+
+Q6. 一台機器裝了 `unattended-upgrades`，也加了第三方庫並確認 `apt update` 正常。
+三個月後上游公告該庫的某套件有 CVE 且已修補，但你的機器仍是舊版。為什麼？
+
+Q7. 看到這個錯誤該先查哪裡？
+```text
+E: Conflicting values set for option Signed-By regarding source https://repo.x.com/apt/ noble: /etc/apt/keyrings/a.gpg != /etc/apt/keyrings/b.gpg
+```
+
+Q8. 有人「移除」了一個第三方套件庫，做法是 `rm /etc/apt/sources.list.d/vendor.list` 加 `apt update`。
+兩個月後漏洞掃描報出五個高風險套件，`apt upgrade` 卻說沒東西可升。發生了什麼？怎麼查證？
+
+Q9. 簡答：deb822 格式的 `Enabled: no` 相較於「把 `.sources` 改名成 `.sources.bak`」，
+在機關的稽核情境下有什麼具體好處？
+
+Q10. 你要把第三方庫的 `nginx` 降回官方版本 `1.24.0-2ubuntu7.5`，執行
+`sudo apt install nginx=1.24.0-2ubuntu7.5` 卻失敗。列出兩個最可能的原因與對應解法。
 
 > [!question]- 測驗答案
-> **Q1.** 
-> **Q2.** 
-> **Q3.** 
+>
+> **Q1.** ★★★★★ https 只保證「我連到了持有該網域憑證的那台主機」，它**不保證**：
+> ① 那台主機沒有被入侵（維護者伺服器被打下來，簽章金鑰跟著外流）；
+> ② DNS 沒有被汙染（企業 split-DNS、被劫持的解析器、你打錯網域的 typosquatting）；
+> ③ 你的流量沒有經過裝了自訂 CA 的 TLS 攔截 proxy —— ★★★★ 這在機關內網**非常常見**，
+> 攔截 proxy 可以完整看到並改寫內容而不觸發任何憑證錯誤。
+> 真正的驗證需要**第二個獨立管道**取得指紋：官方文件頁、專案 GitHub、GPG 簽署的發行公告、
+> 或廠商正式函文（★★★★ 機關採購案應優先用函文，因為留得下稽核軌跡），
+> 再用 `gpg --show-keys --with-fingerprint --with-colons` 取出完整 40 字元指紋做**程式比對**。
+> 詳見「★★★★★ 步驟一：金鑰驗證」。
+>
+> **Q2.** ★★★★ **不一樣，這是最常見的 pinning 陷阱。**
+> `Pin: origin "deb.example.com"` 比對的是**來源 URI 的主機名**（`Pin: origin ""` 代表本機檔案來源）；
+> `Pin: release o=ExampleOrg` 比對的是該庫 **`InRelease` 檔裡的 `Origin:` 欄位**。
+> 兩個都叫 origin，語意完全不同。查正確的值：
+> ```bash
+> apt-cache policy | grep -A2 example
+> #  500 https://deb.example.com/apt noble/main amd64 Packages
+> #      release o=ExampleOrg,a=noble,n=noble,c=main,b=amd64   ← 這行抄進 Pin: release
+> #      origin deb.example.com                                 ← 這行抄進 Pin: origin
+> ```
+> ★★★ 本篇建議用 `Pin: release o=...`，因為它不會被 mirror／CDN 換網域影響。
+> 見「進階設定與調校 → Pin 的三種寫法」。
+>
+> **Q3.** ★★★★ **錯。** Pin-Priority 100 落在 `100 ≤ P < 500` 這一級距，行為是
+> 「除非**其它來源**有可用版本，否則採用」。實際效果是：
+> - 官方庫（500）也有的套件 → 永遠走官方 ✔
+> - **只有這個庫才有的套件**（例如 `angie`）→ 它是唯一候選，★★★ **照樣可以安裝與升級**
+>
+> 這正是「有限度信任」要的效果：不讓它碰系統核心套件，但它獨有的功能照樣好用。
+> 若要「可手動裝但永不用來升級」，要設 `1`～`99`（因為已安裝版本本身的優先權是 100）；
+> 要完全封鎖則設 `-1`（★★★★ 不要設 0，`apt_preferences(5)` 明說 0 的行為未定義）。
+> 見「Pin-Priority 各級距的實際行為」。
+>
+> **Q4.** ★★★★ 這行讓 apt **不再檢查 Release 檔的 `Valid-Until`**，也就是接受任意舊的套件清單。
+> 後果分兩層：
+> ① **掩蓋訊號**：`Valid-Until` 過期是「這個庫沒人在重新簽署了」的第一個訊號，
+> 通常比上游 GitHub 停止提交更早被你發現。關掉它等於自願失明。
+> ② ★★★★★ **開啟 replay attack**：攻擊者（能攔截流量或控制 mirror 的人）可以餵你一份
+> **一年前的、含已知 CVE 版本**的 `Packages` 清單。那份清單的簽章**完全合法**，
+> apt 會驗簽通過，於是你永遠看不到修補版本。
+> 正確反應是啟動撤除評估，見「撤除流程」與練習 3。
+>
+> **Q5.** ★★★★ 問題在**權限**：`0600` 只有 root 讀得到，但 apt 下載與驗證的工作是由
+> **非特權的 `_apt` 使用者**執行的，它讀不到金鑰檔，於是回報「找不到公鑰」。
+> ```bash
+> sudo -u _apt test -r /etc/apt/keyrings/x.gpg && echo 可讀 || echo "★★★★ _apt 讀不到"
+> sudo chmod 0644 /etc/apt/keyrings/x.gpg
+> sudo chown root:root /etc/apt/keyrings/x.gpg
+> sudo chmod 0755 /etc/apt/keyrings          # ★★★ 上層目錄也要能進去
+> sudo apt update
+> ```
+> ★★★★ 正確權限是 `0644 root:root`：所有人可讀（金鑰是公鑰，本來就公開），
+> **只有 root 可寫**（可寫 = 能替換金鑰 = 能讓機器信任假套件庫，這是提權路徑）。
+> 見「步驟一【3】安裝金鑰檔並設定權限」。
+>
+> **Q6.** ★★★★ 因為 `unattended-upgrades` 的預設 `Allowed-Origins` **只包含官方的
+> release 與 security pocket**，你的第三方庫**從來沒有被自動更新過**。
+> ```bash
+> sudo unattended-upgrades --dry-run --debug 2>&1 | grep 'Allowed origins'
+> # Allowed origins are: o=Ubuntu,a=noble, o=Ubuntu,a=noble-security, ...
+> # ★★★★ 沒有你的第三方庫 = 它一次都沒被自動更新
+> ```
+> 這是最危險的誤解之一：**裝了自動更新 ≠ 所有東西都會自動補漏洞**。
+> 建議做法是**納入但配黑名單**：把 `"MyGuard:noble";` 加進 `Allowed-Origins`，
+> 用 `Package-Blacklist` 排除「換版要重啟服務」的套件，`Automatic-Reboot "false"`，
+> 並在測試環境先跑滿 ★★★★ **48 小時**（因為第三方庫多為每日重建，兩個週期才看得出問題）。
+> 見「unattended-upgrades 與第三方庫的互動」。
+>
+> **Q7.** ★★★★ 這代表**同一個 URI 被兩個地方定義，而且指定了不同的 keyring**。
+> 最常見的成因：先照舊教學建了 `.list`，後來又照新教學建了 `.sources`，舊的忘了刪。
+> ```bash
+> grep -rn 'repo.x.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null
+> # /etc/apt/sources.list.d/vendor.list:1:deb [signed-by=/etc/apt/keyrings/a.gpg] https://repo.x.com/apt noble main
+> # /etc/apt/sources.list.d/vendor.sources:3:URIs: https://repo.x.com/apt
+> ```
+> 處置：確認哪一份是你要的（★★★ 通常留 `.sources`），把另一份備份後刪除，
+> 再 `sudo apt update` 驗證。★★★ 順便檢查兩個 keyring 的指紋是否相同 ——
+> 若**不同**，代表其中一把來歷不明，必須追查是誰、什麼時候加的。
+>
+> **Q8.** ★★★★★ 那五個套件變成了**孤兒套件**：它們仍安裝在系統上，
+> 但已經沒有任何設定中的來源提供它們，所以 `apt upgrade` **永遠不會**把它們列為可升級，
+> 也完全不會發出警告 —— 但漏洞掃描器是照 `dpkg -l` 的版本號比對 CVE 的，照樣報紅字。
+> 這正是「直接 `rm` 掉來源檔」最大的問題。查證方式：
+> ```bash
+> sudo apt-repo-audit | grep -A20 '__ORPHAN__'
+> # 或用 apt-forktracer
+> sudo apt install -y apt-forktracer && apt-forktracer
+> ```
+> ★★★★ 正確的撤除順序是七步：①找出該庫安裝的所有套件 → ②決定降版或移除 →
+> ③該庫 Pin 設 `-1` → ④降版並處理相依 → ⑤移除 `.sources` 與 keyring →
+> ⑥`apt update` 後驗證無殘留 → ⑦記錄變更並更新來源登錄表。見「腳本三」與練習 3。
+>
+> **Q9.** ★★★★ 三個具體好處：
+> ① **保留稽核軌跡**：檔案還在原位、內容完整，稽核可以看到「這台機器曾經／目前設定了這個來源，
+> 但目前為停用狀態」。改名成 `.bak` 在多數盤點腳本裡等同於「不存在」，資訊就消失了。
+> ② **狀態明確、可 diff**：`Enabled: no` 是一行明確的宣告，
+> 組態管理（Ansible / git）的差異一眼看得懂；檔名變動則會被當成「刪除 + 新增」。
+> ③ ★★★ **不會意外被讀回**：`.bak` 這種靠副檔名的停用方式，只要有人手滑改回或
+> 某個腳本掃描 `sources.list.d/*` 就可能失效；`Enabled: no` 是 apt 明確支援的欄位。
+> ★★★ 事故處理時「先停用、保留現場」比「刪掉」好，這是通則。見「deb822 完整欄位」。
+>
+> **Q10.** ★★★★ 兩個最可能的原因：
+> ① **這是降版，apt 預設拒絕**。錯誤訊息類似 `E: Packages … have unmet dependencies` 或
+> 直接選了較新版。解法：
+> ```bash
+> sudo apt install --allow-downgrades nginx=1.24.0-2ubuntu7.5 nginx-common=1.24.0-2ubuntu7.5
+> ```
+> ★★★★ 注意要**同時**指定 `nginx-common` 等同組套件，否則版本相依會解不開。
+> ② **第三方版本的優先權仍高於官方**（放行到 700 或預設 500），apt 想維持較新版。
+> 解法是先把該庫 Pin 設成 `-1` 再降版：
+> ```bash
+> printf 'Package: *\nPin: origin "deb.myguard.nl"\nPin-Priority: -1\n' \
+>   | sudo tee /etc/apt/preferences.d/myguard
+> sudo apt update && apt policy nginx     # ★★★ 確認 candidate 已變成官方版
+> sudo apt install --allow-downgrades nginx=1.24.0-2ubuntu7.5
+> ```
+> ★★★★ 另一個常被忽略的第三個原因：官方版本根本不在 `madison` 裡（該套件官方沒有），
+> 此時降版不可能成功，只能移除或改用替代品。先用 `apt-cache madison nginx` 確認。
+> 見「腳本三【4】降版／移除」。
+
+---
 
 ## 延伸閱讀
 
-- [[14-套件管理]]
-- [[04-自建APT套件庫]]
+- [[14-套件管理]] — apt / dpkg 的三層架構與日常指令，本篇假設你已經會了
+- [[04-自建APT套件庫]] — 離線／機敏環境的唯一正解：自己建鏡像或自己包套件
+- [[01-新機建置標準流程]] — 把「本機允許哪些套件來源」寫進新機驗收檢查表
+- [[02-基準設定與範本化]] — 把 preferences 與 keyrings 納入基準範本，避免每台機器各寫各的
+- [[05-自動化佈建入門]] — ★★★★ 撤除套件庫時**一定**要同時改組態管理程式碼，否則下次派送會寫回來
+- [[01-MyGuard套件庫介紹]] — 本手冊唯一長期使用的第三方庫，本篇程序的實際套用對象
+- [[07-動態模組管理]] — MyGuard 的動態模組怎麼裝、怎麼列進放行清單
+- [[08-MyGuard實戰組合]] — 導入後的完整組態範例
+- [[03-弱點與修補管理流程]] — 第三方庫的套件不在發行版 CVE 追蹤範圍，要自己納管
+- [[11-委外與供應鏈資安]] — 廠商在你機器上加的套件庫也算供應鏈，驗收時要盤點
+- [[08-變更管理流程]] — 加入／撤除套件庫是組態變更，要走變更單與簽核
+- [[09-資安稽核與符合性檢核]] — `apt-repo-audit` 的輸出可直接當作稽核佐證
+
+**官方文件**
+
+- `sources.list(5)` — deb822 完整欄位定義：<https://manpages.debian.org/stable/apt/sources.list.5.en.html>
+- `apt_preferences(5)` — pinning 優先權級距與選版規則：<https://manpages.debian.org/stable/apt/apt_preferences.5.en.html>
+- Debian Wiki — SecureApt（金鑰與簽章模型）：<https://wiki.debian.org/SecureApt>
+- unattended-upgrades README（`Allowed-Origins` / `Origins-Pattern`）：<https://github.com/mvo5/unattended-upgrades>
+- MyGuard 套件庫使用說明（★★★★ 導入前務必核對當前指紋）：<https://deb.myguard.nl/how-to-use/>
