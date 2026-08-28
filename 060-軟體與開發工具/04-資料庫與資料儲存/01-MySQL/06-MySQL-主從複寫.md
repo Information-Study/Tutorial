@@ -204,35 +204,26 @@ GTID 長這樣，`來源 UUID:交易序號`：
 | 從庫（replica） | `db2` | `10.0.1.12` | Ubuntu 24.04 + MySQL 8.0 | `12` |
 | 應用（Laravel/PHP-FPM） | `app1` | `10.0.1.21` | — | — |
 
-★★★ **兩台的 MySQL 版本必須相同或「主庫較舊」**。
-MySQL 官方支援「從庫版本 ≥ 主庫版本」的複寫（升級時就是靠這個先升從庫），
-但**反過來（主庫較新、從庫較舊）不支援**，會出現無法解析的 binlog 事件。
+★★★ **兩台版本必須相同，或「從庫較新」**。官方支援「從庫版本 ≥ 主庫版本」（升級時就是靠這個先升從庫），
+**反過來不支援**，會出現無法解析的 binlog 事件。
 
 ```bash
-# 兩台都跑，確認版本一致
-mysql -e "SELECT VERSION(), @@server_uuid\G"
+mysql -e "SELECT VERSION(), @@server_uuid\G"     # 兩台都跑
 ```
 
 預期輸出：
 
 ```text
-*************************** 1. row ***************************
       VERSION(): 8.0.43-0ubuntu0.24.04.1
-  @@server_uuid: 3e11fa47-71ca-11e1-9e33-c80aa9429562   # ★★★ 兩台必須不同（見下方）
+  @@server_uuid: 3e11fa47-71ca-11e1-9e33-c80aa9429562   # ★★★★ 兩台必須不同
 ```
 
 > [!danger] ★★★★ 用 VM 範本或磁碟複製建第二台？先檢查 `server_uuid`
-> `server_uuid` 存在 **datadir 下的 `auto.cnf`**。
-> 如果 db2 是把 db1 整顆磁碟 clone 出來的，兩台的 `server_uuid` 會**一模一樣**，
-> 複寫會出現看起來毫無道理的錯誤（`Fatal error: The replica I/O thread stops because
-> source and replica have equal MySQL server UUIDs`）。
->
+> `server_uuid` 存在 datadir 下的 `auto.cnf`。db2 若是 clone 自 db1，兩台的 UUID 會一模一樣，
+> 複寫會出現 `source and replica have equal MySQL server UUIDs` 這種看起來毫無道理的錯誤。
 > ```bash
-> # 從庫上：停掉服務、刪掉 auto.cnf、重啟讓它重新產生
-> sudo systemctl stop mysql
-> sudo rm -f /var/lib/mysql/auto.cnf
-> sudo systemctl start mysql
-> mysql -e "SELECT @@server_uuid;"    # ★ 確認已經跟主庫不同
+> sudo systemctl stop mysql && sudo rm -f /var/lib/mysql/auto.cnf && sudo systemctl start mysql
+> mysql -e "SELECT @@server_uuid;"    # ★ 確認已與主庫不同
 > ```
 
 ### 安裝
@@ -344,15 +335,7 @@ mysql  Ver 8.0.43-0ubuntu0.24.04.1 for Linux on x86_64 ((Ubuntu))
 # ═══ db1（主庫）：只放行從庫那一台的 3306 ═══
 sudo ufw allow from 10.0.1.12 to any port 3306 proto tcp comment 'MySQL repl from db2'
 sudo ufw status numbered
-```
 
-預期輸出：
-
-```text
-[ 3] 3306/tcp                   ALLOW IN    10.0.1.12    # MySQL repl from db2
-```
-
-```bash
 # ═══ db2（從庫）：確認連得到主庫 ═══
 nc -zv 10.0.1.11 3306
 ```
@@ -360,21 +343,14 @@ nc -zv 10.0.1.11 3306
 預期輸出：
 
 ```text
+[ 3] 3306/tcp          ALLOW IN    10.0.1.12       # MySQL repl from db2
 Connection to 10.0.1.11 3306 port [tcp/mysql] succeeded!
 ```
 
 > [!danger] ★★★★ 不要 `ufw allow 3306`
 > 沒有來源限制的 3306 等於把整個資料庫掛在網路上。
-> 規則寫法與順序陷阱見 [[02-防火牆-ufw基礎與實務]]，
+> 規則寫法與順序陷阱見 [[02-防火牆-ufw基礎與實務]]；
 > `bind-address` 與 TLS 憑證的產製見 [[07-MySQL-安全強化]]。
-
-> [!warning] ★★★★ NTP 沒同步，延遲數字全部是假的
-> `Seconds_Behind_Source` 的算法是「**從庫本地時鐘** − **事件在主庫上的時間戳**」。
-> 兩台機器的時鐘差 30 秒，這個數字就會憑空多（或少）30 秒。
-> 兩台都要 `timedatectl show -p NTPSynchronized` 回報 `NTPSynchronized=yes`；
-> 沒同步就 `sudo timedatectl set-ntp true && sudo systemctl restart systemd-timesyncd`。
-
----
 
 ## 基礎設定：把複寫建起來
 
@@ -498,22 +474,15 @@ mysql -e "SHOW MASTER STATUS\G"      # MySQL 8.2+ / 8.4 改用 SHOW BINARY LOG S
 -- ★ 在主庫 db1 上執行
 CREATE USER 'repl'@'10.0.1.%'
   IDENTIFIED WITH caching_sha2_password BY '請換成 32 字元以上的隨機密碼'
-  REQUIRE SSL;                                  -- ★★★★ 強制加密
-
-GRANT REPLICATION SLAVE ON *.* TO 'repl'@'10.0.1.%';   -- ★★★ 權限名稱沒有改成 REPLICA
-FLUSH PRIVILEGES;
-
+  REQUIRE SSL;                                           -- ★★★★ 強制加密
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'10.0.1.%';     -- ★★★ 權限名稱沒改成 REPLICA
 SHOW GRANTS FOR 'repl'@'10.0.1.%';
 ```
 
 預期輸出：
 
 ```text
-+---------------------------------------------------------------+
-| Grants for repl@10.0.1.%                                      |
-+---------------------------------------------------------------+
-| GRANT REPLICATION SLAVE ON *.* TO `repl`@`10.0.1.%`           |
-+---------------------------------------------------------------+
+| GRANT REPLICATION SLAVE ON *.* TO `repl`@`10.0.1.%` |
 ```
 
 | 決定 | 為什麼 | 星級 |
@@ -521,26 +490,20 @@ SHOW GRANTS FOR 'repl'@'10.0.1.%';
 | 只給 `REPLICATION SLAVE` | 複寫只需要讀 binlog，**不需要任何資料表權限** | ★★★★ |
 | 來源限 `10.0.1.%` | 不寫 `%`。最嚴格是逐台寫 `'repl'@'10.0.1.12'` | ★★★★ |
 | `REQUIRE SSL` | 複寫連線裡是**未加密的完整資料變更內容**，含個資 | ★★★★ |
-| 不加 `REPLICATION CLIENT` | 那是給監控帳號看 `SHOW REPLICA STATUS` 用的，職責分離 | ★★ |
+| 不加 `REPLICATION CLIENT` | 那是給監控帳號用的，職責分離 | ★★ |
 
 > [!warning] ★★★ `caching_sha2_password` + 沒開 TLS = 連不上
-> MySQL 8.0 預設的 `caching_sha2_password` 在**非加密連線**上，
-> 第一次認證需要透過 RSA 公鑰交換密碼。從庫沒拿到公鑰時會出現
-> `Authentication plugin 'caching_sha2_password' reported error: Authentication requires
-> secure connection`。
-> **正解是設定 TLS**（本篇作法）。
-> 真的沒有 TLS 時才退而求其次加 `GET_SOURCE_PUBLIC_KEY=1`，
-> ★★★★ 但那代表**複寫流量全程明文**，機關個資系統不可接受。
+> MySQL 8.0 預設的 `caching_sha2_password` 在非加密連線上要靠 RSA 公鑰交換密碼，
+> 從庫會出現 `Authentication requires secure connection`。
+> **正解是設定 TLS**；真的沒有 TLS 時才退而求其次加 `GET_SOURCE_PUBLIC_KEY=1`，
+> ★★★★ 但那代表複寫流量全程明文，機關個資系統不可接受。
 
-> [!danger] ★★★★ 密碼會留在 `~/.mysql_history` 與螢幕截圖裡
-> `CHANGE REPLICATION SOURCE TO ... SOURCE_PASSWORD='xxx'` 這句話會被記進
-> 執行者的 `~/.mysql_history`。交接、外包廠商、螢幕分享都會外洩。
->
+> [!danger] ★★★★ 密碼會留在 `~/.mysql_history`
+> `CHANGE REPLICATION SOURCE TO ... SOURCE_PASSWORD='xxx'` 會被記進執行者的歷程檔，
+> 交接、外包廠商、螢幕分享都會外洩。
 > ```bash
-> # 執行敏感 SQL 前先關掉歷程
-> MYSQL_HISTFILE=/dev/null mysql -u root -p
-> # 或事後清掉
-> shred -u ~/.mysql_history 2>/dev/null; touch ~/.mysql_history; chmod 600 ~/.mysql_history
+> MYSQL_HISTFILE=/dev/null mysql -u root -p        # 執行敏感 SQL 前關掉歷程
+> shred -u ~/.mysql_history; touch ~/.mysql_history; chmod 600 ~/.mysql_history
 > ```
 
 ### 【3】初始資料同步：兩條路，選錯會拖垮主庫

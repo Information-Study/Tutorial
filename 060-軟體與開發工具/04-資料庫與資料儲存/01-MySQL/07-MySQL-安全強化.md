@@ -40,17 +40,6 @@ updated: 2026-08-28
 
 ## 觀念說明
 
-### 先講結論：機關資料庫最常見的三個致命組態
-
-| # | 組態 | 星級 | 為什麼致命 |
-| --- | --- | --- | --- |
-| 1 | `bind-address = 0.0.0.0` + 防火牆放行 3306 給 `0.0.0.0/0` | ★★★★★ | 全網路掃描器都掃得到；配上一個 `'app'@'%'` 弱密碼帳號就是**直接被拖庫** |
-| 2 | 拿正式庫的 dump 直接還原到測試機或交給廠商 | ★★★★★ | 這在個資法下**就是一起個資外洩事件**，而且通常沒人留下紀錄 |
-| 3 | 沒有任何稽核軌跡 | ★★★★ | 事故發生後**查不出是誰、什麼時候、撈了哪些資料**，通報時寫不出影響範圍 |
-
-這三件事都不是「漏洞」，是**組態**。沒有 CVE 編號、掃描器不一定報、廠商驗收也不會擋，
-但它們造成的事故比任何一個 MySQL 漏洞都多。
-
 ### 資料庫的攻擊面分層
 
 ```text
@@ -77,28 +66,6 @@ updated: 2026-08-28
 │            檔案權限、AppArmor/SELinux、local_infile、secure_file_priv│
 └──────────────────────────────────────────────────────────────────┘
 ```
-
-> [!note] 這張圖怎麼用
-> 稽核委員問「你們資料庫安全怎麼做的」，照這七層回答，每層講**做了什麼 + 怎麼驗證**，
-> 比背一堆設定項有用得多。本篇後面每一段都對應其中一到兩層。
-
-### 「加密」這個字在資料庫有三個完全不同的意思
-
-維運會議上最容易雞同鴨講的就是這個。分清楚，因為**它們擋的是不同的威脅**：
-
-| 層次 | 設定 | 擋得住 | 擋不住 |
-| --- | --- | --- | --- |
-| **傳輸加密** | TLS、`require_secure_transport` | 網路上的側錄、ARP 欺騙、機房跳線抓包 | 硬碟被搬走、備份檔外流、有帳號的人撈資料 |
-| **靜態加密（表空間）** | InnoDB TDE + keyring | ★★★★ **整顆硬碟被搬走**、退役硬碟未消磁 | 資料庫**在跑的時候**，任何合法連線都讀得到明文；`mysqldump` 出來也是明文 |
-| **備份加密** | dump 後 `age` / `gpg` 加密 | ★★★★ **備份檔被複製**、備份 NAS 被入侵、備份帶遺失 | 線上資料庫本身 |
-
-> [!warning] ★★★★ 最常見的誤解
-> 「我們有開表空間加密，所以備份是安全的」—— **錯**。
-> `mysqldump` 是透過正常連線讀資料，讀出來的是**解密後的明文**。
-> 表空間加密對 dump 檔一點保護都沒有，備份檔要**另外加密**。
->
-> 反過來也一樣：「備份有加密」不代表硬碟被搬走時資料庫檔案讀不出來。
-> **這兩層要分開做、分開驗證。**
 
 ### 社群版做得到什麼、做不到什麼（誠實的能力邊界）
 
@@ -201,20 +168,6 @@ mysql -h db01.example.gov.tw -u root -p --connect-timeout=5
 > 攻擊者現在可以：讀版本橫幅去找已知漏洞、對 `root` 做密碼噴灑、觸發你的連線資源。
 > **正確答案只有逾時或連線被拒。**
 
-不裝 `nmap` 也能驗證，用 bash 的 `/dev/tcp` 讀握手橫幅：
-
-```bash
-timeout 3 bash -c 'exec 3<>/dev/tcp/db01.example.gov.tw/3306; head -c 80 <&3' | strings | head -3
-```
-
-預期輸出（**這代表暴露了**）：
-
-```text
-8.0.39-0ubuntu0.22.04.1     # ★★★★★ 版本橫幅直接吐出來
-```
-
-收好之後同一行指令會卡住到 `timeout` 結束、什麼都不印。
-
 > [!tip] ★★★ 為什麼「有人真的會掃到你」
 > 網路空間搜尋引擎（Shodan、Censys、FOFA 這類）持續全網掃描並索引服務橫幅，
 > 用 `port:3306 product:MySQL` 就能列出一整批對外的資料庫。
@@ -222,44 +175,6 @@ timeout 3 bash -c 'exec 3<>/dev/tcp/db01.example.gov.tw/3306; head -c 80 <&3' | 
 >
 > 自查方式：在那些網站查**你自己機關的對外 IP 網段**（多數提供免費查詢），
 > 這比你自己掃更貼近攻擊者看到的畫面。
-
-### 現況基線快照
-
-把整改前的狀態存下來，這份東西後面要當附件交出去：
-
-```bash
-sudo install -d -m 750 /var/log/db-audit
-TS=$(date +%F_%H%M)
-{
-  echo "=== 監聽 ==="; sudo ss -lntp | grep -E 'mysqld'
-  echo "=== 防火牆 ==="; sudo ufw status verbose 2>/dev/null || sudo nft list ruleset
-  echo "=== 版本 ==="; mysql --version
-  echo "=== 關鍵變數 ==="
-  sudo mysql -Nse "SELECT CONCAT(VARIABLE_NAME,' = ',VARIABLE_VALUE)
-                   FROM performance_schema.global_variables
-                   WHERE VARIABLE_NAME IN
-                   ('bind_address','mysqlx_bind_address','mysqlx_port','admin_address',
-                    'require_secure_transport','have_ssl','ssl_ca','ssl_cert','tls_version',
-                    'local_infile','secure_file_priv','skip_name_resolve','general_log',
-                    'log_error_verbosity','log_bin','default_password_lifetime')
-                   ORDER BY VARIABLE_NAME;"
-  echo "=== 帳號 ==="
-  sudo mysql -Nse "SELECT CONCAT(user,'@',host,'  plugin=',plugin,'  locked=',account_locked)
-                   FROM mysql.user ORDER BY host,user;"
-} | sudo tee "/var/log/db-audit/baseline_${TS}.txt" >/dev/null
-sudo chmod 600 "/var/log/db-audit/baseline_${TS}.txt"
-echo "已寫入 /var/log/db-audit/baseline_${TS}.txt"
-```
-
-預期輸出：
-
-```text
-已寫入 /var/log/db-audit/baseline_2026-08-29_0930.txt
-```
-
-> [!warning] ★★★ 這份基線檔本身含帳號清單
-> 權限給 `600`、放在 `750` 的目錄，**不要丟進 git、不要用 email 傳**。
-> 要交稽核時只交「整改前後對照表」，不要交原始快照。
 
 ### 收斂監聽面
 
@@ -604,22 +519,6 @@ SET PERSIST password_require_current  = ON;     -- 改密碼要先驗舊密碼
 SHOW VARIABLES LIKE 'validate_password.%';
 ```
 
-預期輸出：
-
-```text
-+--------------------------------------+--------+
-| Variable_name                        | Value  |
-+--------------------------------------+--------+
-| validate_password.check_user_name    | ON     |
-| validate_password.dictionary_file    |        |
-| validate_password.length             | 14     |
-| validate_password.mixed_case_count   | 1      |
-| validate_password.number_count       | 1      |
-| validate_password.policy             | STRONG |
-| validate_password.special_char_count | 1      |
-+--------------------------------------+--------+
-```
-
 > [!danger] ★★★★ `default_password_lifetime` 設成 90 會讓應用在半夜掛掉
 > 這個參數對**所有帳號**生效，包含 `app_rw` 這種應用帳號。
 > 密碼到期後，應用連進來會收到：
@@ -675,18 +574,7 @@ SELECT * FROM information_schema.CONNECTION_CONTROL_FAILED_LOGIN_ATTEMPTS;
 
 #### 離職與異動的定期清查
 
-```sql
--- ★★★ 90 天沒換過密碼、且不是系統帳號的人用帳號
-SELECT user, host, password_last_changed,
-       DATEDIFF(NOW(), password_last_changed) AS days_old
-FROM mysql.user
-WHERE password_last_changed IS NOT NULL
-  AND user NOT LIKE 'mysql.%'
-  AND DATEDIFF(NOW(), password_last_changed) > 90
-ORDER BY days_old DESC;
-```
-
-★★★★ 更關鍵的是「**這個帳號還有人在用嗎**」。MySQL 沒有 `last_login` 欄位，
+離職與異動清查最關鍵的問題是「**這個帳號還有人在用嗎**」。★★★★ MySQL 沒有 `last_login` 欄位，
 要靠 Performance Schema 的連線統計（自上次重啟以來）：
 
 ```sql
@@ -1075,10 +963,6 @@ SET PERSIST require_secure_transport = ON;     -- ★ 這才會寫進 mysqld-aut
 | 備份檔被複製到 NAS 外流 | ❌ ★★★★ | ✅ | ❌ |
 | 有合法帳號的人撈資料 | ❌ | ❌ | ❌ |
 
-> [!note] ★★★ LUKS 只在關機時保護資料
-> 開機後金鑰在記憶體裡、檔案系統已掛載，任何拿到 root 的人都讀得到明文。
-> LUKS 解決的是**實體遺失**，不是入侵。機關情境（機房有門禁）它的優先度通常低於備份加密。
-
 #### InnoDB 表空間加密（keyring component）
 
 ★★★ MySQL 8.0.24 起改用 **component**；舊的 `keyring_file` plugin 在 8.0.34 已棄用、8.4 移除。
@@ -1274,16 +1158,6 @@ sudo find /etc /root /home -maxdepth 3 -name '.my.cnf' -o -name 'my.cnf' -o -nam
     [[ "$p" != "600" ]] && echo "★★★★ $f 權限 $p，應為 600"
   done
 ```
-
-> [!tip] ★★★ `mysql_config_editor` 是**混淆**不是加密
-> ```bash
-> $ mysql_config_editor set --login-path=local --host=127.0.0.1 --user=ops --password
-> $ mysql --login-path=local -e 'SELECT 1'
-> ```
-> `~/.mylogin.cnf` 讓密碼不出現在 `ps` 與 shell history，是好事。
-> 但它用的是**固定金鑰的混淆**，拿到檔案就解得開（`mysql_config_editor print --all` 只印明文以外的部分，
-> 但格式已被公開分析）。★★★ 它防的是肩窺與行程清單，**不是**防拿到檔案的人。
-> 真正的機密保管見 [[03-機密管理與金鑰保護]]。
 
 ```ini
 # /etc/mysql/mysql.conf.d/99-hardening.cnf 續
