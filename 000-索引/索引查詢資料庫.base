@@ -1,0 +1,19 @@
+views:
+  - type: table
+    name: 表格
+    order:
+      - file.name
+      - file.folder
+      - tags
+      - updated
+    sort:
+      - property: file.folder
+        direction: ASC
+      - property: tags
+        direction: ASC
+    columnSize:
+      file.name: 278
+      file.folder: 353
+      note.tags: 475
+  - type: table
+    name: 檢視

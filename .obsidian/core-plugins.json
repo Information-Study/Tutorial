@@ -26,8 +26,8 @@
   "canvas": true,
   "sync": false,
   "publish": false,
-  "footnotes": false,
+  "footnotes": true,
   "daily-notes": false,
   "bases": true,
-  "webviewer": false
+  "webviewer": true
 }

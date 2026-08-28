@@ -7,7 +7,7 @@
   "readableLineLength": false,
   "strictLineBreaks": false,
   "alwaysUpdateLinks": true,
-  "showUnsupportedFiles": false,
+  "showUnsupportedFiles": true,
   "trashOption": "local",
   "promptDelete": true,
   "tabSize": 2,
@@ -24,6 +24,5 @@
   "autoPairMarkdown": true,
   "smartIndentList": true,
   "vimMode": false,
-  "focusNewTab": true,
-  "nativeMenus": false
+  "focusNewTab": true
 }
