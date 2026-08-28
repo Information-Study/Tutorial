@@ -1,0 +1,16 @@
+{
+  "types": {
+    "title": "text",
+    "desc": "text",
+    "aliases": "aliases",
+    "tags": "tags",
+    "category": "text",
+    "difficulty": "text",
+    "status": "text",
+    "distro": "multitext",
+    "prerequisites": "multitext",
+    "updated": "date",
+    "type": "text",
+    "baseline_version": "text"
+  }
+}

@@ -7,7 +7,7 @@ category: 容器化
 difficulty: 專家
 status: 待撰寫
 distro: [ubuntu, rhel]
-prerequisites: ["[[03-AI服務整合實戰]]"]
+prerequisites: ["[[11-AI服務整合實戰]]"]
 updated: 2026-08-27
 ---
 
@@ -20,7 +20,7 @@ updated: 2026-08-27
 
 ## 前置知識
 
-- [[03-AI服務整合實戰]]
+- [[11-AI服務整合實戰]]
 
 ## 觀念說明
 

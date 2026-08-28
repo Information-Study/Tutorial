@@ -175,6 +175,8 @@ python3 _工具/重建索引.py          # 新增／改名／搬移筆記後必�
 python3 _工具/重建索引.py --check  # 只檢查不寫入
 python3 _工具/檢查連結.py          # 檢查斷掉的 wikilink，必須 0
 python3 _工具/進度統計.py          # 各章撰寫進度
+python3 _工具/健檢.py              # ★ 一次跑完所有結構檢查（提交前建議跑）
+python3 _工具/健檢.py --quiet      # 只顯示問題
 python3 _工具/新增筆記.py <資料夾> <標題> --kind {cmd|svc|guide|ref} [選項]
 ```
 

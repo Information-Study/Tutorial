@@ -14,5 +14,16 @@
   "spellcheck": false,
   "defaultViewMode": "preview",
   "livePreview": true,
-  "propertiesInDocument": "visible"
+  "propertiesInDocument": "visible",
+  "showInlineTitle": false,
+  "showRelativeLineNumbers": false,
+  "foldHeading": true,
+  "foldIndent": true,
+  "useTab": false,
+  "autoPairBrackets": true,
+  "autoPairMarkdown": true,
+  "smartIndentList": true,
+  "vimMode": false,
+  "focusNewTab": true,
+  "nativeMenus": false
 }
