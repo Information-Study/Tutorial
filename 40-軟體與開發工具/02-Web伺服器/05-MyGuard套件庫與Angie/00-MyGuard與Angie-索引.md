@@ -37,7 +37,7 @@ updated: 2026-08-28
 | 03 | [[03-autocert自動憑證模組]] | 進階 | NGINX 內建的 ACME 客戶端，一行設定取代 certbot 與 cron |
 | 04 | [[04-http-shield攻擊攔截]] | 進階 | 編譯進去的攻擊特徵攔截，SQLi、Log4Shell、Shellshock 的低誤判防線 |
 | 05 | [[05-error-abuse與sentinel]] | 專家 | 錯誤率限流與信譽評分：擋掉掃描器、爬蟲與 AI 抓取 |
-| 06 | [[06-cache-turbo與壓縮模組]] | 進階 | 共享記憶體邊緣快取、zstd 與 strip-filter |
+| 06 | [[06-cache-turbo與壓縮模組]] | 進階 | 內建邊緣快取、回應精簡與 Brotli/Zstd 壓縮 |
 | 07 | [[07-動態模組管理]] | 進階 | 100 多個動態模組的載入、順序與相依性處理 |
 | 08 | [[08-MyGuard實戰組合]] | 專家 | 把 autocert、http-shield、cache-turbo 組成一套完整的正式環境設定 |
 
