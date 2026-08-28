@@ -24,9 +24,9 @@ updated: 2026-08-28
 
 ## 前置知識
 
-- [[03-SSH-客戶端設定檔]] — `~/.ssh/config` 的 `Host` 區塊、`ProxyJump` 的寫法與跳板機原理（本篇只講它與 `-L` 的組合）
-- [[04-sshd-伺服器端設定]] — `sshd_config` 的改法、`sshd -t` 語法檢查與自動回滾 SOP
-- [[02-SSH-金鑰認證與ssh-agent]] — `authorized_keys` 的格式（本篇要在上面加限制選項）
+- [[03-SSH-客戶端設定檔]] — `~/.ssh/config` 的 `Host` 區塊與 `ProxyJump`（本篇只寫它與 `-L` 的組合）
+- [[04-sshd-伺服器端設定]] — `sshd -t` 語法檢查與「改壞就自動回滾」的 SOP
+- [[02-SSH-金鑰認證與ssh-agent]] — `authorized_keys` 格式，本篇要在上面加限制選項
 - [[03-ss-netstat-與lsof]] — `ss -ltnp` 判讀誰在監聽哪個埠，本篇整篇都在用
 - [[01-systemd-unit撰寫實戰]] — unit 欄位逐項解釋（本篇只用不解釋）
 
@@ -34,15 +34,14 @@ updated: 2026-08-28
 
 ## 觀念說明
 
-SSH 隧道的本質只有一句話：**在一條已經加密的 SSH 連線裡，多開幾條「channel」，把 TCP 流量塞進去搬到另一端**。
+SSH 隧道的本質只有一句話：**在一條已經加密的 SSH 連線裡多開幾條 channel，把 TCP 流量塞進去搬到另一端**。
 
-真正會出事的從來不是這個機制，而是**方向搞反**。維運人員十次有八次的隧道問題，
-都是「我以為它在我這邊 listen，其實在對面 listen」或者
-「我以為 `127.0.0.1` 是我的電腦，其實是伺服器的 loopback」。
+真正會出事的從來不是這個機制，而是**方向搞反**。維運人員十次有八次的隧道問題都是
+「我以為它在我這邊 listen，其實在對面 listen」，或者「我以為 `127.0.0.1` 是我的電腦，其實是伺服器的 loopback」。
 
 ### ★★★★ 四種轉發的方向感
 
-```
+```text
 ★★★★ 看隧道只問兩件事：【誰在 listen（開門）】【誰去 connect（敲門）】
 
   你的工作站 ws01              SSH 伺服器 host            最終目標
@@ -51,29 +50,27 @@ SSH 隧道的本質只有一句話：**在一條已經加密的 SSH 連線裡，
 【-L 本地轉發】★★★ 最常用、最安全
   [listen 13306] ══════加密══════► [ssh 從這裡發起連線] ─────► db:3306
    ▲ ★★★★ 開門的是「你」                                      ▲ ★★★ 由 host 解析、由 host 連出去
-   │                                                          │
-   └ DBeaver / mysql / 瀏覽器連這裡                            └ 這台可以只綁內網、可以有防火牆
+   └ DBeaver / mysql / 瀏覽器連這裡                            └ 這台可以只綁內網
   ★ 防火牆看到的：ws01 → host:22 一條 outbound（正常的管理連線）
 
 【-R 遠端轉發】★★★★★ 打洞，機關幾乎都禁止
   [ssh 從這裡發起連線] ◄═════加密═════ [listen 8080] ◄───── 外面的人連進來
    ▲ ★★★★ 敲門的是「你」                ▲ ★★★★★ 開門的是「伺服器」
-   │                                    │
    └ 連到 ws01 上的 127.0.0.1:80        └ 需要 GatewayPorts yes 才能對外綁
   ★★★★★ 防火牆看到的一樣是 ws01 → host:22 的 outbound
      但實際效果是「外部可以連進內網」→ 這就是繞過出入口管制
 
 【-D 動態轉發（SOCKS5）】★★★ 一個 port 打天下
   [listen 1080 SOCKS5] ══加密══► [ssh 依 SOCKS 要求逐一發起] ──► 任意 host:任意 port
-   ▲ 瀏覽器 / curl 設 proxy                                    ▲ ★★★ 目標是「連線時才決定」
+   ▲ 瀏覽器 / curl 設 proxy                                    ▲ ★★★ 目標「連線時才決定」
 
 【-J ProxyJump】★★ 不是轉發，是「接力」
   ws01 ──► bastion:22 ──(在 bastion 內開一條 channel 到 web:22)──► web:22
   ★★★ 你跟 web 之間是【端對端加密】，bastion 看不到內容
-  ★★ bastion 上不會出現任何 listen port（跟 -L 的差別就在這）
+  ★★ bastion 上不會出現任何 listen port —— 這是它跟 -L 最大的差別
 ```
 
-| 選項 | listen 在哪一端 | 由誰發起最終連線 | 預設綁定位址 | **★ 風險等級** |
+| 選項 | listen 在哪一端 | 由誰發起最終連線 | 預設綁定位址 | **★ 風險** |
 | --- | --- | --- | --- | --- |
 | **`-L`** | **客戶端（你）** | 伺服器 | `127.0.0.1` | **★★★ 中**（綁 `0.0.0.0` 就變高） |
 | **`-R`** | **伺服器** | 客戶端（你） | 伺服器的 `127.0.0.1` | **★★★★★ 極高**（打洞） |
@@ -82,15 +79,11 @@ SSH 隧道的本質只有一句話：**在一條已經加密的 SSH 連線裡，
 
 > [!note] ★★★★ 記憶法：字母指的是「開門的位置」
 > **`-L` = Local listen**（門開在本機）、**`-R` = Remote listen**（門開在遠端）。
-> 至於「誰去 connect」永遠是**另一端**。把這兩句記熟，四種轉發就不會再搞混。
+> 至於「誰去 connect」永遠是**另一端**。這兩句記熟，四種轉發就不會再搞混。
 
 ### ★★★★ 隧道是工具，也是資安破口
 
-同一個 `ssh -R`，在開發者眼中是「讓外面的 webhook 打得進我的筆電」，
-在機關的資安稽核眼中是「**未經核准的對外通道，繞過所有防火牆與 IPS**」。
-兩邊講的是同一件事，只是立場不同 —— 而**稽核只看事實，不看動機**。
-
-```
+```text
 ★★★★ 為什麼隧道能繞過防火牆？
 
   傳統防火牆規則：
@@ -98,17 +91,17 @@ SSH 隧道的本質只有一句話：**在一條已經加密的 SSH 連線裡，
     拒絕  網際網路 → 內網 :3306    （資料庫不對外，很合理）
 
   但是 -R 之後：
-    外部使用者 → host:8080 → 【SSH 連線內】 → 你的工作站 → 內網任何服務
-                              ▲
-                              └ ★★★★★ 防火牆只看到一條「合法的 outbound :22」
-                                 封包內容是加密的，DPI 也看不出來
+    外部使用者 → host:8080 →【SSH 連線內】→ 你的工作站 → 內網任何服務
+                              ▲ ★★★★★ 防火牆只看到一條「合法的 outbound :22」
+                                 封包內容加密，DPI 也看不出來
 
-  ★★★★★ 結論：允許 outbound :22，等於同時允許了「任意方向的隧道」，
+  ★★★★★ 結論：允許 outbound :22 等於同時允許了「任意方向的隧道」，
        除非你在【伺服器端】用 AllowTcpForwarding / PermitOpen 明確關掉。
 ```
 
-所以本篇的順序刻意是：**先教怎麼用，再教怎麼在伺服器端把它關掉。**
-維運人員兩邊都要會 —— 你自己要用隧道做事，同時要負責不讓別人在你管的機器上亂開洞。
+同一個 `ssh -R`，開發者眼中是「讓 webhook 打得進我的筆電」，稽核眼中是
+「**未經核准的對外通道，繞過所有防火牆與 IPS**」——**稽核只看事實，不看動機**。
+所以本篇的順序刻意是：**先教怎麼用，再教怎麼在伺服器端把它關掉**。兩邊都要會。
 
 ---
 
@@ -116,48 +109,34 @@ SSH 隧道的本質只有一句話：**在一條已經加密的 SSH 連線裡，
 
 ### ★★★★ `-L` 本地轉發：四段語意
 
-```
+```text
 ssh -L [bind:]lport:target:tport user@host
         │      │      │      │           └─ ① 隧道的出口：你 SSH 連上的那台機器
-        │      │      │      └───────────── ④ 目標埠（★★★ 從 host 的角度看）
+        │      │      │      └───────────── ④ 目標埠（★★★ 從 host 的角度）
         │      │      └──────────────────── ③ 目標主機（★★★★ 由 host 解析、由 host 連出去）
         │      └─────────────────────────── ② 本機監聽埠（你自己的軟體要連這個）
         └────────────────────────────────── ★★★★ 本機監聽位址，預設 127.0.0.1
 ```
 
 > [!warning] ★★★★ 最常見的誤解：`-L 13306:127.0.0.1:3306` 裡的 `127.0.0.1` 不是你的電腦
-> 第三段（target）**永遠是從 SSH 伺服器的角度**去解析與連線。
-> 寫 `127.0.0.1` 代表「**伺服器自己的 loopback**」，寫 `db.internal` 代表「**伺服器解析得到的那台 db**」。
-> 你的電腦解不解析得到 `db.internal`、連不連得到，**完全不重要**。
-
-最基本的一條：
+> 第三段（target）**永遠從 SSH 伺服器的角度**解析與連線。
+> 寫 `127.0.0.1` 代表「**伺服器自己的 loopback**」，寫 `db.internal` 代表「**伺服器解析得到的那台**」。
+> 你的電腦解不解析得到、連不連得到，**完全不重要**。
 
 ```bash
 # ★★★ 把「db01 上只綁 127.0.0.1 的 MySQL」搬到本機 13306
-ssh -N -L 13306:127.0.0.1:3306 ops@db01.internal.example.gov.tw
+$ ssh -N -L 13306:127.0.0.1:3306 ops@db01.internal.example.gov.tw
 ```
 
 另開一個終端機驗證：
 
 ```bash
-ss -ltnp | grep 13306
-```
-
-預期輸出：
-
-```text
+$ ss -ltnp | grep 13306
 LISTEN 0  128  127.0.0.1:13306  0.0.0.0:*  users:(("ssh",pid=48211,fd=5))
-#            ★★★★ 綁在 127.0.0.1 → 只有這台機器連得到，正確
-#                                    ★★ 佔用者是 ssh 本身，不是 mysql
-```
+#              ★★★★ 綁在 127.0.0.1 → 只有這台機器連得到，正確
+#                                     ★★ 佔用者是 ssh 本身，不是 mysql
 
-```bash
-mysql -h 127.0.0.1 -P 13306 -u ops -p -e 'SELECT 1 AS ok'
-```
-
-預期輸出：
-
-```text
+$ mysql -h 127.0.0.1 -P 13306 -u ops -p -e 'SELECT 1 AS ok'
 Enter password:
 +----+
 | ok |
@@ -167,119 +146,78 @@ Enter password:
 ```
 
 > [!danger] ★★★★ `-h localhost` 不會走隧道
-> `mysql -h localhost` 在 MySQL/MariaDB 的客戶端會**改走 Unix socket**，
-> `-P 13306` 直接被忽略，你會連到「本機那個根本不存在的 MySQL」然後看到：
+> MySQL/MariaDB 客戶端遇到 `localhost` 會**改走 Unix socket**，`-P 13306` 直接被忽略：
 > ```text
 > ERROR 2002 (HY000): Can't connect to local server through socket '/run/mysqld/mysqld.sock' (2)
 > ```
 > **一律寫 `-h 127.0.0.1`。** 這個坑每個人都會踩一次。
 
-### 典型情境對照表
-
 | 要存取的服務 | 伺服器上的監聽位址 | 指令 | **★** |
 | --- | --- | --- | --- |
 | **MySQL / MariaDB** | `127.0.0.1:3306` | `ssh -N -L 13306:127.0.0.1:3306 db01` | **★★★★** |
-| **PostgreSQL** | `127.0.0.1:5432` | `ssh -N -L 15432:127.0.0.1:5432 db01` | ★★★ |
-| **Redis** | `127.0.0.1:6379` | `ssh -N -L 16379:127.0.0.1:6379 cache01` | **★★★★**（Redis 常無密碼） |
-| **Proxmox VE 網頁** | `0.0.0.0:8006`（但只開內網） | `ssh -N -L 8006:127.0.0.1:8006 pve01` | ★★★ |
-| **Grafana** | `127.0.0.1:3000` | `ssh -N -L 3000:127.0.0.1:3000 mon01` | ★★ |
-| **Adminer / phpMyAdmin** | `127.0.0.1:8080` | `ssh -N -L 8080:127.0.0.1:8080 web01` | **★★★** |
+| PostgreSQL | `127.0.0.1:5432` | `ssh -N -L 15432:127.0.0.1:5432 db01` | ★★★ |
+| **Redis** | `127.0.0.1:6379` | `ssh -N -L 16379:127.0.0.1:6379 cache01` | **★★★★**（常無密碼） |
+| **Proxmox VE 網頁** | `:8006`（只開內網） | `ssh -N -L 18006:127.0.0.1:8006 pve01` | ★★★ |
+| Grafana | `127.0.0.1:3000` | `ssh -N -L 13000:127.0.0.1:3000 mon01` | ★★ |
+| **Adminer / phpMyAdmin** | `127.0.0.1:8080` | `ssh -N -L 18080:127.0.0.1:8080 web01` | **★★★** |
 | **另一台內網機** | 目標在 `10.10.20.50:3306` | `ssh -N -L 13306:10.10.20.50:3306 bastion` | **★★★★** |
 
-最後一列是重點：**target 不必是 SSH 伺服器自己**。
-只要 SSH 伺服器連得到那台機器，你就連得到 —— 這也是 `-L` 威力大、風險也大的原因。
+最後一列是重點：**target 不必是 SSH 伺服器自己**。只要伺服器連得到那台機器你就連得到 —— 這是 `-L` 威力大、風險也大的原因。
 
-### ★★★★ 本機綁定位址：`0.0.0.0` 是條紅線
-
-```bash
-# ★ 預設：只有你這台機器連得到（安全）
-ssh -N -L 13306:127.0.0.1:3306 db01
-
-# ★★★★★ 危險：整個辦公網段的人都能連你的 13306 → 等於連上內網資料庫
-ssh -N -L 0.0.0.0:13306:127.0.0.1:3306 db01
-```
-
-驗證差別：
+### ★★★★★ 本機綁定位址：`0.0.0.0` 是條紅線
 
 ```bash
-ss -ltnp | grep 13306
-```
+$ ssh -N -L 13306:127.0.0.1:3306 db01          # ★ 預設：只有你這台連得到
+$ ssh -N -L 0.0.0.0:13306:127.0.0.1:3306 db01  # ★★★★★ 危險：整個網段都能連
 
-```text
-# 前者
+$ ss -ltnp | grep 13306
 LISTEN 0 128  127.0.0.1:13306  0.0.0.0:*  users:(("ssh",pid=48211,fd=5))   # ★ 安全
-
-# 後者
 LISTEN 0 128    0.0.0.0:13306  0.0.0.0:*  users:(("ssh",pid=48333,fd=5))   # ★★★★★ 全網段可連
 ```
 
 > [!danger] ★★★★★ `-L 0.0.0.0:...` 是「未經授權的服務發布」
 > 你只是想讓同事一起看，實際做的事情是：**把一台受保護的內網資料庫，
-> 以無認證、無記錄、無防火牆的形式，發布給你所在網段上的每一台機器**
+> 以無認證、無記錄、無防火牆的形式發布給你所在網段的每一台機器**
 > （包含訪客 Wi-Fi、包含被入侵的印表機）。
-> 客戶端的 `GatewayPorts yes` 與 `ssh -g` 也是同樣效果，一樣禁止。
-> 需要多人共用，正確做法是**每個人各自開自己的隧道**，或走 [[06-遠端存取安全]] 講的 VPN。
+> 客戶端的 `GatewayPorts yes` 與 `ssh -g` 是同樣效果，一樣禁止。
+> 需要多人共用，正確做法是**每個人各自開自己的隧道**，或走 [[06-遠端存取安全]] 的 VPN。
 
-### `-N` `-T` `-f` 的意義
+### `-N` `-T` `-f` 與 `ExitOnForwardFailure`
 
 | 選項 | 作用 | **★ 什麼時候一定要加** |
 | --- | --- | --- |
-| **`-N`** | **不執行遠端指令**（只做轉發，不開 shell） | **★★★★ 所有純隧道用途**；不加就會多開一個 shell |
-| **`-T`** | 不配置 pty | **★★★ 搭配 `-N` 給 systemd 用**，避免 tty 相關的干擾 |
-| **`-f`** | 認證後轉入背景 | **★★ 臨時用可以，長期不要**（見下方警告） |
-| `-q` | 安靜模式 | ★ 腳本裡用；**★★★ 但會吃掉錯誤訊息，除錯時務必拿掉** |
-| `-v` / `-vv` | 除錯輸出 | **★★★★ 隧道出問題的第一個動作** |
-
-```bash
-# ★★ 臨時隧道（前景，Ctrl+C 就關掉，最好管理）
-ssh -N -L 13306:127.0.0.1:3306 db01
-
-# ★★ 背景版
-ssh -f -N -L 13306:127.0.0.1:3306 db01
-```
+| **`-N`** | 不執行遠端指令（只轉發、不開 shell） | **★★★★ 所有純隧道用途** |
+| **`-T`** | 不配置 pty | **★★★ 搭配 `-N` 給 systemd 用** |
+| `-f` | 認證後轉入背景 | **★★ 臨時可以，長期不要** |
+| `-q` | 安靜模式 | ★★★ 會吃掉錯誤訊息，除錯務必拿掉 |
+| **`-v`** | 除錯輸出 | **★★★★ 隧道出問題的第一個動作** |
 
 > [!warning] ★★★ `-f` 背景化的三個管理問題
-> 1. **找不到**：`ps aux | grep ssh` 一堆，分不出哪條是哪條。
-> 2. **不會自動重連**：網路一斷就永久消失，而且**沒有任何告警**。
-> 3. **殺不乾淨**：`pkill ssh` 會連你正在用的管理連線一起殺掉（★★★★ 真的會發生）。
->
-> 要找出並關掉特定隧道，靠埠而不是靠程序名：
+> **找不到**（`ps aux | grep ssh` 分不出哪條是哪條）、**不會自動重連**（斷了也沒告警）、
+> **殺不乾淨**（`pkill ssh` 會連你正在用的管理連線一起殺掉 ★★★★）。
+> 要關掉特定隧道請靠埠而不是靠程序名：
 > ```bash
-> ss -ltnp 'sport = :13306'
-> kill "$(ss -Hltnp 'sport = :13306' | grep -oP 'pid=\K[0-9]+')"
+> $ kill "$(ss -Hltnp 'sport = :13306' | grep -oP 'pid=\K[0-9]+')"
 > ```
 > **★★★★ 長期隧道一律改成 systemd unit**，見〈進階應用〉。
 
-### ★★★★ `ExitOnForwardFailure yes`：治好「連得上卻沒資料」
-
-預設情況下，**本機埠已被占用時 ssh 照樣會連上**，只是印一行警告然後把轉發丟掉：
+預設情況下，**本機埠已被占用時 ssh 照樣會連上**，只是印警告然後把轉發丟掉：
 
 ```bash
-ssh -N -L 13306:127.0.0.1:3306 db01
-```
-
-預期輸出（埠已被占用時）：
-
-```text
+$ ssh -N -L 13306:127.0.0.1:3306 db01
 bind [127.0.0.1]:13306: Address already in use
 channel_setup_fwd_listener_tcpip: cannot listen to port: 13306
 Could not request local forwarding.
 #  ★★★★ 注意：ssh 沒有結束！它還連著，只是這條轉發【不存在】
 ```
 
-如果你是在腳本裡、或加了 `-q`、或用 `-f` 背景化，這三行你根本看不到，
-結果就是：**「隧道明明在跑，DBeaver 卻連到一個上週留下來的舊隧道」**，
+如果你是在腳本裡、加了 `-q`、或用 `-f` 背景化，這三行你根本看不到，結果就是
+**「隧道明明在跑，DBeaver 卻連到上週留下來的舊隧道」**，
 指向錯誤的資料庫做了正式環境的操作 —— 這是最耗時也最危險的假故障。
 
 ```bash
 # ★★★★ 正確做法：轉發失敗就讓整條 ssh 結束
-ssh -N -o ExitOnForwardFailure=yes -L 13306:127.0.0.1:3306 db01
-echo "rc=$?"
-```
-
-預期輸出：
-
-```text
+$ ssh -N -o ExitOnForwardFailure=yes -L 13306:127.0.0.1:3306 db01; echo "rc=$?"
 bind [127.0.0.1]:13306: Address already in use
 channel_setup_fwd_listener_tcpip: cannot listen to port: 13306
 Could not request local forwarding.
@@ -289,124 +227,79 @@ rc=255
 
 > [!note] ★★★ `ExitOnForwardFailure` 管不到「目標連不上」
 > 官方定義寫得很清楚：它只管**建立轉發（bind/listen）的階段**，
-> 不管「透過轉發過去的連線失敗」。
-> 也就是說 `db:3306` 掛掉時，隧道還是活的，只是每次連線都回 `Connection refused`。
-> 監控要分兩層：**隧道在不在**（`ss`）與**後端活不活**（`mysqladmin ping`）。
+> 不管「透過轉發過去的連線失敗」。`db:3306` 掛掉時隧道還是活的，只是每次連線都回 `Connection refused`。
+> **監控要分兩層**：隧道在不在（`ss`）與後端活不活（`mysqladmin ping`）。
 
-### `-R` 遠端轉發：能不用就不要用
+### ★★★★★ `-R` 遠端轉發：能不用就不要用
 
 ```bash
 # ★★★★★ 把「你工作站上的 80 埠」開放到 host 的 8080
-ssh -N -R 8080:127.0.0.1:80 ops@host
-```
+$ ssh -N -R 8080:127.0.0.1:80 ops@host
 
-在 `host` 上驗證：
-
-```bash
-ss -ltnp | grep 8080
-```
-
-預期輸出：
-
-```text
+# 在 host 上檢查
+$ ss -ltnp | grep 8080
 LISTEN 0 128  127.0.0.1:8080  0.0.0.0:*  users:(("sshd",pid=9021,fd=10))
 #             ★★★ 預設只綁 loopback → 只有 host 上的人連得到
-#                                       ★★★★ 稽核重點：sshd 出現在 22 以外的埠 = 有人開了 -R
-```
+#             ★★★★ 稽核重點：sshd 出現在 22 以外的埠 = 有人開了 -R
 
-要對外綁定，**伺服器端**必須開 `GatewayPorts`（客戶端怎麼寫都沒用）：
-
-```bash
-ssh -N -R 0.0.0.0:8080:127.0.0.1:80 ops@host
-```
-
-預期輸出（伺服器 `GatewayPorts no`，也就是預設值時）：
-
-```text
+# 想對外綁定（伺服器 GatewayPorts 為預設值 no 時）
+$ ssh -N -R 0.0.0.0:8080:127.0.0.1:80 ops@host
 Warning: remote port forwarding failed for listen port 8080
 #  ★★★ 這是【伺服器拒絕】，不是你參數寫錯 —— 不要在客戶端瞎試
 ```
 
-`sshd_config` 的 `GatewayPorts` 三個值（官方定義）：
-
-| 值 | 行為 | **★** |
-| --- | --- | --- |
-| **`no`** | **強制只綁 loopback**（預設） | **★★★★ 生產環境維持這個** |
-| `yes` | 強制綁萬用位址（所有介面） | **★★★★★ 等於對外開服務** |
-| `clientspecified` | 由客戶端決定綁哪個位址 | **★★★★ 一樣危險，只是責任轉嫁** |
+`sshd_config` 的 `GatewayPorts` 三個值：**`no`（預設，強制只綁 loopback，★★★★ 生產環境維持這個）**、
+`yes`（強制綁萬用位址，★★★★★ 等於對外開服務）、
+`clientspecified`（由客戶端決定，★★★★ 一樣危險，只是責任轉嫁）。
 
 > [!danger] ★★★★★ `-R` 在機關 = 未經核准的對外通道
-> 用 `-R` 把內網主機做成「主動回連的維運通道」，效果等同於**在防火牆上開一個
-> 沒有規則、沒有記錄、沒有到期日的洞**。資安稽核看到這件事會直接開缺失，
-> 情節重大時以資安事件通報處理（無論你的動機多正當）。
+> 用 `-R` 把內網主機做成「主動回連的維運通道」，等同於**在防火牆上開一個
+> 沒有規則、沒有記錄、沒有到期日的洞**。稽核看到會直接開缺失，情節重大時以資安事件通報處理
+> （無論你的動機多正當）。
 >
-> **唯一勉強可接受的情境**：廠商到場前的臨時遠端支援，且必須同時滿足：
+> **唯一勉強可接受的情境**是廠商到場前的臨時遠端支援，且必須同時滿足：
 >
 > | 配套控制 | 具體做法 | **★** |
 > | --- | --- | --- |
 > | **書面核准** | 事前簽核，寫明目的、來源、目標、時段 | **★★★★★** |
-> | **時限** | `sleep 3600` 當遠端指令，或用 `systemd-run --on-active` 自動砍 | **★★★★** |
+> | **時限** | 用遠端指令 `sleep 3600` 自動到期 | **★★★★** |
 > | **最小目標** | 伺服器端 `PermitListen 127.0.0.1:8080` 只准這一個 | **★★★★** |
 > | **不對外** | `GatewayPorts no`，廠商必須另外登入 host 才用得到 | **★★★★** |
-> | **記錄** | `journalctl -u ssh` 留存，事後併入稽核軌跡 | **★★★★** |
-> | **事後關閉** | 收工當下關掉並**驗證埠已釋放**，不是「下次再說」 | **★★★★★** |
+> | **記錄** | `journalctl -u ssh` 留存並併入稽核軌跡 | **★★★★** |
+> | **事後關閉** | 收工當下關掉並**驗證埠已釋放** | **★★★★★** |
 >
 > ```bash
 > # ★★★★ 自動到期的臨時 -R：一小時後 ssh 自己結束
-> ssh -R 127.0.0.1:8080:127.0.0.1:80 ops@host sleep 3600
+> $ ssh -R 127.0.0.1:8080:127.0.0.1:80 ops@host sleep 3600
 > ```
 
-### `-D` 動態轉發：SOCKS5 與 DNS 外洩
+### ★★★ `-D` 動態轉發：SOCKS5 與 DNS 外洩
 
 ```bash
-# ★★★ 在本機 1080 開一個 SOCKS5 proxy，出口是 bastion
-ssh -N -D 127.0.0.1:1080 ops@bastion
-```
+$ ssh -N -D 127.0.0.1:1080 ops@bastion       # ★★★ 本機 1080 開 SOCKS5，出口在 bastion
 
-```bash
-ss -ltnp 'sport = :1080'
-```
-
-預期輸出：
-
-```text
+$ ss -ltnp 'sport = :1080'
 LISTEN 0 128  127.0.0.1:1080  0.0.0.0:*  users:(("ssh",pid=51002,fd=5))
-```
 
-用 `curl` 測試，**注意兩個旗標的差別**：
-
-```bash
-# ★★★★ DNS 在【本機】解析 → 內部網域查詢會外洩到公用 DNS
-curl --socks5 127.0.0.1:1080 http://intranet.example.gov.tw/
-
-# ★★★★ DNS 在【bastion】解析 → 正確做法
-curl --socks5-hostname 127.0.0.1:1080 http://intranet.example.gov.tw/
-# 等價寫法
-curl -x socks5h://127.0.0.1:1080 http://intranet.example.gov.tw/
-```
-
-`--socks5` 版本失敗時的典型輸出：
-
-```text
+# ★★★★ DNS 在【本機】解析 → 內部網域查詢外洩到公用 DNS
+$ curl --socks5 127.0.0.1:1080 http://intranet.example.gov.tw/
 curl: (6) Could not resolve host: intranet.example.gov.tw
-#  ★★★ 你的機器當然解析不到內部網域 —— 但傷害已經造成：
-#      這個查詢已經送到 8.8.8.8 或 ISP DNS，內部主機名稱就此外流
+#  ★★★ 你當然解析不到 —— 但傷害已造成：查詢已送到 ISP DNS，內部主機名稱就此外流
+
+# ★★★★ DNS 在【bastion】解析 → 正確做法（兩種等價寫法）
+$ curl --socks5-hostname 127.0.0.1:1080 http://intranet.example.gov.tw/
+$ curl -x socks5h://127.0.0.1:1080 http://intranet.example.gov.tw/
 ```
 
 > [!warning] ★★★ SOCKS 的 DNS 外洩是「安靜的」外洩
-> `socks5` 與 `socks5h` 只差一個字母，行為天差地別：
-> `h` 代表 **hostname 交給 proxy 解析（remote DNS）**。
+> `socks5` 與 `socks5h` 只差一個字母：`h` 代表 **hostname 交給 proxy 解析（remote DNS）**。
 > 沒有 `h`，你每查一次 `db01.internal.example.gov.tw`，
 > 就等於對外公告一次「這個機關有一台叫 db01 的內部資料庫」。
 > **內部網域名稱是偵察階段的高價值情報**，不要免費送人。
 >
-> 瀏覽器設定（Firefox）：`設定 → 網路設定 → 手動設定 Proxy → SOCKS v5`，
-> **務必勾選「使用 SOCKS v5 時 Proxy DNS 查詢」**（對應 `network.proxy.socks_remote_dns = true`）。
-> Chrome 沒有 GUI 選項，要用啟動參數：
-> ```bash
-> google-chrome --proxy-server="socks5://127.0.0.1:1080" \
->   --host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"
-> ```
+> Firefox：`設定 → 網路設定 → 手動設定 Proxy → SOCKS v5`，
+> **務必勾選「使用 SOCKS v5 時 Proxy DNS 查詢」**（`network.proxy.socks_remote_dns = true`）。
+> Chrome 沒有 GUI 選項，要用 `--proxy-server="socks5://127.0.0.1:1080"` 啟動參數。
 
 ### `-J` 與 `-L` 的組合技
 
@@ -414,59 +307,40 @@ curl: (6) Could not resolve host: intranet.example.gov.tw
 
 ```bash
 # ★★★★ 一條指令打通「跳板機後面的資料庫」
-ssh -J ops@bastion.dmz.example.gov.tw \
-    -N -L 13306:127.0.0.1:3306 \
-    ops@db01.internal.example.gov.tw
+$ ssh -J ops@bastion.dmz.example.gov.tw -N -L 13306:127.0.0.1:3306 ops@db01.internal.example.gov.tw
 ```
 
-```
+```text
 ★★★★ 這一條指令實際發生的事：
 
   ws01 ──TCP:22──► bastion ──(bastion 內開 channel)──► db01:22
-   │                                                    │
    │◄════════════ 端對端加密的 SSH 連線 ════════════════►│
-   │                                                    │
   [listen 13306]                              [ssh 從 db01 連 127.0.0.1:3306]
    ▲ ★★★ 開在 ws01                                      ▲ ★★★ db01 自己的 loopback
-   ★★★★ bastion 上【沒有任何 listen port】 —— 這是它比「bastion 上開 -L」安全的地方
+   ★★★★ bastion 上【沒有任何 listen port】—— 這是它比「在 bastion 上開 -L」安全的地方
 ```
 
-**對照組（不建議）**：`ssh -N -L 13306:db01:3306 bastion`
-—— 這種寫法 bastion 會替你連 db01，**流量在 bastion → db01 這一段是明文的 MySQL 協定**，
+**對照組（不建議）**：`ssh -N -L 13306:db01:3306 bastion` ——
+bastion 替你連 db01，**bastion → db01 這一段是明文的 MySQL 協定**，
 而且 bastion 一旦被入侵就等於直通資料庫。用 `-J` 才是端對端加密。
 
 > [!info]- Rocky / AlmaLinux（RHEL 系）對照
-> **客戶端與伺服器端的行為完全相同**（同一套 OpenSSH），差別在套件與服務名稱：
+> **轉發行為完全相同**（同一套 OpenSSH），差別在套件、服務名與 SELinux：
 >
 > ```bash
-> # ★ 套件（Ubuntu 是 openssh-client / openssh-server）
-> sudo dnf install -y openssh-clients      # ssh、scp、ssh-keygen
-> sudo dnf install -y openssh-server       # sshd
+> $ sudo dnf install -y openssh-clients openssh-server   # ★ Ubuntu 是 openssh-client/-server
+> $ sudo systemctl reload sshd                            # ★★★ 服務叫 sshd 不是 ssh
+> $ sudo sshd -t                                          # ★ 語法檢查兩邊一樣
 >
-> # ★★★ 服務名稱是 sshd 不是 ssh
-> sudo systemctl reload sshd               # Ubuntu：systemctl reload ssh
-> sudo sshd -t                             # 語法檢查，兩邊一樣
+> # ★★★ sshd 要監聽非標準埠時，光改 sshd_config 不夠
+> $ sudo semanage port -a -t ssh_port_t -p tcp 2222
+> # ★★★ 轉發被莫名拒絕時值得看一眼 SELinux
+> $ sudo ausearch -m avc -ts recent | grep sshd
 > ```
 >
-> **★★★★ SELinux 的兩個差異（Ubuntu 沒有）**：
->
-> ```bash
-> # ★★★ 若要讓 sshd 監聽非標準埠，光改 sshd_config 不夠
-> sudo semanage port -a -t ssh_port_t -p tcp 2222
->
-> # ★★★ 檢查是否被 SELinux 擋掉（隧道被拒時值得看一眼）
-> sudo ausearch -m avc -ts recent | grep sshd
-> ```
->
-> **★★★ 防火牆用 firewalld**，語法見 [[02-防火牆-ufw基礎與實務]] 的對照段落：
-> ```bash
-> sudo firewall-cmd --list-all
-> ```
-> ★★ 注意：`-L` 綁 `127.0.0.1` 時**完全不需要**動防火牆（loopback 不過濾），
-> 只有在（不該做的）`-L 0.0.0.0` 或伺服器端 `GatewayPorts yes` 時才會牽扯到防火牆規則。
->
-> **★★ Ubuntu 24.04 之後 sshd 預設是 socket-activated**（`ssh.socket`），
-> 改監聽埠要動 socket unit；RHEL 系仍是傳統的 `sshd.service`。轉發相關設定兩邊都靠 `reload` 生效。
+> ★★ `-L` 綁 `127.0.0.1` 時**完全不需要**動防火牆（loopback 不過濾）；
+> 只有在 `-L 0.0.0.0`（不該做）或 `GatewayPorts yes` 時才牽扯到 firewalld，語法見 [[02-防火牆-ufw基礎與實務]]。
+> ★★ Ubuntu 24.04 起 sshd 預設是 socket-activated（`ssh.socket`），RHEL 系仍是傳統的 `sshd.service`。
 
 ---
 
@@ -474,49 +348,32 @@ ssh -J ops@bastion.dmz.example.gov.tw \
 
 ### ★★★ 把轉發寫進 `~/.ssh/config`
 
-指令列參數只適合一次性使用。**每天要用的隧道一律寫進設定檔**，
-好處是「參數不會忘、不會打錯、可以進版控、可以給同事複製」。
+指令列參數只適合一次性使用。**每天要用的隧道一律寫進設定檔** ——
+參數不會忘、不會打錯、可以進版控、可以給同事複製。
 
 ```ssh-config
-# ~/.ssh/config
-
-# ── ① 跳板機本身 ────────────────────────────────
-Host bastion
-    HostName        bastion.dmz.example.gov.tw
-    User            ops
-    Port            22
-    IdentityFile    ~/.ssh/id_ed25519_bastion
-    IdentitiesOnly  yes
-
-# ── ② 透過跳板機的資料庫隧道 ────────────────────
 Host db-tunnel
-    HostName            db01.internal.example.gov.tw
-    User                tunnel
-    ProxyJump           bastion
-    IdentityFile        ~/.ssh/id_ed25519_tunnel
-    IdentitiesOnly      yes
-    LocalForward        127.0.0.1:13306 127.0.0.1:3306
-    ExitOnForwardFailure yes            # ★★★★ 絕對不能省
-    ServerAliveInterval 30              # ★★★ 每 30 秒探活
-    ServerAliveCountMax 3               # ★★★ 連 3 次沒回應就斷（90 秒）
-    RequestTTY          no              # ★★ 純隧道不需要 tty
-    BatchMode           yes             # ★★★ 不互動詢問，失敗就直接錯
+    HostName             db01.internal.example.gov.tw
+    User                 tunnel
+    ProxyJump            bastion             # ★★★ bastion 另外定義，見〈完整實戰範例〉
+    IdentityFile         ~/.ssh/id_ed25519_tunnel
+    IdentitiesOnly       yes
+    LocalForward         127.0.0.1:13306 127.0.0.1:3306
+    ExitOnForwardFailure yes                 # ★★★★ 絕對不能省
+    ServerAliveInterval  30                  # ★★★ 每 30 秒探活
+    ServerAliveCountMax  3                   # ★★★ 連 3 次沒回應就斷（90 秒）
+    RequestTTY           no
+    BatchMode            yes                 # ★★★ 不互動詢問，失敗就直接錯
 ```
 
 > [!note] ★★★ `LocalForward` 的參數是「空格分隔的兩段」
-> 指令列是 `-L 13306:127.0.0.1:3306`（冒號分隔三段），
+> 指令列是 `-L 13306:127.0.0.1:3306`（冒號分隔），
 > 設定檔是 `LocalForward 127.0.0.1:13306 127.0.0.1:3306`（**空格分隔兩段**）。
-> 對應的還有 `RemoteForward`、`DynamicForward`（只吃一個參數）。寫錯格式會在連線時才報錯。
-
-**驗證設定有沒有被吃到**（不必真的連線）：
+> 對應的還有 `RemoteForward` 與 `DynamicForward`（只吃一個參數）。
 
 ```bash
-ssh -G db-tunnel | grep -iE 'hostname|user |proxyjump|localforward|exitonforward|serveralive'
-```
-
-預期輸出：
-
-```text
+# ★★★★ ssh -G 是「設定檔到底生效了什麼」的唯一可信答案
+$ ssh -G db-tunnel | grep -iE 'hostname|user |proxyjump|localforward|exitonforward|serveralive'
 user tunnel
 hostname db01.internal.example.gov.tw
 exitonforwardfailure yes
@@ -524,137 +381,64 @@ serveralivecountmax 3
 serveraliveinterval 30
 localforward [127.0.0.1]:13306 [127.0.0.1]:3306
 proxyjump bastion
-#  ★★★★ ssh -G 是「設定檔到底生效了什麼」的唯一可信答案
-#       Host 區塊寫錯縮排、打錯關鍵字、被前面的萬用區塊蓋掉，這裡都會現形
-```
+#  ★★★★ 縮排寫錯、關鍵字打錯、被前面的萬用 Host 區塊蓋掉，這裡都會現形
 
-之後只要：
-
-```bash
-ssh -N db-tunnel
-```
-
-**只想測連線、不想綁埠**時，用 `ClearAllForwardings` 把設定檔裡的轉發全部關掉：
-
-```bash
-ssh -o ClearAllForwardings=yes db-tunnel true && echo "連線 OK"
-```
-
-預期輸出：
-
-```text
+# ★★★★ 只想測連線、不想綁埠 —— 腳本做前置檢查一定要加
+$ ssh -o ClearAllForwardings=yes db-tunnel true && echo "連線 OK"
 連線 OK
-#  ★★★★ 腳本裡做前置檢查一定要加這個，否則「檢查」本身就會佔用 13306
 ```
 
-### ★★★ 對既有連線動態加／減轉發
+### ★★★ 對既有連線動態加減轉發
 
 已經連上了才發現要多開一個埠，不必斷線重連。
 
-**方法一：escape 序列 `~C`**（需要 tty，前景連線才有）
+**escape 序列**（需要 tty；`~` 必須**緊接在換行之後**）：先按 Enter 再按 `~C`，
+可用 `-L`／`-R`／`-D` 加轉發、`-KL <port>` 取消；`~#` 列出目前所有轉發、`~.` 強制斷線（連線卡死的救命鍵）。
 
-```text
-（先按 Enter，再按 ~C）
-ssh> -L 16379:127.0.0.1:6379
-Forwarding port.
-
-ssh> -KL 16379
-Canceled forwarding.
-
-ssh> -h
-Commands:
-      -L[bind_address:]port:host:hostport    Request local forward
-      -R[bind_address:]port:host:hostport    Request remote forward
-      -D[bind_address:]port                  Request dynamic forward
-      -KL[bind_address:]port                 Cancel local forward
-```
-
-★★★ `~` 必須**緊接在換行之後**才會被當成 escape 字元。
-★★ 常用的還有 `~#`（列出目前所有轉發）與 `~.`（強制斷線，連線卡死時的救命鍵）。
-
-**方法二：ControlMaster + `ssh -O`**（可腳本化，★★★★ 推薦）
-
-```ssh-config
-Host *
-    ControlMaster   auto
-    ControlPath     ~/.ssh/cm-%r@%h:%p
-    ControlPersist  10m
-```
+**ControlMaster + `ssh -O`**（★★★★ 可腳本化，推薦）：
 
 ```bash
-# ★★ 先建立 master 連線
-ssh -N -f db-tunnel
-
-# ★★★ 對既有 master 動態加轉發（不影響原本的）
-ssh -O forward -L 16379:127.0.0.1:6379 db-tunnel
-
-# ★★★ 取消
-ssh -O cancel -L 16379:127.0.0.1:6379 db-tunnel
-
-# ★★ 檢查 master 還在不在
-ssh -O check db-tunnel
-```
-
-預期輸出：
-
-```text
+# ~/.ssh/config 先加 ControlMaster auto / ControlPath ~/.ssh/cm-%r@%h:%p / ControlPersist 10m
+$ ssh -N -f db-tunnel                                    # ★★ 建立 master
+$ ssh -O forward -L 16379:127.0.0.1:6379 db-tunnel       # ★★★ 動態加轉發
+$ ssh -O cancel  -L 16379:127.0.0.1:6379 db-tunnel       # ★★★ 取消
+$ ssh -O check db-tunnel
 Master running (pid=51877)
-```
-
-```bash
-# ★★★ 收工：關掉 master（連帶關掉所有轉發）
-ssh -O exit db-tunnel
-```
-
-預期輸出：
-
-```text
+$ ssh -O exit db-tunnel                                  # ★★★ 收工，連帶關掉所有轉發
 Exit request sent.
 ```
 
-★★★ 搭配 `-R 0:...`（讓伺服器自己挑一個沒被占用的埠）時，
-`ssh -O forward -R 0:127.0.0.1:80 host` 會**把分配到的埠印到標準輸出**，
-腳本可以直接抓來用，不必猜。
+★★★ `ssh -O forward -R 0:127.0.0.1:80 host` 會**把伺服器分配到的埠印到標準輸出**，腳本可以直接抓來用，不必猜。
 
 ### ★★★★ 從臨時隧道升級成 systemd 服務
 
-`-f` 背景化的三個問題（找不到、不重連、殺不乾淨）用 systemd 一次解決。
-unit 欄位的逐項解釋見 [[01-systemd-unit撰寫實戰]]，這裡只講**隧道專用的注意事項**。
+`-f` 的三個問題（找不到、不重連、殺不乾淨）用 systemd 一次解決。
+unit 欄位逐項解釋見 [[01-systemd-unit撰寫實戰]]，這裡只講**隧道專用的注意事項**。
 
 ```ini
 # ~/.config/systemd/user/db-tunnel.service
 [Unit]
-Description=SSH tunnel: localhost:13306 -> db01 MySQL (via bastion)
+Description=SSH tunnel: 127.0.0.1:13306 -> db01 MySQL (via bastion)
 After=network-online.target
 Wants=network-online.target
-# ★★★ 重啟風暴保護：5 分鐘內失敗 5 次就停下來（欄位在 [Unit] 不是 [Service]）
-StartLimitIntervalSec=300
+StartLimitIntervalSec=300      # ★★★ 重啟風暴保護，欄位在 [Unit] 不是 [Service]
 StartLimitBurst=5
 
 [Service]
 Type=exec
 ExecStart=/usr/bin/ssh -N -T db-tunnel
-# ★★★★ 只在「非正常結束」時重啟；手動 stop 不會被拉回來
-Restart=on-failure
+Restart=on-failure             # ★★★★ 只在非正常結束時重啟；手動 stop 不會被拉回來
 RestartSec=10
-# ★★★ 出事時看得到原因
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=default.target
 ```
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable --now db-tunnel.service
-systemctl --user status db-tunnel.service
-```
-
-預期輸出：
-
-```text
-● db-tunnel.service - SSH tunnel: localhost:13306 -> db01 MySQL (via bastion)
+$ systemctl --user daemon-reload
+$ systemctl --user enable --now db-tunnel.service
+$ systemctl --user status db-tunnel.service
+● db-tunnel.service - SSH tunnel: 127.0.0.1:13306 -> db01 MySQL (via bastion)
      Loaded: loaded (/home/ops/.config/systemd/user/db-tunnel.service; enabled)
      Active: active (running) since Fri 2026-08-28 09:41:12 CST; 6s ago
    Main PID: 52301 (ssh)
@@ -662,36 +446,26 @@ systemctl --user status db-tunnel.service
 ```
 
 > [!warning] ★★★★ user unit 的三個必踩坑
-> **① 沒登入就不會啟動**：user manager 預設在使用者登出後結束。開機自動建立隧道要開 linger：
+> **① 沒登入就不會啟動**：user manager 在使用者登出後結束。開機自動建立隧道要開 linger：
 > ```bash
-> sudo loginctl enable-linger "$USER"
-> loginctl show-user "$USER" --property=Linger
-> ```
-> 預期輸出：
-> ```text
+> $ sudo loginctl enable-linger "$USER"
+> $ loginctl show-user "$USER" --property=Linger
 > Linger=yes
 > ```
->
-> **② 沒有 ssh-agent 可用**：開機時啟動的 user unit **沒有你桌面工作階段的 agent**，
-> 有密語的金鑰會直接卡住。做法是**另外產生一把無密語的專用金鑰**，
-> 並在伺服器端的 `authorized_keys` 用 `restrict,permitopen=` 把它限死到只能做這一件事
-> （見下一節），而不是「因為方便所以整把無密語金鑰都給全權限」。
->
-> **③ `Type=exec` 需要 systemd 240+**（Ubuntu 22.04 起沒問題）。
-> 舊系統改用 `Type=simple`，但要注意 `simple` 在 ssh 認證失敗時**仍算啟動成功**，
-> 會晚一步才觸發 `Restart=on-failure`。
+> **② 沒有 ssh-agent 可用**：開機啟動的 user unit **沒有你桌面工作階段的 agent**，
+> 有密語的金鑰會直接卡住。做法是另外產生一把**無密語專用金鑰**，
+> 並在伺服器端用 `restrict,permitopen=` 把它限死（見下一節），
+> 而不是「因為方便所以整把無密語金鑰都給全權限」。
+> **③ `Type=exec` 需要 systemd 240+**（Ubuntu 22.04 起沒問題）。舊系統用 `Type=simple`，
+> 但 `simple` 在 ssh 認證失敗時**仍算啟動成功**，會晚一步才觸發 `Restart=on-failure`。
 
-**要不要用 autossh？** OpenSSH 的 `ServerAliveInterval` + systemd 的 `Restart=on-failure`
-已經覆蓋九成情境。`autossh` 的價值在「連線半死不活（TCP 沒斷但不通）」時額外偵測：
+**要不要用 autossh？** `ServerAliveInterval` + `Restart=on-failure` 已覆蓋九成情境；
+`autossh` 的價值在「TCP 沒斷但不通」時額外偵測。要用的話：
 
 ```ini
-# ★★ autossh 版的 ExecStart（先 apt install autossh）
-Environment="AUTOSSH_GATETIME=0"
-ExecStart=/usr/bin/autossh -M 0 -N -T db-tunnel
+Environment="AUTOSSH_GATETIME=0"                       # ★★★ 開機第一次連不上也不放棄
+ExecStart=/usr/bin/autossh -M 0 -N -T db-tunnel        # ★★★ -M 0 關掉它自己那組不可靠的監控埠
 ```
-
-★★★ `-M 0` 關掉 autossh 自己那組不太可靠的監控埠，改靠 ssh 的 keepalive；
-★★★ `AUTOSSH_GATETIME=0` 讓「開機時第一次就連不上」不會導致 autossh 直接放棄。
 
 ### ★★★★ 伺服器端如何管制隧道
 
@@ -706,7 +480,6 @@ GatewayPorts            no
 AllowAgentForwarding    no
 AllowStreamLocalForwarding no
 PermitTunnel            no
-X11Forwarding           no
 
 # ★★★★ 維運群組：只准連指定的資料庫，且不准開 -R
 Match Group dbops
@@ -719,8 +492,6 @@ Match User deploy,sftpuser
     DisableForwarding   yes
 ```
 
-各設定項的官方語意：
-
 | 設定項 | 可用值 | 說明 | **★** |
 | --- | --- | --- | --- |
 | **`AllowTcpForwarding`** | `yes`(預設) / `all` / **`no`** / **`local`** / `remote` | `local` = 只准 `-L`／`-D`；`remote` = 只准 `-R` | **★★★★** |
@@ -732,15 +503,15 @@ Match User deploy,sftpuser
 | `PermitTunnel` | `no`(預設) / `yes` / `point-to-point` / `ethernet` | `ssh -w` 的 tun 裝置（真 VPN） | **★★★★** |
 
 > [!note] ★★★ `local` / `remote` 的視角是「ssh 客戶端」
-> `AllowTcpForwarding local` 的 local 指的是**客戶端的 `-L`**，不是「伺服器本地」。
-> 官方定義寫的是 "local (from the perspective of ssh(1)) forwarding only"。
-> 這個字很容易被誤讀成相反的意思，設定前務必用 `sshd -T` 驗證實際生效值。
+> 官方定義寫的是 "local (from the perspective of ssh(1)) forwarding only" ——
+> `local` 指的是**客戶端的 `-L`**，不是「伺服器本地」。
+> 這個字很容易被讀成相反的意思而設反，設定後務必用 `sshd -T` 驗證實際生效值。
 
-**逐把金鑰限制（比 sshd_config 更細，★★★★ 隧道專用帳號的標準做法）**：
+**逐把金鑰限制**（比 `sshd_config` 更細，★★★★ 隧道專用帳號的標準做法）：
 
 ```text
 # ~tunnel/.ssh/authorized_keys
-restrict,permitopen="127.0.0.1:3306",from="203.0.113.0/24" ssh-ed25519 AAAAC3Nz... ops-db-tunnel
+restrict,permitopen="127.0.0.1:3306",from="10.10.1.0/24" ssh-ed25519 AAAAC3Nz... ops-db-tunnel
 ```
 
 | 選項 | 作用 | **★** |
@@ -748,9 +519,8 @@ restrict,permitopen="127.0.0.1:3306",from="203.0.113.0/24" ssh-ed25519 AAAAC3Nz.
 | **`restrict`** | **關掉全部**（port/agent/X11 轉發、pty、`~/.ssh/rc`） | **★★★★★ 從這裡開始加白名單** |
 | **`permitopen="host:port"`** | 在 `restrict` 之上**只開這個 `-L` 目的地** | **★★★★** |
 | `permitlisten="[host:]port"` | 只開這個 `-R` 監聽埠 | ★★★ |
-| `from="CIDR,..."` | 限制來源網段 | **★★★★** |
+| **`from="CIDR,..."`** | 限制來源網段 | **★★★★** |
 | `no-port-forwarding` | 舊寫法，只關轉發 | ★★ |
-| `command="..."` | 強制執行指定指令 | ★★★ |
 
 ★★★★ `restrict,permitopen=` 的組合，讓那把「為了 systemd 而無密語」的金鑰
 **就算整個外流，攻擊者也只能連到 `127.0.0.1:3306`，不能開 shell、不能開 `-R`、不能跳其他機器**。
@@ -760,139 +530,86 @@ restrict,permitopen="127.0.0.1:3306",from="203.0.113.0/24" ssh-ed25519 AAAAC3Nz.
 
 `sshd_config` 的完整回滾 SOP 在 [[04-sshd-伺服器端設定]]，這裡列**隧道相關的特別注意**：
 
-```
+```text
 ★★★★ 關閉 AllowTcpForwarding 之前，先問自己三個問題：
 
 【① 我現在是不是正透過隧道在管理這台機器？】
-   典型情境：你用 -L 8006 開 PVE 網頁、用 -J 經過這台跳板機、
+   典型情境：用 -L 8006 開 PVE 網頁、用 -J 經過這台跳板機、
              用 VSCode Remote-SSH（它會自動開一堆轉發）
    → ★★★★ 關掉之後【下一次】連線就進不來了
 
-【② 別人有沒有正在用？】
-   → ★★★ 先看 journal 有沒有 forwarding 活動，公告後再改
-
-【③ 我有沒有第二條路？】
-   → ★★★★ 主控台（iLO/iDRAC/IPMI/VM console）、另一個埠的備援 sshd
+【② 別人有沒有正在用？】→ ★★★ 先看 journal 有沒有 forwarding 活動，公告後再改
+【③ 我有沒有第二條路？】→ ★★★★ 主控台（iLO/iDRAC/IPMI/VM console）或另一個埠的備援 sshd
 ```
-
-**四道保險，缺一不可**：
 
 ```bash
 # ─── 保險 ①：語法檢查（★★★★ 沒過就絕對不要 reload）
-sudo sshd -t
-echo "rc=$?"
-```
-
-預期輸出：
-
-```text
+$ sudo sshd -t; echo "rc=$?"
 rc=0
-#  ★★★★ 有錯時會像這樣，行號直接指出來：
+#  ★★★★ 有錯時會直接指出行號：
 #  /etc/ssh/sshd_config: line 42: Bad configuration option: AllowTCPForwarding
-```
 
-```bash
-# ─── 保險 ②：用 -T -C 模擬「特定使用者從特定來源連進來」會拿到什麼規則
-sudo sshd -T -C user=deploy,host=ws01.example.gov.tw,addr=10.10.1.20 \
-  | grep -iE 'allowtcpforwarding|permitopen|permitlisten|gatewayports|disableforwarding'
-```
-
-預期輸出：
-
-```text
+# ─── 保險 ②：模擬「特定使用者從特定來源連進來」會拿到什麼規則
+$ sudo sshd -T -C user=deploy,host=ws01.example.gov.tw,addr=10.10.1.20 \
+    | grep -iE 'allowtcpforwarding|permitopen|permitlisten|gatewayports|disableforwarding'
 allowtcpforwarding no
 gatewayports no
 permitopen none
 permitlisten any
-#  ★★★★ 這是「Match 區塊到底有沒有命中」的唯一可靠驗證方式
-#       用肉眼讀 Match 區塊判斷，錯誤率高得驚人
-```
+#  ★★★★ 這是「Match 區塊到底有沒有命中」的唯一可靠驗證方式；用肉眼讀錯誤率高得驚人
 
-```bash
 # ─── 保險 ③：先掛一個 10 分鐘後自動還原的計時器，再 reload
-sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-sudo systemd-run --on-active=10min --unit=sshd-rollback \
-  /bin/bash -c 'cp /etc/ssh/sshd_config.bak /etc/ssh/sshd_config && systemctl reload ssh'
-sudo systemctl reload ssh
+$ sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+$ sudo systemd-run --on-active=10min --unit=sshd-rollback \
+    /bin/bash -c 'cp /etc/ssh/sshd_config.bak /etc/ssh/sshd_config && systemctl reload ssh'
+$ sudo systemctl reload ssh
 
-# ─── 保險 ④：【不要關掉目前這個終端機】，另開一個新視窗實測
-ssh -o ExitOnForwardFailure=yes -N -L 19999:127.0.0.1:3306 db01
-# 測完確認一切正常，才取消自動回滾
-sudo systemctl stop sshd-rollback.timer
+# ─── 保險 ④：【不要關掉目前這個終端機】，另開新視窗實測，確認正常才取消回滾
+$ ssh -o ExitOnForwardFailure=yes -N -L 19999:127.0.0.1:3306 db01
+$ sudo systemctl stop sshd-rollback.timer
 ```
 
 > [!tip] ★★★★ `reload` 不會踢掉既有連線
 > `AllowTcpForwarding` 等設定是**在認證當下由該連線的 sshd 子行程決定**的，
-> 所以 reload 之後，**你手上那條既有連線仍然沿用舊規則**，
-> 而**新連線**才會套到新規則。這正是「保留一條既有連線」有效的原因 ——
-> 它是你改壞設定之後唯一還能改回來的通道。
-> ★★★★ 但別忘了：那條連線一旦斷（網路抖動、筆電休眠）就再也回不來，所以保險 ③ 不能省。
+> 所以 reload 之後**你手上那條既有連線仍沿用舊規則**，只有**新連線**才套到新規則。
+> 這正是「保留一條既有連線」有效的原因 —— 它是你改壞設定後唯一還能改回來的通道。
+> ★★★★ 但那條連線一斷（網路抖動、筆電休眠）就再也回不來，所以保險 ③ 不能省。
 
 ### ★★★ 隧道的可觀測性與稽核
 
-**在伺服器上找出「誰開了什麼隧道」**：
-
 ```bash
 # 【A】★★★★ 有沒有人開了 -R？（sshd 出現在 22 以外的監聽埠）
-sudo ss -ltnp | grep sshd
-```
-
-預期輸出：
-
-```text
+$ sudo ss -ltnp | grep sshd
 LISTEN 0 128    0.0.0.0:22      0.0.0.0:*  users:(("sshd",pid=901,fd=3))
 LISTEN 0 128  127.0.0.1:8080    0.0.0.0:*  users:(("sshd",pid=9021,fd=10))
 #             ★★★★★ 第二行就是 -R —— 正常的伺服器只該有 22
-```
 
-```bash
 # 【B】★★★ sshd 有沒有替誰連出去？（-L 的痕跡）
-sudo ss -tnp state established | grep sshd
-```
-
-預期輸出：
-
-```text
+$ sudo ss -tnp state established | grep sshd
 0 0 127.0.0.1:52344  127.0.0.1:3306  users:(("sshd",pid=9105,fd=11))
 #                               ★★★ sshd 連到本機 3306 = 有人在用 -L 存取 MySQL
-```
 
-```bash
 # 【C】★★★★ 被拒絕的轉發（預設 LogLevel INFO 就會記錄）
-sudo journalctl -u ssh --since "1 hour ago" | grep -i 'refused'
-```
-
-預期輸出：
-
-```text
+$ sudo journalctl -u ssh --since "1 hour ago" | grep -i refused
 Aug 28 10:12:44 web01 sshd[9210]: refused local port forward: originator 127.0.0.1 port 52990, target 10.10.20.50 port 3306
 #  ★★★★ 這一行同時告訴你「誰想連」「想連到哪」—— 稽核與排錯都靠它
 ```
 
 > [!warning] ★★★★ 不要高估 sshd 的稽核能力
 > **被拒絕**的轉發會記錄；**成功**的轉發**預設不會逐條記錄**。
-> 把 `LogLevel` 調成 `VERBOSE` 可以取得更完整的登入軌跡（含使用哪把金鑰的指紋，
-> 這對「多人共用帳號」的機關環境很重要），但**仍然不是每個 channel 的完整記錄**。
->
-> ```ini
-> # /etc/ssh/sshd_config
-> LogLevel VERBOSE     # ★★★ 記錄金鑰指紋，可回推是「誰」登入
-> ```
->
-> ★★★★ 如果稽核要求「完整記錄透過隧道做了什麼」，SSH 本身做不到 ——
+> `LogLevel VERBOSE` 可以取得更完整的登入軌跡（含**使用哪把金鑰的指紋**，
+> 這對多人共用帳號的機關環境很重要），但**仍不是每個 channel 的完整記錄**。
+> ★★★★ 稽核若要求「完整記錄透過隧道做了什麼」，SSH 本身做不到 ——
 > 那是堡壘機／連線側錄方案的範圍，見 [[06-遠端存取安全]]。
-> 千萬不要在稽核報告上寫「SSH 有完整記錄」，這句話禁不起檢驗。
+> **千萬不要在稽核報告上寫「SSH 有完整記錄」**，這句話禁不起檢驗。
 
-**納入定期檢查**（可以做成每日 timer，寫法見 [[02-systemd-timer與cron選型]]）：
+納入定期巡檢（timer 寫法見 [[02-systemd-timer與cron選型]]）：
 
 ```bash
 #!/usr/bin/env bash
-# ★★★ 每日巡檢：有沒有非預期的隧道
 set -euo pipefail
-echo "=== 非 22 埠的 sshd 監聽（-R 痕跡）==="
-ss -Hltnp | awk '/sshd/ && $4 !~ /:22$/ {print "★★★★ 異常: " $4 "  " $NF}'
-echo "=== 過去 24 小時被拒絕的轉發 ==="
-journalctl -u ssh --since "24 hours ago" --no-pager | grep -i 'refused .* forward' || echo "（無）"
+ss -Hltnp | awk '/sshd/ && $4 !~ /:22$/ {print "★★★★ 異常隧道: " $4 "  " $NF}'
+journalctl -u ssh --since "24 hours ago" --no-pager | grep -i 'refused .* forward' || echo "（24 小時內無拒絕記錄）"
 ```
 
 ---
@@ -901,25 +618,19 @@ journalctl -u ssh --since "24 hours ago" --no-pager | grep -i 'refused .* forwar
 
 ### 情境
 
-```
+```text
 ★★★ 需求：辦公室工作站要用 DBeaver 連內網 MySQL 做例行查詢
 
   [ws01 辦公室工作站]          [bastion DMZ 跳板機]        [db01 內網資料庫]
    10.10.1.20                  203.0.113.10                10.10.20.50
-        │                            │                          │
-        │──── SSH 22 (允許) ────────►│                          │
-        │                            │──── SSH 22 (允許) ──────►│
-        │                            │                          │ mysqld 綁 127.0.0.1:3306
-        │                            │  ★★★★ 防火牆禁止           │ ★★★★ 不對外，正確設定
-        │                            │  ws01 → db01:3306         │
-  [DBeaver]
-   連 127.0.0.1:13306
+        │──── SSH 22 (允許) ────────►│──── SSH 22 (允許) ──────►│
+        │                            │  ★★★★ 防火牆禁止           │ mysqld 綁 127.0.0.1:3306
+  [DBeaver 連 127.0.0.1:13306]       │  ws01 → db01:3306         │ ★★★★ 不對外，正確設定
 
   ★★★★ 限制條件：
     - db01 的 MySQL 只綁 127.0.0.1，不會為了你改成 0.0.0.0（也不該改）
     - ws01 到 db01 沒有直接路由，一定要經過 bastion
-    - 隧道要開機自動建立，斷線要自動重連
-    - 要能一鍵關閉並確認埠已釋放
+    - 隧道要開機自動建立、斷線自動重連、能一鍵關閉並確認埠已釋放
 ```
 
 ### 步驟 0：前置盤點
@@ -928,40 +639,33 @@ journalctl -u ssh --since "24 hours ago" --no-pager | grep -i 'refused .* forwar
 | --- | --- | --- | --- |
 | 跳板機連得到 | `ssh -o ConnectTimeout=5 bastion true; echo $?` | `0` | ★★★ |
 | db01 經跳板連得到 | `ssh -J bastion -o ConnectTimeout=5 tunnel@db01 true; echo $?` | `0` | ★★★ |
-| **db01 上 MySQL 在聽** | `ssh -J bastion tunnel@db01 'ss -ltnp \| grep 3306'` | `127.0.0.1:3306` | **★★★★** |
+| **db01 上 MySQL 在聽** | `ssh -J bastion ops@db01 'ss -ltnp \| grep 3306'` | `127.0.0.1:3306` | **★★★★** |
 | **本機 13306 沒被占** | `ss -ltnp 'sport = :13306'` | 只有標題列 | **★★★★** |
-| **伺服器端沒禁轉發** | `ssh -J bastion tunnel@db01 'sshd -T 2>/dev/null \| grep -i allowtcp'` | `allowtcpforwarding local` 或 `yes` | **★★★★** |
+| **伺服器端沒禁轉發** | `ssh -J bastion ops@db01 'sudo sshd -T \| grep -i allowtcp'` | `local` 或 `yes` | **★★★★** |
 
 ### 步驟 1：伺服器端（db01）建立受限的隧道帳號
 
 ```bash
-# 在 db01 上執行（需要管理員）
-sudo useradd -m -s /usr/sbin/nologin tunnel      # ★★★★ nologin：這個帳號不能開 shell
-sudo mkdir -p /home/tunnel/.ssh
-sudo tee /home/tunnel/.ssh/authorized_keys >/dev/null <<'EOF'
-restrict,permitopen="127.0.0.1:3306",from="10.10.1.0/24" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... ops-db-tunnel@ws01
+$ sudo useradd -m -s /usr/sbin/nologin tunnel      # ★★★★ nologin：這個帳號不能開 shell
+$ sudo mkdir -p /home/tunnel/.ssh
+$ sudo tee /home/tunnel/.ssh/authorized_keys >/dev/null <<'EOF'
+restrict,permitopen="127.0.0.1:3306",from="10.10.1.0/24" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... db-tunnel@ws01
 EOF
-sudo chown -R tunnel:tunnel /home/tunnel/.ssh
-sudo chmod 700 /home/tunnel/.ssh
-sudo chmod 600 /home/tunnel/.ssh/authorized_keys
+$ sudo chown -R tunnel:tunnel /home/tunnel/.ssh
+$ sudo chmod 700 /home/tunnel/.ssh && sudo chmod 600 /home/tunnel/.ssh/authorized_keys
 ```
 
 ★★★★ `restrict` + `permitopen` + `from` 三件套：這把金鑰**只能**從辦公網段連進來、
 **只能**轉發到 `127.0.0.1:3306`、**不能**開 shell、**不能**開 `-R`。
-就算金鑰外流，攻擊者拿到的也只是「一個 MySQL 埠」，還得再過 MySQL 的帳號密碼那一關。
+就算金鑰外流，攻擊者拿到的也只是「一個 MySQL 埠」，還得再過 MySQL 的帳密那一關。
 
-驗證限制真的生效：
+驗證限制真的生效 —— 從 ws01 試著轉發到 22（不在白名單上）：
 
 ```bash
-# 從 ws01 測試：這條應該要被拒絕
-ssh -i ~/.ssh/id_ed25519_tunnel -N -L 12222:127.0.0.1:22 tunnel@db01 -J bastion
-```
-
-預期輸出（另一個終端機 `nc 127.0.0.1 12222` 時）：
-
-```text
+$ ssh -J bastion -N -L 12222:127.0.0.1:22 tunnel@db01
+# 另一個終端機 nc 127.0.0.1 12222 之後，上面那個視窗會印出：
 channel 2: open failed: administratively prohibited: open failed
-#  ★★★★ permitopen 白名單生效 —— 22 不在名單上
+#  ★★★★ permitopen 白名單生效
 ```
 
 ### 步驟 2：`~/.ssh/config`
@@ -993,50 +697,39 @@ Host db-tunnel
 #!/usr/bin/env bash
 # /usr/local/bin/db-tunnel-setup
 # 用途：把「ws01 → bastion → db01:3306」隧道做成 systemd user 服務
-# 用法：db-tunnel-setup {install|verify|rollback|status}
+# 用法：db-tunnel-setup {install|verify|rollback}
 set -euo pipefail
 
-# ═══ 參數 ═══════════════════════════════════════════════
-readonly SSH_ALIAS="db-tunnel"                 # ~/.ssh/config 的 Host 別名
+readonly SSH_ALIAS="db-tunnel"
 readonly LOCAL_PORT=13306
 readonly UNIT_NAME="db-tunnel.service"
 readonly UNIT_DIR="${HOME}/.config/systemd/user"
 readonly UNIT_PATH="${UNIT_DIR}/${UNIT_NAME}"
-readonly STAMP="$(date +%Y%m%d-%H%M%S)"
-readonly BACKUP="${UNIT_PATH}.bak-${STAMP}"
+readonly BACKUP="${UNIT_PATH}.bak-$(date +%Y%m%d-%H%M%S)"
 
 log()  { printf '[+] %s\n' "$*"; }
 warn() { printf '[!] %s\n' "$*" >&2; }
 die()  { printf '[x] %s\n' "$*" >&2; exit 1; }
 
-# ═══ 前置檢查 ═══════════════════════════════════════════
 precheck() {
-  log "檢查必要指令"
   for c in ssh ss systemctl loginctl; do
     command -v "$c" >/dev/null || die "找不到指令：$c"
   done
 
-  log "檢查 ~/.ssh/config 是否有 Host ${SSH_ALIAS}"
-  ssh -G "$SSH_ALIAS" >/dev/null 2>&1 \
-    || die "ssh -G ${SSH_ALIAS} 失敗，請先設定 ~/.ssh/config"
+  ssh -G "$SSH_ALIAS" >/dev/null 2>&1 || die "ssh -G ${SSH_ALIAS} 失敗，請先設定 ~/.ssh/config"
 
-  # ★★★★ 確認 ExitOnForwardFailure 有開，沒開就是埋地雷
-  if ! ssh -G "$SSH_ALIAS" | grep -qx 'exitonforwardfailure yes'; then
-    die "「${SSH_ALIAS}」缺少 ExitOnForwardFailure yes，隧道會靜默失效，拒絕安裝"
-  fi
+  # ★★★★ 沒有 ExitOnForwardFailure 就是埋地雷，直接拒絕安裝
+  ssh -G "$SSH_ALIAS" | grep -qx 'exitonforwardfailure yes' \
+    || die "「${SSH_ALIAS}」缺少 ExitOnForwardFailure yes，隧道會靜默失效"
 
-  # ★★★★ 確認 LocalForward 指向預期的埠
   ssh -G "$SSH_ALIAS" | grep -q "localforward \[127.0.0.1\]:${LOCAL_PORT} " \
     || die "「${SSH_ALIAS}」的 LocalForward 不是 127.0.0.1:${LOCAL_PORT}"
 
   # ★★★★ 埠必須是空的（除非佔用者就是我們自己的服務）
   if ss -Hltn "sport = :${LOCAL_PORT}" | grep -q .; then
-    if systemctl --user is-active --quiet "$UNIT_NAME"; then
-      warn "埠 ${LOCAL_PORT} 由既有的 ${UNIT_NAME} 佔用，將重新部署"
-    else
-      ss -ltnp "sport = :${LOCAL_PORT}" >&2
-      die "埠 ${LOCAL_PORT} 已被別的程序佔用，請先處理（見上方輸出）"
-    fi
+    systemctl --user is-active --quiet "$UNIT_NAME" \
+      && warn "埠 ${LOCAL_PORT} 由既有的 ${UNIT_NAME} 佔用，將重新部署" \
+      || { ss -ltnp "sport = :${LOCAL_PORT}" >&2; die "埠 ${LOCAL_PORT} 已被別的程序佔用"; }
   fi
 
   # ★★★ 用 ClearAllForwardings 測連線，避免測試本身佔埠
@@ -1045,12 +738,11 @@ precheck() {
     || die "SSH 連線失敗，先確認金鑰、跳板機與 authorized_keys 限制"
 }
 
-# ═══ 安裝 ═══════════════════════════════════════════════
 install_unit() {
   mkdir -p "$UNIT_DIR"
   [ -f "$UNIT_PATH" ] && { cp -a "$UNIT_PATH" "$BACKUP"; log "已備份舊 unit → ${BACKUP}"; }
 
-  cat > "$UNIT_PATH" <<EOF
+  cat > "$UNIT_PATH" <<UNIT
 [Unit]
 Description=SSH tunnel: 127.0.0.1:${LOCAL_PORT} -> db01 MySQL (via bastion)
 After=network-online.target
@@ -1066,32 +758,26 @@ RestartSec=10
 
 [Install]
 WantedBy=default.target
-EOF
+UNIT
   log "已寫入 ${UNIT_PATH}"
 
   systemctl --user daemon-reload
   systemctl --user enable --now "$UNIT_NAME"
 
   # ★★★★ 開機自動啟動需要 linger
-  if [ "$(loginctl show-user "$USER" --property=Linger --value)" != "yes" ]; then
-    warn "Linger=no → 登出後隧道會消失。請執行：sudo loginctl enable-linger ${USER}"
-  fi
+  [ "$(loginctl show-user "$USER" --property=Linger --value)" = "yes" ] \
+    || warn "Linger=no → 登出後隧道會消失，請執行：sudo loginctl enable-linger ${USER}"
 }
 
-# ═══ 驗證 ═══════════════════════════════════════════════
 verify() {
   local ok=0
 
   log "【1】服務狀態"
-  systemctl --user is-active --quiet "$UNIT_NAME" \
-    && log "    active" || { warn "    服務未執行"; ok=1; }
+  systemctl --user is-active --quiet "$UNIT_NAME" && log "    active" || { warn "    服務未執行"; ok=1; }
 
   log "【2】本機埠監聽"
-  if ss -Hltn "sport = :${LOCAL_PORT}" | grep -q '127.0.0.1'; then
-    ss -ltnp "sport = :${LOCAL_PORT}"
-  else
-    warn "    埠 ${LOCAL_PORT} 沒有在 127.0.0.1 監聽"; ok=1
-  fi
+  ss -Hltn "sport = :${LOCAL_PORT}" | grep -q '127.0.0.1' \
+    && ss -ltnp "sport = :${LOCAL_PORT}" || { warn "    埠沒有在 127.0.0.1 監聽"; ok=1; }
 
   log "【3】綁定位址不得為 0.0.0.0"
   if ss -Hltn "sport = :${LOCAL_PORT}" | grep -q '0\.0\.0\.0:'; then
@@ -1106,71 +792,43 @@ verify() {
       && log "    MySQL 回應正常" || { warn "    MySQL 無回應（隧道在但後端可能掛了）"; ok=1; }
   else
     timeout 5 bash -c "</dev/tcp/127.0.0.1/${LOCAL_PORT}" \
-      && log "    TCP 可連（未裝 mysql client，只做埠測試）" || { warn "    TCP 不通"; ok=1; }
+      && log "    TCP 可連" || { warn "    TCP 不通"; ok=1; }
   fi
 
   return "$ok"
 }
 
-# ═══ 回滾 ═══════════════════════════════════════════════
 rollback() {
   warn "開始回滾"
   systemctl --user disable --now "$UNIT_NAME" 2>/dev/null || true
 
   local last
   last="$(ls -1t "${UNIT_PATH}".bak-* 2>/dev/null | head -1 || true)"
-  if [ -n "$last" ]; then
-    cp -a "$last" "$UNIT_PATH"; log "已還原 ${last}"
-  else
-    rm -f "$UNIT_PATH"; log "無備份，已移除 unit"
-  fi
+  if [ -n "$last" ]; then cp -a "$last" "$UNIT_PATH"; log "已還原 ${last}"
+  else rm -f "$UNIT_PATH"; log "無備份，已移除 unit"; fi
   systemctl --user daemon-reload
 
   # ★★★★ 回滾一定要驗證「埠真的釋放了」，否則下次安裝會撞埠
   sleep 2
-  if ss -Hltn "sport = :${LOCAL_PORT}" | grep -q .; then
-    ss -ltnp "sport = :${LOCAL_PORT}" >&2
-    die "埠 ${LOCAL_PORT} 仍被佔用，請手動確認上方程序"
-  fi
+  ss -Hltn "sport = :${LOCAL_PORT}" | grep -q . \
+    && { ss -ltnp "sport = :${LOCAL_PORT}" >&2; die "埠 ${LOCAL_PORT} 仍被佔用，請手動確認"; }
   log "埠 ${LOCAL_PORT} 已釋放，回滾完成"
 }
 
-# ═══ 主流程 ═════════════════════════════════════════════
 case "${1:-}" in
   install)
-    precheck
-    install_unit
-    sleep 3
-    if verify; then
-      log "安裝完成：DBeaver 請連 127.0.0.1:${LOCAL_PORT}"
-    else
-      warn "驗證未通過，自動回滾"
-      rollback
-      exit 1
-    fi
-    ;;
+    precheck; install_unit; sleep 3
+    if verify; then log "安裝完成：DBeaver 請連 127.0.0.1:${LOCAL_PORT}"
+    else warn "驗證未通過，自動回滾"; rollback; exit 1; fi ;;
   verify)   verify ;;
   rollback) rollback ;;
-  status)
-    systemctl --user status "$UNIT_NAME" --no-pager || true
-    ss -ltnp "sport = :${LOCAL_PORT}" || true
-    ;;
-  *) die "用法：$0 {install|verify|rollback|status}" ;;
+  *) die "用法：$0 {install|verify|rollback}" ;;
 esac
 ```
 
-執行：
-
 ```bash
-sudo install -m 0755 db-tunnel-setup /usr/local/bin/db-tunnel-setup
-db-tunnel-setup install
-```
-
-預期輸出：
-
-```text
-[+] 檢查必要指令
-[+] 檢查 ~/.ssh/config 是否有 Host db-tunnel
+$ sudo install -m 0755 db-tunnel-setup /usr/local/bin/db-tunnel-setup
+$ db-tunnel-setup install
 [+] 測試 SSH 連線（不建立轉發）
 [+] 已寫入 /home/ops/.config/systemd/user/db-tunnel.service
 [+] 【1】服務狀態
@@ -1184,23 +842,21 @@ LISTEN 0 128 127.0.0.1:13306 0.0.0.0:* users:(("ssh",pid=53120,fd=5))
 [+] 安裝完成：DBeaver 請連 127.0.0.1:13306
 ```
 
-### 步驟 4：DBeaver 設定
+### 步驟 4：DBeaver 設定與 MySQL 端的注意事項
 
 | 欄位 | 值 | **★** |
 | --- | --- | --- |
 | Server Host | **`127.0.0.1`** | **★★★★ 不能寫 localhost** |
 | Port | `13306` | ★★★ |
-| Database | `appdb` | ★ |
-| User / Password | MySQL 的帳密（**不是** SSH 的） | **★★★** |
+| User / Password | MySQL 的帳密（**不是** SSH 的） | ★★★ |
 
 > [!warning] ★★★★ MySQL 看到的來源是 `localhost`，不是你的工作站
-> 隧道的最後一段是 **db01 自己連自己的 `127.0.0.1:3306`**，
-> 所以 MySQL 端：
-> - **權限比對**用的是 `'user'@'localhost'`（若 `skip_name_resolve=ON` 則是 `'user'@'127.0.0.1'`），
->   授權寫錯 host 就會看到 `ERROR 1045` 或 `ERROR 1130`，詳見 [[02-MySQL-使用者與權限]]
+> 隧道的最後一段是 **db01 自己連自己的 `127.0.0.1:3306`**，所以：
+> - **權限比對**用 `'user'@'localhost'`（若 `skip_name_resolve=ON` 則是 `'user'@'127.0.0.1'`），
+>   授權寫錯 host 會看到 `ERROR 1045` 或 `ERROR 1130`，見 [[02-MySQL-使用者與權限]]
 > - **稽核記錄裡的來源 IP 全是 `localhost`** ★★★★ ——
->   誰在什麼時候查了什麼，光看 DB log 分不出來，
->   必須靠「SSH 端的登入記錄 + 隧道帳號一人一把金鑰」來補這個稽核斷點。
+>   誰在什麼時候查了什麼，光看 DB log 分不出來，必須靠
+>   「SSH 端的登入記錄 + 隧道帳號一人一把金鑰」來補這個稽核斷點。
 >   **共用一把隧道金鑰 = 直接放棄可歸責性**，機關環境不可接受。
 
 ### 步驟 5：驗收檢查表
@@ -1211,7 +867,7 @@ LISTEN 0 128 127.0.0.1:13306 0.0.0.0:* users:(("ssh",pid=53120,fd=5))
 | 2 | 服務執行中 | `systemctl --user is-active db-tunnel` | `active` | ★★★ |
 | 3 | **埠在監聽** | `ss -ltnp \| grep 13306` | `127.0.0.1:13306 … ssh` | **★★★★** |
 | 4 | **不得綁 0.0.0.0** | `ss -Hltn 'sport = :13306' \| grep -c '0\.0\.0\.0'` | `0` | **★★★★★** |
-| 5 | **從別台連不到** | 在同事機器上 `nc -zv 10.10.1.20 13306` | `Connection refused` | **★★★★★** |
+| 5 | **從別台連不到** | 同事機器上 `nc -zv 10.10.1.20 13306` | `Connection refused` | **★★★★★** |
 | 6 | **DB 通** | `mysql -h 127.0.0.1 -P 13306 -e 'SELECT 1'` | 回 `1` | **★★★★** |
 | 7 | 轉發設定生效 | `ssh -G db-tunnel \| grep exitonforward` | `exitonforwardfailure yes` | **★★★★** |
 | 8 | 斷線會重連 | `pkill -f 'ssh -N -T db-tunnel'`，10 秒後看第 3 項 | 埠回來了 | ★★★ |
@@ -1222,20 +878,18 @@ LISTEN 0 128 127.0.0.1:13306 0.0.0.0:* users:(("ssh",pid=53120,fd=5))
 
 ### ★★★★ 這條隧道要不要報備？
 
-機關環境的判斷準則（依風險由低到高）：
-
 | 情境 | 是否需報備 | 理由 | **★** |
 | --- | --- | --- | --- |
-| `-L` 到**自己管轄**的主機、綁 `127.0.0.1`、走既有核准的 SSH 路徑 | **通常不必**，但要納入設備管理清冊 | 沒有新增對外通道，只是改變存取路徑 | ★★ |
+| `-L` 到**自己管轄**的主機、綁 `127.0.0.1`、走既有核准路徑 | **通常不必**，但要納入設備清冊 | 沒有新增對外通道 | ★★ |
 | `-L` 到**別的單位管轄**的資料庫 | **要**（資料存取授權） | 涉及跨單位個資存取 | **★★★★** |
 | `-L 0.0.0.0` 或客戶端 `GatewayPorts yes` | **禁止**，不是報備問題 | 等同未經核准對外提供服務 | **★★★★★** |
-| `-D` 動態轉發當上網代理 | **要**（等同 VPN） | 使用者所有流量改道，繞過上網行為管理 | **★★★★** |
+| `-D` 動態轉發當上網代理 | **要**（等同 VPN） | 流量改道，繞過上網行為管理 | **★★★★** |
 | **`-R` 任何形式** | **必須事前書面核准** | 在防火牆上打洞 | **★★★★★** |
-| 長期常駐（systemd）的任何隧道 | **要**（列入資產與變更管理） | 常駐即為「基礎設施」，需納管與定期複審 | **★★★★** |
+| 長期常駐（systemd）的任何隧道 | **要**（列入資產與變更管理） | 常駐即為基礎設施，需定期複審 | **★★★★** |
 
-★★★★ 實務建議：把常駐隧道寫進**交接文件與巡檢表**，
-欄位包含「來源主機 / 目的服務 / 埠 / 申請人 / 核准文號 / 到期複審日」。
-沒有到期日的隧道，三年後會變成「沒人知道是誰開的、也沒人敢關的」殭屍通道 —— 這是稽核最愛開的缺失。
+★★★★ 實務建議：把常駐隧道寫進**交接文件與巡檢表**，欄位包含
+「來源主機 / 目的服務 / 埠 / 申請人 / 核准文號 / 到期複審日」。
+沒有到期日的隧道，三年後會變成「沒人知道是誰開的、也沒人敢關的」殭屍通道 —— 稽核最愛開這個缺失。
 
 ---
 
@@ -1243,185 +897,113 @@ LISTEN 0 128 127.0.0.1:13306 0.0.0.0:* users:(("ssh",pid=53120,fd=5))
 
 | 現象 | 原因 | 解法 |
 | --- | --- | --- |
-| **`channel N: open failed: administratively prohibited: open failed`** ★★★★ | **伺服器端拒絕**：`AllowTcpForwarding no` / `PermitOpen` 不含此目標 / `authorized_keys` 有 `restrict` 或 `no-port-forwarding` | **去伺服器端查**：`sudo sshd -T -C user=...` 與 `journalctl -u ssh \| grep refused`；**不要在客戶端瞎改參數** |
-| **`channel N: open failed: connect failed: Connection refused`** ★★★ | **目標主機沒在聽**那個埠，或服務只綁在別的介面 | 在伺服器上 `ss -ltnp \| grep <埠>`；確認 target 應該寫 `127.0.0.1` 還是內網 IP |
-| **`connect failed: Connection timed out`** ★★★ | 伺服器到目標之間**被防火牆擋**或路由不通 | 在伺服器上 `nc -zv <target> <port>`；查中間的 ACL |
-| **`bind [127.0.0.1]:13306: Address already in use`** ★★★ | **你本機的埠被占**（多半是上一條沒關掉的隧道） | `ss -ltnp 'sport = :13306'` 找出 PID 再 `kill`；或換一個本機埠 |
-| **連得上卻沒資料（靜默失效）** ★★★★ | 轉發 bind 失敗但 **ssh 照樣連上**，沒有 `ExitOnForwardFailure yes` | 設定檔加 `ExitOnForwardFailure yes`；★★★★ 懷疑時先 `ss -ltnp` 看佔用者的 PID 是不是你這一條 |
-| **`Warning: remote port forwarding failed for listen port 8080`** ★★★★ | `-R` 被伺服器拒絕：埠已被占、`PermitListen` 不允許、或想綁對外但 `GatewayPorts no` | 改用 `-R 0:` 讓伺服器分配埠；或請管理者調整（**多數情況下答案是「不該用 -R」**） |
-| **`-R` 開了但只有伺服器本機連得到** ★★★ | `GatewayPorts no`（預設值），強制綁 loopback | 這是**正確的預設**；真要對外請走正式的反向代理與防火牆規則，別動 `GatewayPorts` |
-| **`-D` 能上外網，內部網域打不開** ★★★ | 客戶端做了**本地 DNS 解析**（`--socks5` 而非 `--socks5-hostname`） | 改用 `socks5h://`；Firefox 勾「Proxy DNS 查詢」；★★★ 內部主機名稱已外洩，視情況通報 |
-| **`Permission denied` 綁 1024 以下的本機埠** ★★★ | 特權埠需要 root | 改用高位埠（`8006` → `18006`）；不要為了這個 `sudo ssh` |
-| **隧道每幾分鐘就斷** ★★ | 中間的防火牆／NAT 對閒置連線做逾時回收 | `ServerAliveInterval 30` + `ServerAliveCountMax 3`；伺服器端可設 `ClientAliveInterval` |
+| **`channel N: open failed: administratively prohibited`** ★★★★ | **伺服器端拒絕**：`AllowTcpForwarding no`／`PermitOpen` 不含此目標／`authorized_keys` 有 `restrict` | **去伺服器端查** `sshd -T -C user=...` 與 `journalctl -u ssh \| grep refused`；**不要在客戶端瞎改參數** |
+| **`open failed: connect failed: Connection refused`** ★★★ | **目標主機沒在聽**那個埠，或服務綁在別的介面 | 在伺服器上 `ss -ltnp \| grep <埠>`；確認 target 該寫 `127.0.0.1` 還是內網 IP |
+| **`connect failed: Connection timed out`** ★★★ | 伺服器到目標之間**被防火牆擋**或路由不通 | 在伺服器上 `nc -zv <target> <port>`；查中間 ACL |
+| **`bind [127.0.0.1]:13306: Address already in use`** ★★★ | **你本機的埠被占**（多半是上一條沒關掉的隧道） | `ss -ltnp 'sport = :13306'` 找 PID 再 `kill`；或換一個本機埠 |
+| **連得上卻沒資料（靜默失效）** ★★★★ | 轉發 bind 失敗但 **ssh 照樣連上**，沒設 `ExitOnForwardFailure yes` | 設定檔加 `ExitOnForwardFailure yes`；先 `ss -ltnp` 看佔用者的 PID 是不是你這一條 |
+| **`Warning: remote port forwarding failed for listen port 8080`** ★★★★ | `-R` 被伺服器拒絕：埠已占、`PermitListen` 不允許、或想綁對外但 `GatewayPorts no` | 改用 `-R 0:` 讓伺服器分配埠；**多數情況下答案是「不該用 -R」** |
+| **`-D` 能上外網，內部網域打不開** ★★★ | 客戶端做了**本地 DNS 解析**（`--socks5` 而非 `--socks5-hostname`） | 改用 `socks5h://`；Firefox 勾「Proxy DNS 查詢」；★★★ 內部主機名稱已外洩 |
+| **`Permission denied` 綁 1024 以下的本機埠** ★★★ | 特權埠需要 root | 改用高位埠（`8006` → `18006`），不要為此 `sudo ssh` |
+| **隧道每幾分鐘就斷** ★★ | 中間防火牆／NAT 對閒置連線逾時回收 | `ServerAliveInterval 30` + `ServerAliveCountMax 3` |
 | **`mysql -h localhost -P 13306` 連不上** ★★★ | `localhost` 走 Unix socket，`-P` 被忽略 | **一律 `-h 127.0.0.1`** |
-| **隧道在、DB 卻回 `ERROR 1130`** ★★★★ | MySQL 看到的來源是 db01 的 `localhost`，授權 host 不符 | `CREATE USER 'ops'@'localhost'`；見 [[02-MySQL-使用者與權限]] |
-| **systemd user unit 開機沒起來** ★★★ | 沒開 linger，使用者登出後 user manager 就結束 | `sudo loginctl enable-linger $USER` |
-| **user unit 卡在認證** ★★★★ | 開機時**沒有 ssh-agent**，有密語的金鑰無法解鎖 | 用**無密語**專用金鑰，並在 `authorized_keys` 用 `restrict,permitopen=` 限死 |
-| **`ssh -f` 之後找不到／殺不掉** ★★★ | 背景程序沒有識別度，`pkill ssh` 會誤殺管理連線 | 靠埠反查 PID；★★★★ 長期隧道改用 systemd 或 ControlMaster |
-| **改了 `sshd_config` 沒生效** ★★★ | 只 `reload` 而既有連線沿用舊規則；或 `Match` 區塊沒命中 | **開新連線測試**；用 `sshd -T -C user=...,addr=...` 驗證實際生效值 |
+| **隧道在、DB 卻回 `ERROR 1130`** ★★★★ | MySQL 看到的來源是 db01 的 `localhost`，授權 host 不符 | 建 `'ops'@'localhost'`，見 [[02-MySQL-使用者與權限]] |
+| **user unit 開機沒起來** ★★★ | 沒開 linger，使用者登出後 user manager 就結束 | `sudo loginctl enable-linger $USER` |
+| **user unit 卡在認證** ★★★★ | 開機時**沒有 ssh-agent**，有密語的金鑰無法解鎖 | 用**無密語**專用金鑰 + `restrict,permitopen=` 限死 |
+| **改了 `sshd_config` 沒生效** ★★★ | 既有連線沿用舊規則；或 `Match` 區塊沒命中 | **開新連線測試**；用 `sshd -T -C user=...,addr=...` 驗證 |
 
 ### 排查步驟
 
 **【1】先確定問題在「哪一段」** ★★★★
 
 ```bash
-ssh -v -N -L 13306:127.0.0.1:3306 db-tunnel
+$ ssh -v -N -L 13306:127.0.0.1:3306 db-tunnel
+debug1: Authentication succeeded (publickey).                 # ★★★ 認證這一段沒問題
+debug1: Local forwarding listening on 127.0.0.1 port 13306.   # ★★★★ 有這行 = 本機 bind 成功
 ```
 
-看 `-v` 輸出裡的關鍵行：
-
-```text
-debug1: Local forwarding listening on 127.0.0.1 port 13306.   ← ★★★★ 有這行 = 本機 bind 成功
-debug1: Authentication succeeded (publickey).                  ← ★★★ 認證這一段沒問題
-```
-
-- **沒有 `Local forwarding listening`** → 問題在**你本機**（埠被占） → 跳【2】
+- **沒有 `Local forwarding listening`** → 問題在**你本機**（埠被占）→ 跳【2】
 - **有這行，但連線時報 channel 錯誤** → 問題在**伺服器端或目標** → 跳【3】
 
 **【2】本機埠被誰占了** ★★★
 
 ```bash
-ss -ltnp 'sport = :13306'
-```
-
-預期輸出：
-
-```text
+$ ss -ltnp 'sport = :13306'
 LISTEN 0 128 127.0.0.1:13306 0.0.0.0:* users:(("ssh",pid=48211,fd=5))
-```
 
-```bash
-# ★★★ 看清楚是哪一條 ssh（不要盲目 kill）
-ps -o pid,lstart,args -p 48211
-```
-
-預期輸出：
-
-```text
+$ ps -o pid,lstart,args -p 48211        # ★★★ 看清楚是哪一條 ssh，不要盲目 kill
   PID                  STARTED COMMAND
 48211 Thu Aug 27 14:02:11 2026 ssh -N -L 13306:127.0.0.1:3306 db01-old
-#                                                             ★★★★ 是上週指向舊主機的殘留隧道
-#                                                                  這正是「連得上卻資料不對」的元凶
+#                                                             ★★★★ 上週指向舊主機的殘留隧道
+#                                                                  正是「連得上卻資料不對」的元凶
 ```
 
 **【3】看 channel 錯誤的完整字串** ★★★★
 
-在隧道開著的情況下，另一個終端機執行 `nc -zv 127.0.0.1 13306`，
-回到 ssh 那個視窗看它印什麼：
+隧道開著時，另一個終端機執行 `nc -zv 127.0.0.1 13306`，回到 ssh 視窗看它印什麼：
 
 ```text
-# 情況 A ★★★★
-channel 3: open failed: administratively prohibited: open failed
-  → 伺服器【拒絕】 → 跳【4】
-
-# 情況 B ★★★
-channel 3: open failed: connect failed: Connection refused
-  → 伺服器【同意轉發】但目標沒在聽 → 跳【5】
-
-# 情況 C ★★★
-channel 3: open failed: connect failed: Connection timed out
-  → 伺服器【同意轉發】但被中間防火牆擋 → 跳【5】
+channel 3: open failed: administratively prohibited: open failed   # A ★★★★ 伺服器拒絕 → 跳【4】
+channel 3: open failed: connect failed: Connection refused         # B ★★★ 目標沒在聽 → 跳【5】
+channel 3: open failed: connect failed: Connection timed out       # C ★★★ 中間防火牆 → 跳【5】
 ```
 
-★★★★ **A 是伺服器政策問題，B/C 是目標服務問題**。分清楚這件事，可以省掉一小時的亂改參數。
+★★★★ **A 是伺服器政策問題，B/C 是目標服務問題。** 分清這件事可以省掉一小時的亂改參數。
 
 **【4】伺服器端為什麼拒絕** ★★★★
 
 ```bash
-# 在伺服器上執行：模擬這個使用者從這個來源連進來會拿到什麼規則
-sudo sshd -T -C user=tunnel,host=ws01.example.gov.tw,addr=10.10.1.20 \
-  | grep -iE 'allowtcpforwarding|permitopen|permitlisten|disableforwarding'
-```
-
-預期輸出：
-
-```text
+# ★★★★ 模擬這個使用者從這個來源連進來會拿到什麼規則
+$ sudo sshd -T -C user=tunnel,host=ws01.example.gov.tw,addr=10.10.1.20 \
+    | grep -iE 'allowtcpforwarding|permitopen|permitlisten'
 allowtcpforwarding local
 permitopen 127.0.0.1:3306
 permitlisten none
 #  ★★★★ 若你想連的是 10.10.20.50:3306，這裡的白名單就對不上 → 找到原因了
-```
 
-```bash
-# ★★★ 再確認 authorized_keys 有沒有自己的限制（比 sshd_config 更優先）
-sudo grep -n 'restrict\|permitopen\|no-port-forwarding' /home/tunnel/.ssh/authorized_keys
-```
-
-預期輸出：
-
-```text
+# ★★★★ 常見陷阱：sshd_config 開了，但金鑰上的 restrict 仍然擋著（兩者取交集）
+$ sudo grep -n 'restrict\|permitopen\|no-port-forwarding' /home/tunnel/.ssh/authorized_keys
 1:restrict,permitopen="127.0.0.1:3306",from="10.10.1.0/24" ssh-ed25519 AAAA...
-#  ★★★★ 常見陷阱：sshd_config 開了，但金鑰上的 restrict 仍然擋著
-```
 
-```bash
-# ★★★ 日誌交叉驗證
-sudo journalctl -u ssh --since "10 min ago" | grep -i refused
-```
-
-預期輸出：
-
-```text
+$ sudo journalctl -u ssh --since "10 min ago" | grep -i refused
 Aug 28 11:03:12 db01 sshd[9210]: refused local port forward: originator 127.0.0.1 port 41234, target 10.10.20.50 port 3306
 ```
 
-**【5】目標服務到底在不在** ★★★
+**【5】目標服務到底在不在**（★★★ 要在 **SSH 伺服器**上查，不是在你的工作站）
 
 ```bash
-# 在【SSH 伺服器】上檢查（不是在你的工作站）
-ssh db-tunnel-shell 'ss -ltnp | grep 3306'
-```
-
-預期輸出：
-
-```text
+$ ssh -J bastion ops@db01 'ss -ltnp | grep 3306'
 LISTEN 0 80 127.0.0.1:3306 0.0.0.0:* users:(("mysqld",pid=1180,fd=25))
 #             ★★★★ 綁 127.0.0.1 → 你的 -L target 就必須寫 127.0.0.1
 #             ★★★★ 若這裡是 10.10.20.50:3306，寫 127.0.0.1 就會 Connection refused
 ```
 
-**【6】確認流量真的走隧道** ★★★
+**【6】隧道活著但後端掛了** ★★★★
 
 ```bash
-# ★★★ 抓 loopback 上的封包，確認 DBeaver 真的連到 13306
-sudo tcpdump -i lo -nn 'tcp port 13306' -c 5
+$ systemctl --user is-active db-tunnel; ss -Hltn 'sport = :13306' | wc -l
+active
+1
+$ mysqladmin -h 127.0.0.1 -P 13306 ping
+mysqladmin: connect to server at '127.0.0.1' failed
+error: 'Can't connect to MySQL server on '127.0.0.1:13306' (111)'
+#  ★★★★ 服務 active + 埠在聽 + 後端不通 → 問題在 db01 的 mysqld，不在隧道
+#       這就是為什麼監控要分兩層
 ```
 
-預期輸出：
+**【7】確認流量真的走隧道** ★★★
 
-```text
+```bash
+$ sudo tcpdump -i lo -nn 'tcp port 13306' -c 4
 11:12:03.441 IP 127.0.0.1.51344 > 127.0.0.1.13306: Flags [S], seq 118...
 11:12:03.441 IP 127.0.0.1.13306 > 127.0.0.1.51344: Flags [S.], seq 331...
 #  ★★★ 有 SYN/SYN-ACK 就代表客戶端確實連上隧道；抓包細節見 [[01-tcpdump-基礎抓包]]
 ```
 
-**【7】隧道活著但後端掛了** ★★★★
-
-```bash
-systemctl --user is-active db-tunnel; ss -Hltn 'sport = :13306' | wc -l
-mysqladmin -h 127.0.0.1 -P 13306 ping
-```
-
-預期輸出：
-
-```text
-active
-1
-mysqladmin: connect to server at '127.0.0.1' failed
-error: 'Can't connect to MySQL server on '127.0.0.1:13306' (111)'
-#  ★★★★ 服務 active + 埠在聽 + 後端不通 → 問題在 db01 的 mysqld，不在隧道
-#       這就是為什麼監控要分兩層（見前面 ExitOnForwardFailure 那段的說明）
-```
-
 **【8】伺服器上有沒有不該存在的隧道** ★★★★
 
 ```bash
-sudo ss -ltnp | grep sshd | grep -v ':22 '
-```
-
-預期輸出（健康的伺服器）：
-
-```text
+$ sudo ss -ltnp | grep sshd | grep -v ':22 '
 （無輸出）
 #  ★★★★★ 有輸出 = 有人開了 -R，立刻查 journalctl 找出是哪個帳號、何時建立
 ```
@@ -1431,48 +1013,43 @@ sudo ss -ltnp | grep sshd | grep -v ':22 '
 ## 安全性注意事項
 
 > [!danger] ★★★★★ 絕對禁止：未經核准的 `-R` 反向隧道
-> `ssh -R` 讓外部連線能夠進入內網，**繞過防火牆、IPS、上網行為管理與所有出入口管制**。
-> 防火牆日誌只會看到一條「合法的 outbound :22」，DPI 因為流量加密也看不出內容。
-> 在機關環境，這件事的定性不是「操作不當」而是**「未經授權建立對外通道」**，
-> 依《資通安全管理法》相關規範可能構成應通報的資安事件。
+> `ssh -R` 讓外部連線進入內網，**繞過防火牆、IPS、上網行為管理與所有出入口管制**。
+> 防火牆日誌只會看到一條「合法的 outbound :22」，流量加密 DPI 也看不出內容。
+> 在機關，這件事的定性不是「操作不當」而是**「未經授權建立對外通道」**，
+> 依資通安全相關規範可能構成應通報的資安事件。
 > **需要遠端支援請走正式的 VPN 或堡壘機**，見 [[06-遠端存取安全]]。
 
 > [!danger] ★★★★★ 絕對禁止：`-L 0.0.0.0:` 與客戶端 `GatewayPorts yes`
 > 這一行指令的實際效果是：**把一台受防火牆保護、只綁 loopback 的內網資料庫，
-> 以無認證、無日誌、無存取控制的形式，發布給你所在網段的每一台裝置**。
+> 以無認證、無日誌、無存取控制的形式發布給你所在網段的每一台裝置**。
 > 訪客 Wi-Fi、被植入惡意程式的印表機、外包廠商的筆電，全都在那個網段裡。
 > 「只是想讓同事一起看」不是理由 —— **請他自己開一條隧道**。
 
 > [!danger] ★★★★★ 絕對禁止：多人共用同一把隧道金鑰
-> 隧道最後一段是「db01 連自己的 127.0.0.1」，**MySQL 的稽核記錄裡來源永遠是 `localhost`**。
+> 隧道最後一段是「db01 連自己的 127.0.0.1」，**MySQL 稽核記錄裡來源永遠是 `localhost`**。
 > 唯一能回推「是誰查的」的線索，就是 SSH 端的登入記錄搭配金鑰指紋。
-> 一旦金鑰共用，這條線索就斷了 —— 個資查詢無法歸責到人，
-> 這在個資稽核與內部稽核都是直接開缺失的項目。
+> 一旦金鑰共用這條線索就斷了 —— 個資查詢無法歸責到人，個資稽核與內部稽核都會直接開缺失。
 > **一人一把金鑰，`LogLevel VERBOSE` 記錄指紋，離職／異動當天撤金鑰。**
-
-**其他務必落實的事項**：
 
 | 項目 | 做法 | **★** |
 | --- | --- | --- |
-| **預設關閉轉發** | `sshd_config` 全域 `AllowTcpForwarding no`，用 `Match Group` 開給需要的人 | **★★★★** |
-| **SFTP／部署帳號一律關掉** | `Match User deploy,sftpuser` + `DisableForwarding yes`；見 [[06-SFTP-與受限使用者]] | **★★★★★** |
+| **預設關閉轉發** | 全域 `AllowTcpForwarding no`，用 `Match Group` 開給需要的人 | **★★★★** |
+| **SFTP／部署帳號一律關掉** | `Match User deploy,sftpuser` + `DisableForwarding yes`，見 [[06-SFTP-與受限使用者]] | **★★★★★** |
 | **無密語金鑰必須綁 `restrict`** | `restrict,permitopen="127.0.0.1:3306",from="10.10.1.0/24"` | **★★★★★** |
 | **`GatewayPorts` 維持 `no`** | 沒有任何正當理由要改成 `yes` | **★★★★** |
 | **`PermitTunnel no`** | `ssh -w` 是真正的 L2/L3 VPN，威力遠大於埠轉發 | **★★★★** |
 | **SOCKS 一律 remote DNS** | `socks5h://`；內部網域名稱是偵察情報 | **★★★** |
 | **常駐隧道納入資產管理** | 申請人、目的、到期複審日；沒有到期日就是殭屍通道 | **★★★★** |
 | **定期巡檢** | 每日檢查 `ss -ltnp \| grep sshd` 有無 22 以外的埠 | **★★★★** |
-| **不要在稽核報告上誇大** | SSH **不會**逐條記錄隧道內的行為，要完整軌跡得靠堡壘機 | **★★★★** |
-| **本機埠不要用預設值** | 用 `13306`／`15432` 而不是 `3306`／`5432`，避免誤連到本機服務 | ★★★ |
-| **收工要驗證埠釋放** | `ss -Hltn 'sport = :13306'` 沒輸出才算關乾淨 | ★★★ |
+| **不要在稽核報告上誇大** | SSH **不會**逐條記錄隧道內的行為，完整軌跡得靠堡壘機 | **★★★★** |
+| 本機埠不要用預設值 | 用 `13306`／`15432` 而不是 `3306`／`5432`，避免誤連本機服務 | ★★★ |
 
 > [!tip] ★★★ 與 TWGCB 的關係
 > 政府組態基準對 SSH 的要求集中在認證方式、加密演算法與逾時設定，
 > **轉發相關項目（`AllowTcpForwarding`／`GatewayPorts`／`PermitTunnel`）
 > 屬於「機關自行依風險決定」的範圍**。
-> 也就是說：基準沒硬性規定，不代表可以不管 —— 反而要在機關自己的
-> 資通安全維護計畫裡明訂，否則稽核時會被問「你們的管制依據是什麼」。
-> 詳細基準對照見 [[07-SSH-安全強化]]。
+> 基準沒硬性規定不代表可以不管 —— 反而要在機關自己的資通安全維護計畫裡明訂，
+> 否則稽核時會被問「你們的管制依據是什麼」。基準對照見 [[07-SSH-安全強化]]。
 
 ---
 
@@ -1494,13 +1071,11 @@ sudo ss -ltnp | grep sshd | grep -v ':22 '
 | 選項 / 設定 | 作用 | **★** |
 | --- | --- | --- |
 | **`ExitOnForwardFailure yes`** | **轉發失敗就結束連線**（治靜默失效） | **★★★★** |
-| `-N` | 不執行遠端指令 | **★★★★** |
-| `-T` | 不配置 pty | ★★★ |
-| `-f` | 轉入背景 | **★★**（長期用改 systemd） |
-| `ServerAliveInterval 30` | 每 30 秒探活 | **★★★** |
-| `ClearAllForwardings yes` | **暫時關掉設定檔裡的所有轉發**（測連線用） | **★★★★** |
+| `-N` / `-T` | 不執行遠端指令 / 不配置 pty | **★★★★** / ★★★ |
+| `ServerAliveInterval 30` | 每 30 秒探活 | ★★★ |
+| **`ClearAllForwardings yes`** | **暫時關掉設定檔裡的所有轉發**（測連線用） | **★★★★** |
 | `LocalForward 127.0.0.1:13306 127.0.0.1:3306` | 設定檔版的 `-L`（**空格分隔兩段**） | **★★★★** |
-| `ssh -G host` | **印出實際生效的設定** | **★★★★** |
+| **`ssh -G host`** | **印出實際生效的客戶端設定** | **★★★★** |
 | `ssh -O forward/cancel/check/exit` | 對 ControlMaster 動態操作 | ★★★ |
 | `~C` / `~#` / `~.` | 加轉發 / 列轉發 / 強制斷線 | ★★★ |
 
@@ -1513,8 +1088,7 @@ sudo ss -ltnp | grep sshd | grep -v ':22 '
 | **`PermitListen`** | **`none`** | `-R` 監聽埠 | **★★★★** |
 | **`GatewayPorts`** | **`no`** | `-R` 能否對外綁 | **★★★★★** |
 | **`DisableForwarding`** | `yes`（部署／SFTP 帳號） | 一次全關 | **★★★★★** |
-| `PermitTunnel` | `no` | `ssh -w` | **★★★★** |
-| `AllowAgentForwarding` | `no` | agent 轉發 | ★★★ |
+| `PermitTunnel` / `AllowAgentForwarding` | `no` | `ssh -w` / agent 轉發 | **★★★★** / ★★★ |
 | `LogLevel` | `VERBOSE` | 記錄金鑰指紋 | ★★★ |
 
 ### ★★★★ 錯誤訊息 → 下一步
@@ -1525,52 +1099,39 @@ sudo ss -ltnp | grep sshd | grep -v ':22 '
 | `connect failed: Connection refused` | **目標沒在聽** | 到伺服器上 `ss -ltnp \| grep <埠>` | ★★★ |
 | `connect failed: Connection timed out` | **中間防火牆** | 到伺服器上 `nc -zv target port` | ★★★ |
 | `bind: Address already in use` | **你本機的埠** | `ss -ltnp 'sport = :<埠>'` 找 PID | ★★★ |
-| `remote port forwarding failed` | **伺服器拒絕 `-R`** | `PermitListen` / `GatewayPorts` / 埠被占 | **★★★★** |
-| 沒有錯誤但沒資料 | **靜默失效** | 加 `ExitOnForwardFailure yes` | **★★★★** |
-
-### ★★★ 巡檢一行指令
-
-| 目的 | 指令 | **★** |
-| --- | --- | --- |
-| 本機有哪些隧道 | `ss -ltnp \| grep '"ssh"'` | ★★★ |
-| **伺服器上有沒有 `-R`** | `sudo ss -ltnp \| grep sshd \| grep -v ':22 '` | **★★★★★** |
-| 誰的轉發被拒 | `journalctl -u ssh \| grep -i refused` | **★★★★** |
-| 實際生效的伺服器設定 | `sudo sshd -T -C user=X,addr=Y \| grep -i forward` | **★★★★** |
-| 實際生效的客戶端設定 | `ssh -G <別名> \| grep -i forward` | **★★★★** |
-| 埠有沒有釋放 | `ss -Hltn 'sport = :13306'`（無輸出＝乾淨） | ★★★ |
-
+| `remote port forwarding failed` | **伺服器拒絕 `-R`** | 查 `PermitListen` / `GatewayPorts` / 埠被占 | **★★★★** |
+| **沒有錯誤但沒資料** | **靜默失效** | 加 `ExitOnForwardFailure yes` | **★★★★** |
 ---
 
 ## 練習題
 
 > [!question]- 練習 1：方向感與 target 的視角 ★★★★
 > **題目**
-> 1. 在任意一台你有權限的主機上啟動一個測試服務：`python3 -m http.server 8000 --bind 127.0.0.1`
-> 2. 從你的工作站建立 `-L`，用瀏覽器打開它。
+> 1. 在任一台你有權限的主機上啟動測試服務：`python3 -m http.server 8000 --bind 127.0.0.1`
+> 2. 從工作站建立 `-L`，用瀏覽器打開它。
 > 3. 把指令改成 `ssh -L 18000:<你工作站的 IP>:8000 host`，會發生什麼？為什麼？
-> 4. 用 `ss -ltnp` 在**兩端**都看一次，說明各自看到什麼。
+> 4. 用 `ss -ltnp` 在**兩端**各看一次，說明各自看到什麼。
 >
 > **參考解答**
 > 2. `ssh -N -L 18000:127.0.0.1:8000 host`，瀏覽器開 `http://127.0.0.1:18000/`。
 > 3. **會失敗**（`connect failed: Connection refused` 或 timeout）。因為 target 那一段是
->    **從 host 的角度**解析與連線的 —— 你叫 host 去連「你工作站的 8000」，
+>    **從 host 的角度**解析與連線 —— 你叫 host 去連「你工作站的 8000」，
 >    host 多半沒有到你工作站的路由，或被防火牆擋掉。★★★★ 這正是最常見的方向誤解。
-> 4. **工作站**：`LISTEN 127.0.0.1:18000 … ssh`（ssh 佔用）。
->    **host**：`LISTEN 127.0.0.1:8000 … python3`，另外在有連線時
+> 4. **工作站**：`LISTEN 127.0.0.1:18000 … ssh`。
+>    **host**：`LISTEN 127.0.0.1:8000 … python3`，且有連線時
 >    `ss -tnp state established | grep sshd` 會看到 sshd 連到 `127.0.0.1:8000`。
 
 > [!question]- 練習 2：製造並診斷「靜默失效」 ★★★★
 > **題目**
 > 1. 開一條 `ssh -N -L 18000:127.0.0.1:8000 hostA`，**不要關掉**。
-> 2. 再開一條指向**不同主機**的 `ssh -N -L 18000:127.0.0.1:8000 hostB`，觀察輸出與 `echo $?`。
+> 2. 再開一條指向**不同主機**的 `ssh -N -L 18000:127.0.0.1:8000 hostB`，觀察輸出。
 > 3. 這時瀏覽器連 `127.0.0.1:18000` 會連到 A 還是 B？
 > 4. 加上 `-o ExitOnForwardFailure=yes` 重做第 2 步，差別是什麼？
 > 5. 寫一行指令，從埠反查「這條隧道到底指向誰」。
 >
 > **參考解答**
-> 2. 印出 `bind [127.0.0.1]:18000: Address already in use` 等三行，
->    但 **ssh 不會結束**，`$?` 在你 Ctrl+C 之前不會回傳。
-> 3. **連到 A**。★★★★ B 的轉發根本沒建立起來 —— 這就是「連得上卻是舊資料」的成因，
+> 2. 印出 `bind [127.0.0.1]:18000: Address already in use` 等三行，但 **ssh 不會結束**。
+> 3. **連到 A**。★★★★ B 的轉發根本沒建立 —— 這就是「連得上卻是舊資料」的成因，
 >    在正式環境可能導致你對著錯誤的資料庫下 `UPDATE`。
 > 4. 加了之後 ssh **立刻結束**且 `$?=255`，systemd 或腳本才抓得到失敗。
 > 5. `ps -o args= -p "$(ss -Hltnp 'sport = :18000' | grep -oP 'pid=\K[0-9]+')"`
@@ -1578,8 +1139,7 @@ sudo ss -ltnp | grep sshd | grep -v ':22 '
 
 > [!question]- 練習 3：伺服器端管制與 `sshd -T -C` ★★★★
 > **題目**
-> 1. 在測試機的 `sshd_config` 加上 `Match User tunneluser` 區塊，設 `AllowTcpForwarding local`、
->    `PermitOpen 127.0.0.1:3306`。
+> 1. 在測試機加 `Match User tunneluser` 區塊，設 `AllowTcpForwarding local`、`PermitOpen 127.0.0.1:3306`。
 > 2. 用 `sshd -t` 檢查語法，**先掛好自動回滾計時器再 reload**。
 > 3. 用 `sshd -T -C user=tunneluser,addr=10.10.1.20` 驗證規則有沒有命中。
 > 4. 從客戶端分別測「連 3306」與「連 22」，記錄兩者的錯誤訊息差異。
@@ -1587,195 +1147,139 @@ sudo ss -ltnp | grep sshd | grep -v ':22 '
 >
 > **參考解答**
 > 3. 應印出 `allowtcpforwarding local` 與 `permitopen 127.0.0.1:3306`。
->    ★★★★ 若印出的是全域值，代表 `Match` 沒命中（常見原因：`Match` 區塊寫在檔案中段，
->    而 `Match` **一直延續到下一個 `Match` 或檔尾**，把後面的設定都吃進去了）。
+>    ★★★★ 若印出的是全域值代表 `Match` 沒命中（常見原因：`Match` 區塊
+>    **一直延續到下一個 `Match` 或檔尾**，把後面的設定都吃進去了）。
 > 4. 連 3306 正常；連 22 得到 `channel N: open failed: administratively prohibited: open failed`。
-> 5. **3306 也會被擋**。★★★★ 因為 `restrict` 會關閉包含 port forwarding 在內的所有功能，
->    而 `authorized_keys` 的限制**與 `sshd_config` 取交集**、且更嚴格者勝。
+> 5. **3306 也會被擋**。★★★★ `restrict` 關閉包含 port forwarding 在內的所有功能，
+>    而 `authorized_keys` 的限制**與 `sshd_config` 取交集、更嚴格者勝**。
 >    要放行必須寫成 `restrict,permitopen="127.0.0.1:3306"`。
-
-> [!question]- 練習 4：把隧道做成服務並演練回滾 ★★★
-> **題目**
-> 1. 依〈完整實戰範例〉建立 `db-tunnel.service`（目標可換成你的測試服務）。
-> 2. `pkill -f 'ssh -N -T db-tunnel'`，量測多久之後埠會回來。
-> 3. 故意把 `~/.ssh/config` 的 `HostName` 改成不存在的主機，觀察 systemd 的行為。
-> 4. 連續失敗 5 次之後會怎樣？用什麼指令讓它恢復？
-> 5. 執行 `db-tunnel-setup rollback`，驗證埠確實釋放。
->
-> **參考解答**
-> 2. `RestartSec=10` → 約 10 秒後 `ss -ltnp` 又看得到埠。
-> 3. `systemctl --user status` 顯示 `activating (auto-restart)`，
->    `journalctl --user -u db-tunnel -f` 會看到 `Could not resolve hostname`。
-> 4. 觸發 `StartLimitBurst=5`（5 分鐘內 5 次），狀態變成
->    `failed (Result: start-limit-hit)` 並**停止重試** ★★★ ——
->    這是刻意的保護，避免對跳板機造成連線風暴。
->    修好設定後用 `systemctl --user reset-failed db-tunnel && systemctl --user start db-tunnel` 恢復。
-> 5. `ss -Hltn 'sport = :13306'` **無任何輸出**才算乾淨；
->    ★★★ 若還有輸出，多半是先前手動開的 `ssh -f` 殘留。
 
 ---
 
 ## 小測驗
 
-Q1. `ssh -L 13306:127.0.0.1:3306 user@db01` 這條指令裡的 `127.0.0.1` 指的是**誰的** loopback？寫錯會看到什麼錯誤？
+Q1. `ssh -L 13306:127.0.0.1:3306 user@db01` 裡的 `127.0.0.1` 指的是**誰的** loopback？寫錯會看到什麼錯誤？
 
 Q2. `-L` 與 `-R` 分別是「誰在 listen、誰去 connect」？為什麼 `-R` 在機關環境幾乎一律禁止？
 
-Q3. 沒有設 `ExitOnForwardFailure yes` 時，本機埠已被占用會發生什麼事？為什麼這是「最耗時的假故障」？
+Q3. 沒設 `ExitOnForwardFailure yes` 時，本機埠已被占用會發生什麼事？為什麼這是「最耗時的假故障」？
 
-Q4. 看到 `channel 3: open failed: administratively prohibited: open failed`，你的**下一個動作**是什麼？為什麼不該在客戶端調參數？
+Q4. 看到 `channel 3: open failed: administratively prohibited`，你的**下一個動作**是什麼？為什麼不該在客戶端調參數？
 
-Q5. `channel N: open failed: connect failed: Connection refused` 與上一題的差別在哪？各自該去哪裡查？
+Q5. `connect failed: Connection refused` 與上一題的差別在哪？各自該去哪裡查？
 
-Q6. `curl --socks5` 與 `curl --socks5-hostname` 差在哪裡？前者在機關環境會造成什麼具體損害？
+Q6. `curl --socks5` 與 `curl --socks5-hostname` 差在哪？前者在機關環境會造成什麼具體損害？
 
 Q7. 是非題：客戶端加上 `-R 0.0.0.0:8080:...` 就能讓遠端主機對外開放這個埠。請說明理由。
 
-Q8. `AllowTcpForwarding local` 的 `local` 是「伺服器本地」還是「客戶端的 `-L`」？怎麼驗證你的理解是對的？
+Q8. `AllowTcpForwarding local` 的 `local` 是「伺服器本地」還是「客戶端的 `-L`」？怎麼驗證？
 
-Q9. 為了讓 systemd user unit 開機自動建立隧道，你用了一把**無密語**金鑰。要怎麼把這個風險壓到可接受？
+Q9. 為了讓 systemd user unit 開機自動建立隧道，你用了一把**無密語**金鑰。要怎麼把風險壓到可接受？
 
-Q10. 透過隧道連進 MySQL 之後，DB 的稽核記錄裡來源 IP 是什麼？這造成什麼稽核問題、該怎麼補？
+Q10. 透過隧道連進 MySQL 之後，DB 稽核記錄裡的來源 IP 是什麼？造成什麼稽核問題、該怎麼補？
 
 > [!question]- 測驗答案
 > **Q1.** **是 `db01`（SSH 伺服器）自己的 loopback，不是你的電腦。**
 > `-L` 的第三、四段（target:tport）**永遠由 SSH 伺服器負責解析與連線**，
 > 你的工作站解不解析得到那個名稱完全不影響。
 > 這是本主題第一名的誤解：很多人以為 `127.0.0.1` 是「我這台」，
-> 於是寫出 `-L 13306:<自己的 IP>:3306` 這種指令。
-> 寫錯時，因為 host 連不到你指定的目標，會看到：
-> ```text
-> channel 2: open failed: connect failed: Connection refused
-> ```
-> 或者路由不通時的 `Connection timed out`。
+> 於是寫出 `-L 13306:<自己的 IP>:3306`。寫錯時因為 host 連不到你指定的目標，會看到
+> `channel 2: open failed: connect failed: Connection refused`，路由不通時則是 `Connection timed out`。
 > **★★★★ 判斷方法**：問自己「這個位址是從哪一台機器解析的」——
-> 答案永遠是「SSH 伺服器」。詳見〈基礎操作〉的四段語意圖。
+> 答案永遠是「SSH 伺服器」。見〈基礎操作〉的四段語意圖。
 >
-> **Q2.** **`-L`：listen 在客戶端（你），最終連線由伺服器發起。**
-> **`-R`：listen 在伺服器，最終連線由客戶端（你）發起。**
+> **Q2.** **`-L`：listen 在客戶端（你），最終連線由伺服器發起；
+> `-R`：listen 在伺服器，最終連線由客戶端（你）發起。**
 > 記憶法是「L = Local listen、R = Remote listen」，connect 永遠是另一端。
-> `-R` 被禁止的原因不在技術而在**管制效果**：
-> 它讓外部的連線能夠進入內網，而防火牆日誌只會看到一條
-> 「內網 → 外部:22」的合法 outbound，流量還是加密的，DPI 也看不出來。
-> ★★★★★ 效果等同於**在防火牆上開一個沒有規則、沒有記錄、沒有到期日的洞**，
-> 完全繞過出入口管制與 IPS。
-> 在機關這被定性為「未經授權建立對外通道」，是資安事件而非操作瑕疵。
-> 唯一勉強可行的情境（廠商臨時支援）必須配套書面核准、時限、
-> `PermitListen` 白名單、`GatewayPorts no` 與事後驗證關閉。見〈觀念說明〉與〈安全性注意事項〉。
+> `-R` 被禁止的原因不在技術而在**管制效果**：它讓外部連線能進入內網，
+> 而防火牆只會看到一條「內網 → 外部:22」的合法 outbound，流量加密 DPI 也看不出來。
+> ★★★★★ 效果等同**在防火牆上開一個沒有規則、沒有記錄、沒有到期日的洞**。
+> 在機關被定性為「未經授權建立對外通道」，是資安事件而非操作瑕疵。
+> 唯一勉強可行的情境（廠商臨時支援）必須配套書面核准、時限、`PermitListen` 白名單、
+> `GatewayPorts no` 與事後驗證關閉。見〈觀念說明〉與〈安全性注意事項〉。
 >
-> **Q3.** **ssh 會照樣連上，只是那條轉發不存在。**
-> 你會看到三行警告後 ssh 繼續執行：
+> **Q3.** **ssh 會照樣連上，只是那條轉發不存在。** 你會看到三行警告後 ssh 繼續執行：
 > ```text
 > bind [127.0.0.1]:13306: Address already in use
 > channel_setup_fwd_listener_tcpip: cannot listen to port: 13306
 > Could not request local forwarding.
 > ```
-> ★★★★ 之所以是「最耗時的假故障」，是因為三個條件會同時成立：
-> ① 埠**是**通的（被舊隧道佔著），所以連線測試會過；
-> ② 你的軟體**連得上**，不會報錯；
+> ★★★★ 之所以是「最耗時的假故障」，是因為三個條件同時成立：
+> ① 埠**是**通的（被舊隧道佔著），連線測試會過；② 你的軟體**連得上**，不會報錯；
 > ③ 但資料來自**上一條指向別台主機的舊隧道**。
-> 結果就是「一切看起來正常，只是資料不對」，
-> 最壞的情況是在正式環境的資料庫上執行了你以為在測試環境跑的 `UPDATE`。
-> 解法：`ExitOnForwardFailure yes`，讓 ssh 直接以 `rc=255` 結束；
-> 懷疑時用 `ps -o args= -p "$(ss -Hltnp 'sport = :13306' | grep -oP 'pid=\K[0-9]+')"`
-> 反查佔用者到底指向哪裡。見〈基礎操作〉。
+> 結果是「一切看起來正常，只是資料不對」，最壞情況是在正式環境跑了你以為在測試環境的 `UPDATE`。
+> 解法：`ExitOnForwardFailure yes` 讓 ssh 以 `rc=255` 結束；懷疑時用
+> `ps -o args= -p "$(ss -Hltnp 'sport = :13306' | grep -oP 'pid=\K[0-9]+')"` 反查佔用者指向哪裡。
 >
 > **Q4.** **下一步是登入 SSH 伺服器查政策，不是改客戶端。**
-> `administratively prohibited` 是 **sshd 主動拒絕**這個 channel 請求，
-> 意思是「伺服器的政策不允許」，跟你的參數寫法無關。
-> 三個查法依序：
+> `administratively prohibited` 是 **sshd 主動拒絕**這個 channel 請求，跟你的參數寫法無關。三個查法：
 > ```bash
 > sudo sshd -T -C user=tunnel,addr=10.10.1.20 | grep -iE 'allowtcpforwarding|permitopen'
 > sudo grep -n 'restrict\|permitopen\|no-port-forwarding' ~tunnel/.ssh/authorized_keys
 > sudo journalctl -u ssh --since "10 min ago" | grep -i refused
 > ```
-> ★★★★ 第三個指令會直接印出「誰想連、想連到哪」：
-> `refused local port forward: originator ... target 10.10.20.50 port 3306`。
+> ★★★★ 第三個指令會直接印出「誰想連、想連到哪」。
 > 在客戶端調參數之所以沒用，是因為**三個限制來源都在伺服器端**：
-> `sshd_config` 全域值、`Match` 區塊、以及 `authorized_keys` 的金鑰選項
-> （三者取交集，最嚴格者勝）。見〈排查步驟【4】〉。
+> `sshd_config` 全域值、`Match` 區塊、`authorized_keys` 金鑰選項（三者取交集，最嚴格者勝）。
 >
 > **Q5.** **差在「是誰說不」。**
-> `administratively prohibited` = **伺服器政策拒絕**，連試都沒試。
+> `administratively prohibited` = **伺服器政策拒絕**，連試都沒試；
 > `connect failed: Connection refused` = **伺服器同意轉發、也真的去連了**，
-> 但目標主機在那個埠上沒有任何程式在監聽（收到 RST）。
-> 查法完全不同：
-> - 前者 → 查 `sshd -T -C`、`authorized_keys`、`journalctl | grep refused`
-> - 後者 → **登入 SSH 伺服器**跑 `ss -ltnp | grep <埠>`，
->   確認服務在不在、綁在 `127.0.0.1` 還是內網 IP（決定你 target 該怎麼寫）
+> 但目標在那個埠上沒有程式在監聽（收到 RST）。查法完全不同：
+> 前者查 `sshd -T -C`、`authorized_keys`、`journalctl | grep refused`；
+> 後者要**登入 SSH 伺服器**跑 `ss -ltnp | grep <埠>`，
+> 確認服務在不在、綁在 `127.0.0.1` 還是內網 IP（決定 target 該怎麼寫）。
+> `Connection timed out` 是第三種：路由通但被中間防火牆丟包，用 `nc -zv`（**在伺服器上跑**）確認。
+> ★★★★ 分清這三種，等於把問題切成「政策 / 服務 / 網路」三個互斥方向。見〈排查步驟【3】〉。
 >
-> 另外 `Connection timed out` 是第三種：伺服器連得到路由但被中間防火牆丟包，
-> 用 `nc -zv <target> <port>`（**在伺服器上跑**）確認。
-> ★★★★ 分清這三種，就等於把問題切成「政策 / 服務 / 網路」三個互斥的方向。見〈排查步驟【3】〉。
->
-> **Q6.** **差在 DNS 在哪一端解析。**
-> `--socks5` 在**本機**解析主機名稱，再把 IP 交給 proxy；
+> **Q6.** **差在 DNS 在哪一端解析。** `--socks5` 在**本機**解析主機名稱再把 IP 交給 proxy；
 > `--socks5-hostname`（等同 `-x socks5h://`）把**主機名稱原封不動**交給 proxy，由遠端解析。
-> ★★★ 在機關環境用前者的具體損害是：
-> 你每查一次 `db01.internal.example.gov.tw`，
+> ★★★ 用前者的具體損害是：你每查一次 `db01.internal.example.gov.tw`，
 > 這個查詢就會送到公用 DNS 或 ISP DNS，等於**對外公告內部主機命名規則與資產清單**。
 > 內部網域名稱是攻擊者偵察階段的高價值情報（能推出命名慣例、猜出其他主機）。
-> 而且這種外洩是**安靜的** —— 沒有任何錯誤訊息，
-> 你只會覺得「怎麼連不上」，卻不知道情報已經送出去了。
-> Firefox 要勾「使用 SOCKS v5 時 Proxy DNS 查詢」，Chrome 要用 `--host-resolver-rules`。
-> 見〈基礎操作〉的 `-D` 段落。
+> 而且這種外洩是**安靜的** —— 沒有任何錯誤訊息，你只會覺得「怎麼連不上」。
+> Firefox 要勾「使用 SOCKS v5 時 Proxy DNS 查詢」，Chrome 要用啟動參數。見〈基礎操作〉。
 >
-> **Q7.** **錯（是非題答「非」）。**
-> 能不能對外綁定，**決定權完全在伺服器端的 `GatewayPorts`**：
-> - `no`（**預設值**）→ 強制只綁 loopback，客戶端寫什麼都沒用
-> - `yes` → 強制綁萬用位址
-> - `clientspecified` → 才輪到客戶端決定
+> **Q7.** **錯（答「非」）。** 能不能對外綁定，**決定權完全在伺服器端的 `GatewayPorts`**：
+> `no`（**預設**）強制只綁 loopback，客戶端寫什麼都沒用；`yes` 強制綁萬用位址；
+> `clientspecified` 才輪到客戶端決定。預設值下你會得到
+> `Warning: remote port forwarding failed for listen port 8080`。
+> ★★★★ 這是**伺服器拒絕**，不是參數打錯 —— 不要一直換寫法試。
+> 而且這個預設值是**正確的**，不該為了圖方便去改；真要對外提供服務請走正式的反向代理
+> 加上防火牆規則與存取控制，而不是靠一條沒人管理的 SSH 隧道。
 >
-> 在預設值下，你寫 `-R 0.0.0.0:8080:...` 會得到：
-> ```text
-> Warning: remote port forwarding failed for listen port 8080
-> ```
-> ★★★★ 這是**伺服器拒絕**，不是你參數打錯 —— 不要一直換寫法試。
-> 而且這個預設值是**正確的**，不該為了圖方便去改。
-> 真的需要對外提供服務，請走正式的反向代理加上防火牆規則與存取控制，
-> 而不是靠一條沒人管理的 SSH 隧道。見〈基礎操作〉的 `-R` 段落。
->
-> **Q8.** **是「客戶端的 `-L`」。**
-> 官方定義寫的是 "local (**from the perspective of ssh(1)**) forwarding only" ——
-> 視角是 **ssh 客戶端**，所以 `local` = 允許 `-L` 與 `-D`，`remote` = 允許 `-R`。
-> 這個字非常容易被讀成「伺服器本地」而設反，後果是
-> 「本來想只放行 `-L`，結果變成只放行 `-R`」——★★★★ 恰好是最危險的那一種。
-> 驗證方式不要靠讀設定檔，要靠實際輸出：
+> **Q8.** **是「客戶端的 `-L`」。** 官方定義寫的是
+> "local (**from the perspective of ssh(1)**) forwarding only" ——
+> 視角是 ssh 客戶端，所以 `local` = 允許 `-L` 與 `-D`，`remote` = 允許 `-R`。
+> 這個字很容易被讀成「伺服器本地」而設反，後果是「本來想只放行 `-L`，
+> 結果變成只放行 `-R`」——★★★★ 恰好是最危險的那一種。驗證不要靠讀設定檔：
 > ```bash
 > sudo sshd -T -C user=tunnel,addr=10.10.1.20 | grep -i allowtcpforwarding
 > ```
-> 預期看到 `allowtcpforwarding local`，然後**實測**：
-> `-L` 應該成功，`-R` 應該得到 `remote port forwarding failed`。
-> 見〈進階應用〉的伺服器端管制表。
+> 預期 `allowtcpforwarding local`，然後**實測**：`-L` 應成功、`-R` 應得到
+> `remote port forwarding failed`。見〈進階應用〉的伺服器端管制表。
 >
 > **Q9.** **用 `authorized_keys` 的 `restrict` 把那把金鑰限死到只能做這一件事。**
 > ```text
 > restrict,permitopen="127.0.0.1:3306",from="10.10.1.0/24" ssh-ed25519 AAAA... db-tunnel@ws01
 > ```
-> 三層限制的效果：
-> - **`restrict`** ★★★★★ 關閉全部功能（port/agent/X11 轉發、pty、`~/.ssh/rc`），
->   從「全關」開始再加白名單，而不是從「全開」開始減
-> - **`permitopen="127.0.0.1:3306"`** ★★★★ 只放行這一個 `-L` 目的地
-> - **`from="10.10.1.0/24"`** ★★★★ 只有辦公網段能用
->
+> 三層限制：**`restrict`** ★★★★★ 關閉全部功能（port/agent/X11 轉發、pty、`~/.ssh/rc`），
+> 從「全關」開始再加白名單而不是從「全開」開始減；
+> **`permitopen`** ★★★★ 只放行這一個 `-L` 目的地；**`from`** ★★★★ 只有辦公網段能用。
 > 再搭配伺服器端 `useradd -s /usr/sbin/nologin tunnel`。
-> 這樣就算金鑰檔整個外流，攻擊者拿到的也只是「一個 MySQL 埠」，
-> 還得再過 MySQL 的帳密與權限那一關。
-> ★★★★ **這是「無密語金鑰」唯一可以被接受的前提**；
-> 沒有 `restrict` 的無密語金鑰等於把整台機器的 shell 放在檔案系統上。見〈完整實戰範例〉步驟 1。
+> 這樣就算金鑰檔整個外流，攻擊者拿到的也只是「一個 MySQL 埠」，還得再過 MySQL 帳密與權限。
+> ★★★★ **這是「無密語金鑰」唯一可以被接受的前提**；沒有 `restrict` 的無密語金鑰
+> 等於把整台機器的 shell 放在檔案系統上。見〈完整實戰範例〉步驟 1。
 >
-> **Q10.** **來源永遠是 `localhost`（或 `127.0.0.1`），因為最後一段是 db01 連自己。**
-> 這造成兩個具體問題：
+> **Q10.** **來源永遠是 `localhost`（或 `127.0.0.1`），因為最後一段是 db01 連自己。** 兩個問題：
 > ① **權限比對**用 `'user'@'localhost'` 而不是你工作站的 IP，
 > 授權寫成 `'ops'@'10.10.1.20'` 會直接得到 `ERROR 1130`；
 > `skip_name_resolve=ON` 時則要寫 `'ops'@'127.0.0.1'`。
-> ② ★★★★ **稽核斷點**：DB 的 general log / audit log 裡所有查詢的來源都是 localhost，
+> ② ★★★★ **稽核斷點**：DB 的 general log / audit log 裡所有查詢來源都是 localhost，
 > 「誰在什麼時候查了哪些個資」在 DB 這一側**完全無法歸責到人**。
-> 補救方式是把兩份記錄接起來：
-> - **一人一把隧道金鑰**（絕不共用）
-> - `sshd_config` 設 `LogLevel VERBOSE`，讓登入記錄留下**金鑰指紋**
-> - 稽核時用「SSH 登入時間 + 指紋」對上「DB 查詢時間」
->
+> 補救方式是把兩份記錄接起來：**一人一把隧道金鑰**（絕不共用）、
+> `sshd_config` 設 `LogLevel VERBOSE` 讓登入記錄留下**金鑰指紋**、
+> 稽核時用「SSH 登入時間 + 指紋」對上「DB 查詢時間」。
 > ★★★★ 同時要誠實面對限制：SSH **不會**逐條記錄隧道內做了什麼，
 > 需要完整軌跡就得導入堡壘機／連線側錄，見 [[06-遠端存取安全]]。
 
@@ -1783,15 +1287,14 @@ Q10. 透過隧道連進 MySQL 之後，DB 的稽核記錄裡來源 IP 是什麼�
 
 ## 延伸閱讀
 
-- [[03-SSH-客戶端設定檔]] — `ProxyJump` 的完整寫法與跳板機架構圖，本篇的 `-J` 組合技以它為基礎
+- [[03-SSH-客戶端設定檔]] — `ProxyJump` 的完整寫法與跳板機架構，本篇的 `-J` 組合技以它為基礎
 - [[04-sshd-伺服器端設定]] — `sshd -t`、`sshd -T` 與完整的「改壞就自動回滾」SOP
 - [[07-SSH-安全強化]] — 演算法、認證與 TWGCB 對照，隧道管制是其中一環
 - [[06-遠端存取安全]] — VPN、堡壘機與隧道的架構選型；需要完整稽核軌跡時看這篇
 - [[03-ss-netstat-與lsof]] — `ss -ltnp` 的完整判讀，本篇每一次驗證都在用
-- [[01-systemd-unit撰寫實戰]] — unit 各欄位逐項解釋，包含 `Type=exec` 與 `Restart=` 的語意
-- [[04-遠端編輯與VSCode-Remote]] — VSCode Remote-SSH 會自動幫你開一堆轉發，是隧道最常見的「隱形」來源
+- [[01-systemd-unit撰寫實戰]] — `Type=exec` 與 `Restart=` 等欄位的逐項語意
+- [[04-遠端編輯與VSCode-Remote]] — Remote-SSH 會自動開一堆轉發，是隧道最常見的「隱形」來源
 - [[02-MySQL-使用者與權限]] — 為什麼經隧道進來的連線比對的是 `'user'@'localhost'`
-- [[06-SFTP-與受限使用者]] — `DisableForwarding` 與受限帳號的搭配
 - OpenSSH `ssh(1)` 官方手冊（`-L` / `-R` / `-D` / `-J` 與 escape 序列）：<https://man.openbsd.org/ssh>
-- OpenSSH `sshd_config(5)` 官方手冊（`AllowTcpForwarding` / `PermitOpen` / `PermitListen` / `GatewayPorts`）：<https://man.openbsd.org/sshd_config>
-- OpenSSH `ssh_config(5)` 官方手冊（`ExitOnForwardFailure` / `LocalForward` / `ClearAllForwardings`）：<https://man.openbsd.org/ssh_config>
+- OpenSSH `sshd_config(5)`（`AllowTcpForwarding` / `PermitOpen` / `PermitListen` / `GatewayPorts`）：<https://man.openbsd.org/sshd_config>
+- OpenSSH `ssh_config(5)`（`ExitOnForwardFailure` / `LocalForward` / `ClearAllForwardings`）：<https://man.openbsd.org/ssh_config>
