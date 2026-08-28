@@ -1,6 +1,6 @@
 ---
-title: "Juniper VLAN 與 Trunk 設定"
-desc: "vlan 定義、interface-mode 與 members"
+title: "Cisco 管理 IP 與遠端存取"
+desc: "SVI、預設閘道、SSH 啟用與 line vty 設定"
 aliases: []
 tags: [群組/網路與設備, 網路/設備, 主題/網路]
 category: 網路基礎與設備
@@ -11,12 +11,12 @@ prerequisites: []
 updated: 2026-08-27
 ---
 
-# Juniper VLAN 與 Trunk 設定
+# Cisco 管理 IP 與遠端存取
 
 > [!abstract] 這篇你會學到
-> - 在 JunOS 上建立 VLAN
-> - 設定 access 與 trunk 介面
-> - 驗證 VLAN 成員與流量
+> - 為交換器設定管理 IP 與預設閘道
+> - 啟用 SSH 並停用 Telnet
+> - 限制管理介面只允許特定來源
 
 ## 前置知識
 
@@ -82,5 +82,5 @@ Q3.
 
 ## 延伸閱讀
 
-- [[12-Juniper-管理IP與遠端存取]]
-- [[06-Cisco-VLAN與Trunk設定]]
+- [[13-Cisco-埠設定與安全]]
+- [[06-遠端存取安全]]

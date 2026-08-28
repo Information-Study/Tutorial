@@ -154,7 +154,7 @@ TWGCB 相關篇章另加 `baseline_version: TWGCB-01-014 v1.2`，記錄對應的
 | 主題 | 主線 | 對照區塊 |
 | --- | --- | --- |
 | Linux | Ubuntu / Debian | `> [!info]- Rocky / AlmaLinux（RHEL 系）對照` |
-| 交換器 | Cisco IOS | `> [!info]- Juniper JunOS 對照` |
+| 交換器 | **Juniper JunOS** | `> [!info]- Cisco IOS 對照` |
 | Windows | GUI 操作步驟 | PowerShell 指令並陳（不摺疊） |
 
 ### Callout
@@ -167,7 +167,7 @@ TWGCB 相關篇章另加 `baseline_version: TWGCB-01-014 v1.2`，記錄對應的
 
 - 交叉引用一律 `[[檔名]]`，**不用相對路徑**
 - 檔名格式 `NN-標題.md`，**全 vault 唯一**（wikilink 靠檔名解析，撞名會指錯）
-  新增篇章請加主題前綴：`Cisco-`、`PVE-`、`GPO-`、`Nginx-`…
+  新增篇章請加主題前綴：`Juniper-`、`Cisco-`、`PVE-`、`GPO-`、`Nginx-`…
 - 程式碼區塊一定標語言：`bash` `powershell` `nginx` `yaml` `ini` `sql` `php` `json` `dockerfile` `cisco`
 
 ## 工具

@@ -1,22 +1,22 @@
 ---
-title: "Cisco 與 Juniper 指令對照"
-desc: "兩大廠常用指令的一頁式對照速查"
+title: "Juniper 設定備份與韌體升級"
+desc: "save／load、request system software add 與雙分割區"
 aliases: []
 tags: [群組/網路與設備, 網路/設備, 主題/網路]
 category: 網路基礎與設備
-difficulty: 入門
+difficulty: 進階
 status: 待撰寫
 distro: [ubuntu, rhel]
 prerequisites: []
 updated: 2026-08-27
 ---
 
-# Cisco 與 Juniper 指令對照
+# Juniper 設定備份與韌體升級
 
 > [!abstract] 這篇你會學到
-> - 在兩種平台間快速切換
-> - 找到等價指令而不用重學
-> - 避開語意相近但行為不同的指令
+> - 備份與還原 JunOS 設定
+> - 安全地升級韌體
+> - 利用雙分割區降低升級風險
 
 ## 前置知識
 
@@ -82,5 +82,5 @@ Q3.
 
 ## 延伸閱讀
 
-- [[05-Cisco-IOS-基礎操作]]
-- [[10-Juniper-JunOS-基礎操作]]
+- [[18-網路設備盤點與文件化]]
+- [[14-Cisco-設定備份與韌體升級]]

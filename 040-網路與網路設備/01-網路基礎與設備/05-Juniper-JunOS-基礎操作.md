@@ -82,5 +82,5 @@ Q3.
 
 ## 延伸閱讀
 
-- [[11-Juniper-VLAN與Trunk設定]]
-- [[15-Cisco與Juniper指令對照]]
+- [[06-Juniper-VLAN與Trunk設定]]
+- [[15-Juniper與Cisco指令對照]]

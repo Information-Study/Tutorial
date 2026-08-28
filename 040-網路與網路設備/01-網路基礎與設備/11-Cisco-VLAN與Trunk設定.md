@@ -1,6 +1,6 @@
 ---
-title: "Juniper 設定備份與韌體升級"
-desc: "save／load、request system software add 與雙分割區"
+title: "Cisco VLAN 與 Trunk 設定"
+desc: "建立 VLAN、Access 埠、Trunk 與 allowed vlan"
 aliases: []
 tags: [群組/網路與設備, 網路/設備, 主題/網路]
 category: 網路基礎與設備
@@ -11,12 +11,12 @@ prerequisites: []
 updated: 2026-08-27
 ---
 
-# Juniper 設定備份與韌體升級
+# Cisco VLAN 與 Trunk 設定
 
 > [!abstract] 這篇你會學到
-> - 備份與還原 JunOS 設定
-> - 安全地升級韌體
-> - 利用雙分割區降低升級風險
+> - 在 Cisco 上建立並指派 VLAN
+> - 設定 Trunk 並限制允許的 VLAN
+> - 用 show 指令驗證設定正確
 
 ## 前置知識
 
@@ -82,5 +82,5 @@ Q3.
 
 ## 延伸閱讀
 
-- [[18-網路設備盤點與文件化]]
-- [[09-Cisco-設定備份與韌體升級]]
+- [[12-Cisco-管理IP與遠端存取]]
+- [[03-VLAN概念與規劃]]

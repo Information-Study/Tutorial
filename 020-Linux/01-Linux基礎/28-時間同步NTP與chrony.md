@@ -327,7 +327,7 @@ chronyc serverstats
 > [!tip] 哪些設備該指向內部 NTP
 > - 所有 Linux/Windows 主機
 > - **AD 網域控制站**（PDC 模擬器對內部 NTP，其他 DC 與成員自動跟 PDC）
-> - 交換器、防火牆（[[07-Cisco-管理IP與遠端存取]]、OPNsense）——日誌時間才對得上
+> - 交換器、防火牆（[[12-Cisco-管理IP與遠端存取]]、OPNsense）——日誌時間才對得上
 > - UPS 網路卡、IPMI/BMC、監視器 NVR
 > - PVE 宿主機（VM 通常跟宿主機）
 >
@@ -637,6 +637,6 @@ Q10. NTS 解決什麼問題？內部機器需要嗎？
 - [[23-Linux常見疑難排解]] — 第 9 類「時間不對」
 - [[02-網域控制站建置]] — Windows PDC 的時間設定
 - [[05-TWGCB-Linux網域導入]] — Linux 加入 AD 的時間要求
-- [[07-Cisco-管理IP與遠端存取]] — 交換器 NTP 設定
+- [[12-Cisco-管理IP與遠端存取]] — 交換器 NTP 設定
 - [[03-系統監控與告警]] — 時間偏差告警
 - `man 8 chronyd` / `man 5 chrony.conf` / `man 1 chronyc` / `man 1 timedatectl`

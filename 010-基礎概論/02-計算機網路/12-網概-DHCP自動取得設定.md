@@ -567,7 +567,7 @@ interface range GigabitEthernet0/1 - 20
 > | **IP Source Guard** | 驗證封包的來源 IP 是否與綁定表相符，**防止 IP 偽造** |
 >
 > 所以 **DHCP Snooping 是第 2 層資安的基石**。
-> 見 [[05-網概-MAC位址與交換器]] 與 [[08-Cisco-埠設定與安全]]。
+> 見 [[05-網概-MAC位址與交換器]] 與 [[13-Cisco-埠設定與安全]]。
 
 > [!danger] DHCP 耗盡攻擊（DHCP Starvation）
 > 攻擊者用**大量偽造的 MAC 位址**不斷請求 IP，
@@ -845,5 +845,5 @@ Q10. 「假 DHCP 伺服器」為什麼危險？最常見的情況是什麼？該
 - [[11-網概-DNS網域名稱系統]] — DHCP 也負責發 DNS 設定
 - [[16-網概-VLAN與網路分段]] — 跨 VLAN 的 DHCP Relay
 - [[17-網概-網路排錯入門]] — 拿不到 IP 的排錯
-- [[08-Cisco-埠設定與安全]] — DHCP Snooping 實作（進階）
+- [[13-Cisco-埠設定與安全]] — DHCP Snooping 實作（進階）
 - [[13-網路存取控制NAC與802.1X]] — 真正的存取控制（進階）

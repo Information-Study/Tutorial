@@ -1,22 +1,22 @@
 ---
-title: "Cisco 埠設定與安全"
-desc: "speed/duplex、port-security、portfast 與未用埠處理"
+title: "Cisco IOS 基礎操作"
+desc: "模式階層、show 指令、running 與 startup 設定"
 aliases: []
 tags: [群組/網路與設備, 網路/設備, 主題/網路]
 category: 網路基礎與設備
-difficulty: 進階
+difficulty: 入門
 status: 待撰寫
 distro: [ubuntu, rhel]
 prerequisites: []
 updated: 2026-08-27
 ---
 
-# Cisco 埠設定與安全
+# Cisco IOS 基礎操作
 
 > [!abstract] 這篇你會學到
-> - 正確設定埠速率與雙工
-> - 用 port-security 限制 MAC
-> - 關閉未使用的埠縮小攻擊面
+> - 自由切換各層設定模式
+> - 用 show 指令查出想知道的狀態
+> - 正確儲存設定避免重開後消失
 
 ## 前置知識
 
@@ -82,5 +82,5 @@ Q3.
 
 ## 延伸閱讀
 
-- [[09-Cisco-設定備份與韌體升級]]
-- [[16-鏈路聚合與STP]]
+- [[11-Cisco-VLAN與Trunk設定]]
+- [[15-Juniper與Cisco指令對照]]

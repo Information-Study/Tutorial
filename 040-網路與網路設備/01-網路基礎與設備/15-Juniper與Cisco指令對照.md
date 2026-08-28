@@ -1,22 +1,22 @@
 ---
-title: "Juniper 埠設定與安全"
-desc: "埠參數、storm control 與未用埠處理"
+title: "Cisco 與 Juniper 指令對照"
+desc: "兩大廠常用指令的一頁式對照速查"
 aliases: []
 tags: [群組/網路與設備, 網路/設備, 主題/網路]
 category: 網路基礎與設備
-difficulty: 進階
+difficulty: 入門
 status: 待撰寫
 distro: [ubuntu, rhel]
 prerequisites: []
 updated: 2026-08-27
 ---
 
-# Juniper 埠設定與安全
+# Cisco 與 Juniper 指令對照
 
 > [!abstract] 這篇你會學到
-> - 設定埠參數與風暴抑制
-> - 停用未使用的埠
-> - 套用基本的埠安全策略
+> - 在兩種平台間快速切換
+> - 找到等價指令而不用重學
+> - 避開語意相近但行為不同的指令
 
 ## 前置知識
 
@@ -82,5 +82,5 @@ Q3.
 
 ## 延伸閱讀
 
-- [[14-Juniper-設定備份與韌體升級]]
-- [[08-Cisco-埠設定與安全]]
+- [[10-Cisco-IOS-基礎操作]]
+- [[05-Juniper-JunOS-基礎操作]]

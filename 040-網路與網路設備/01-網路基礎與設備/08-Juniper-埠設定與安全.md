@@ -1,6 +1,6 @@
 ---
-title: "Cisco VLAN 與 Trunk 設定"
-desc: "建立 VLAN、Access 埠、Trunk 與 allowed vlan"
+title: "Juniper 埠設定與安全"
+desc: "埠參數、storm control 與未用埠處理"
 aliases: []
 tags: [群組/網路與設備, 網路/設備, 主題/網路]
 category: 網路基礎與設備
@@ -11,12 +11,12 @@ prerequisites: []
 updated: 2026-08-27
 ---
 
-# Cisco VLAN 與 Trunk 設定
+# Juniper 埠設定與安全
 
 > [!abstract] 這篇你會學到
-> - 在 Cisco 上建立並指派 VLAN
-> - 設定 Trunk 並限制允許的 VLAN
-> - 用 show 指令驗證設定正確
+> - 設定埠參數與風暴抑制
+> - 停用未使用的埠
+> - 套用基本的埠安全策略
 
 ## 前置知識
 
@@ -82,5 +82,5 @@ Q3.
 
 ## 延伸閱讀
 
-- [[07-Cisco-管理IP與遠端存取]]
-- [[03-VLAN概念與規劃]]
+- [[09-Juniper-設定備份與韌體升級]]
+- [[13-Cisco-埠設定與安全]]
