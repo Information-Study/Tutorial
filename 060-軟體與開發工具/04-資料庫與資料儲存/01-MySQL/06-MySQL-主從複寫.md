@@ -75,19 +75,6 @@ updated: 2026-08-28
 > 本篇後面會給你一個**折衷武器**：**延遲從庫**（`SOURCE_DELAY=3600`）。
 > 它讓你有一小時的緩衝去撈誤刪的資料，但它仍然**不是備份**，只是縮短了 PITR 的痛苦。
 
-### 機關導入複寫的兩個真實動機
-
-不要為了「聽起來比較高可用」而導入。只有這兩個動機值得付出多一台機器的維運成本：
-
-| 動機 | 具體長相 | 本篇對應段落 |
-| --- | --- | --- |
-| **分流** ★★★ | 月報表、稽核查詢、`mysqldump` 全部打到從庫，主庫只服務線上交易 | 讀寫分離、延遲判讀 |
-| **頂替** ★★★★ | 主庫主機板掛了，30 分鐘內把服務指到從庫 | 計畫性切換與故障切換 |
-
-★★ 如果你的真實需求是「資料不能不見」，答案是**備份 + 異地**，不是複寫。
-★★ 如果你的真實需求是「查詢很慢」，先看 [[04-效能瓶頸排查方法論]] 與 [[04-MySQL-設定檔與調校]]，
-加從庫不會讓一個缺索引的查詢變快，只會讓它在兩台機器上都很慢。
-
 ### 資料是怎麼流過去的
 
 ```text
@@ -381,28 +368,11 @@ Connection to 10.0.1.11 3306 port [tcp/mysql] succeeded!
 > 規則寫法與順序陷阱見 [[02-防火牆-ufw基礎與實務]]，
 > `bind-address` 與 TLS 憑證的產製見 [[07-MySQL-安全強化]]。
 
-### ★★★★ 對時：NTP 沒同步，延遲數字全部是假的
-
-`Seconds_Behind_Source` 的算法是「**從庫本地時間** − **正在套用的 binlog 事件的時間戳**」。
-兩台機器的時鐘差 30 秒，這個數字就會憑空多（或少）30 秒。
-
-```bash
-# 兩台都跑
-timedatectl show -p NTPSynchronized -p TimeUSec
-```
-
-預期輸出：
-
-```text
-NTPSynchronized=yes                    # ★★★★ 必須是 yes
-TimeUSec=Sat 2026-08-29 10:14:07 CST
-```
-
-```bash
-# 沒同步時
-sudo timedatectl set-ntp true
-sudo systemctl restart systemd-timesyncd
-```
+> [!warning] ★★★★ NTP 沒同步，延遲數字全部是假的
+> `Seconds_Behind_Source` 的算法是「**從庫本地時鐘** − **事件在主庫上的時間戳**」。
+> 兩台機器的時鐘差 30 秒，這個數字就會憑空多（或少）30 秒。
+> 兩台都要 `timedatectl show -p NTPSynchronized` 回報 `NTPSynchronized=yes`；
+> 沒同步就 `sudo timedatectl set-ntp true && sudo systemctl restart systemd-timesyncd`。
 
 ---
 
@@ -1133,39 +1103,14 @@ SELECT COUNT(*) FROM appdb.members;
 ★★★ 延遲從庫**不能同時當故障切換的目標**（它永遠落後一小時）。
 需要兩者都要時，架構是「主庫 + 即時從庫（切換用）+ 延遲從庫（救援用）」。
 
-### 半同步（可選）
-
-> [!warning] 未實機驗證
-> 本段依 MySQL 8.0 官方文件撰寫，未在實機環境驗證。
-> ★★★ 8.0.26 起外掛與變數改名（`master`→`source`、`slave`→`replica`），
-> **新舊版外掛不能同時安裝**。請對照你的實際版本。
-
-```sql
--- 主庫（MySQL 8.0.26+）
-INSTALL PLUGIN rpl_semi_sync_source SONAME 'semisync_source.so';
-SET GLOBAL rpl_semi_sync_source_enabled = 1;
-SET GLOBAL rpl_semi_sync_source_timeout = 1000;      -- 毫秒
-
--- 從庫
-INSTALL PLUGIN rpl_semi_sync_replica SONAME 'semisync_replica.so';
-SET GLOBAL rpl_semi_sync_replica_enabled = 1;
-STOP REPLICA IO_THREAD; START REPLICA IO_THREAD;     -- ★★★ 要重啟 IO thread 才生效
-```
-
-```bash
-# ★★★★ 這個狀態變數一定要納入監控
-mysql -e "SHOW STATUS LIKE 'Rpl_semi_sync_source_status';"
-```
-
-預期輸出：
-
-```text
-+-----------------------------+-------+
-| Variable_name               | Value |
-+-----------------------------+-------+
-| Rpl_semi_sync_source_status | ON    |    # ★★★★ OFF = 已靜默降級成非同步
-+-----------------------------+-------+
-```
+> [!info]- 半同步（`rpl_semi_sync`）什麼時候值得開
+> 金流、不能掉單的表單系統才需要，代價是每筆交易多一個 RTT。
+> MySQL 8.0.26+ 兩端各裝一個外掛（`semisync_source.so` / `semisync_replica.so`，
+> ★★★ **新舊版外掛不能並存**），主庫 `rpl_semi_sync_source_enabled=1`、
+> 從庫 `rpl_semi_sync_replica_enabled=1` 並重啟 IO thread 才生效。
+> ★★★★ **一定要監控 `Rpl_semi_sync_source_status`** ——
+> 逾時（`rpl_semi_sync_source_timeout`）後它會**靜默降級成非同步**，
+> 你以為有半同步，其實沒有。本段依官方文件撰寫，未實機驗證。
 
 ---
 
@@ -1190,58 +1135,14 @@ mysql -e "SHOW STATUS LIKE 'Rpl_semi_sync_source_status';"
 | 2003 | `Can't connect to MySQL server` | 網路／防火牆／主庫沒起來 | ★★★ |
 | 1045 | `Access denied for user 'repl'` | 密碼錯、來源網段沒涵蓋、`REQUIRE SSL` 但連線沒帶憑證 | ★★★ |
 
-### 標準處理流程
-
-```bash
-# 【1】先看錯誤全文，不要只看摘要
-mysql -e "SHOW REPLICA STATUS\G" | grep -A2 -E 'Last_SQL_Error|Last_IO_Error'
-mysql -e "SELECT WORKER_ID, LAST_ERROR_NUMBER, LAST_ERROR_MESSAGE
-          FROM performance_schema.replication_applier_status_by_worker
-          WHERE LAST_ERROR_NUMBER <> 0\G"
-```
-
-```bash
-# 【2】★★★★ 找出是哪一筆 GTID 卡住
-mysql -e "SELECT LAST_QUEUED_TRANSACTION, APPLYING_TRANSACTION
-          FROM performance_schema.replication_applier_status_by_worker\G"
-```
-
-預期輸出：
-
-```text
-LAST_QUEUED_TRANSACTION: 3e11fa47-71ca-11e1-9e33-c80aa9429562:45261
-    APPLYING_TRANSACTION: 3e11fa47-71ca-11e1-9e33-c80aa9429562:45261
-```
-
-```bash
-# 【3】★★★★ 到主庫上把這筆交易的內容挖出來，看它到底要做什麼
-mysqlbinlog --base64-output=DECODE-ROWS --verbose \
-  --include-gtids='3e11fa47-71ca-11e1-9e33-c80aa9429562:45261' \
-  /var/log/mysql/mysql-bin.000012 | head -60
-```
-
-預期輸出：
-
-```text
-### UPDATE `appdb`.`members`
-### WHERE
-###   @1=10247            /* INT meta=0 nullable=0 is_null=0 */
-###   @3='王小明'          /* ★ 這是「前映像」—— 從庫上這一列必須長這樣才找得到 */
-### SET
-###   @1=10247
-###   @3='王大明'
-```
-
-```sql
--- 【4】比對從庫上那一列的實際狀態
-SELECT * FROM appdb.members WHERE id = 10247\G
-```
-
-看到什麼代表什麼：
+處理手法與下一節「常見錯誤與排錯」的**排查步驟【4】【5】**完全相同：
+先用 `performance_schema.replication_applier_status_by_worker` 找出卡住的 GTID，
+再到主庫用 `mysqlbinlog --base64-output=DECODE-ROWS -v --include-gtids=…` 把那筆交易的
+內容挖出來，最後到從庫 `SELECT` 那一列比對實際狀態。看到什麼代表什麼：
 
 - 那一列**不存在** → 從庫曾被刪過，或初始同步不完整 → 走「補資料」而非「跳過」
-- 那一列**存在但欄位值不同** → 從庫曾被直接寫入 → 先查誰寫的（見安全性一節的稽核）
-- 那一列**與 SET 之後的值一模一樣** → 這筆交易已經套用過 → **這種情況才適合跳過**
+- 那一列**存在但欄位值不同** → 從庫曾被直接寫入 → 先查誰寫的（見安全性一節）
+- 那一列**與 SET 之後的值一模一樣** → 這筆交易已經套用過 → ★★★ **只有這種情況適合跳過**
 
 ### 真的必須跳過時：GTID 模式下注入空交易
 
