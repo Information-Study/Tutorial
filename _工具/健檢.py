@@ -19,7 +19,7 @@ GROUPS = sorted(p for p in ROOT.iterdir() if p.is_dir() and re.match(r"^\d{3}-",
 SKIP_DIRS = {".git", ".obsidian", ".trash"}
 # ★ 只有這 13 個群組裡的篇章算「教學文」，需要完整的 13 段骨架與小測驗
 #   000-索引（MOC/速查）、980-附錄、990-收件匣 不在此列
-CONTENT_RE = re.compile(r"^(0[1-9]0|1[123]0)-")
+CONTENT_RE = re.compile(r"^(0[1-9]0|1[0-3]0)-")
 
 # 索引頁判定：新命名帶 `-idx-`，舊命名以 00- 開頭
 def IS_IDX(f) -> bool:
