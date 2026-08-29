@@ -20,14 +20,14 @@ updated: 2026-08-27
 
 | # | 篇章 | 難度 | 說明 |
 | --- | --- | --- | --- |
-| 01 | [[01-PostgreSQL-安裝與初始化]] | 入門 | 官方套件庫安裝、叢集初始化、locale 與資料目錄 |
-| 02 | [[02-PostgreSQL-角色與權限]] | 進階 | role 統一模型、資料庫與 schema 權限、預設權限設定 |
-| 03 | [[03-psql-操作與常用指令]] | 入門 | psql 反斜線指令、連線方式與匯入匯出 |
-| 04 | [[04-PostgreSQL-設定檔與pg_hba]] | 進階 | postgresql.conf 關鍵參數與 pg_hba.conf 的認證比對順序 |
-| 05 | [[05-PostgreSQL-備份與還原]] | 進階 | pg_dump/pg_restore、基礎備份與 WAL 時間點還原 |
-| 06 | [[06-PostgreSQL-效能調校與索引]] | 專家 | 記憶體參數、EXPLAIN ANALYZE、索引種類與 autovacuum |
-| 07 | [[07-PostgreSQL-複寫與高可用]] | 專家 | 串流複寫、同步與非同步取捨、故障切換流程 |
-| 08 | [[08-PostgreSQL-安全強化]] | 進階 | 監聽範圍、SSL 連線、密碼加密方式與稽核設定 |
+| 01 | [[01-PostgreSQL-安裝與初始化]] | 入門 | 版本選型與 PGDG 套件庫、cluster/database/schema 四層模型、peer 認證、locale 與 encoding 一次定死、pg_createcluster 搬 datadir、交付前驗收腳本 |
+| 02 | [[02-PostgreSQL-角色與權限]] | 進階 | role 統一模型、五道權限關卡、public schema 風險、ALTER DEFAULT PRIVILEGES 與可交稽核的權限盤點 |
+| 03 | [[03-psql-操作與常用指令]] | 入門 | 把 psql 當維運操作台：連線來源判讀、反斜線指令盤點、ON_ERROR_STOP 腳本模式與可回滾的改資料流程 |
+| 04 | [[04-PostgreSQL-設定檔與pg_hba]] | 進階 | 四道關卡的錯誤訊息判讀、pg_hba 第一條命中即定案的比對順序、md5 轉 scram 遷移、reload 與 restart 的判準 |
+| 05 | [[05-PostgreSQL-備份與還原]] | 進階 | pg_dump/pg_restore 旗標拆解、WAL 歸檔與 PITR 時間點還原、可交稽核的還原演練腳本 |
+| 06 | [[06-PostgreSQL-效能調校與索引]] | 專家 | shared_buffers 與 work_mem 的記憶體預算、EXPLAIN (ANALYZE, BUFFERS) 判讀、六種索引選型、CREATE INDEX CONCURRENTLY 與 autovacuum 膨脹防治 |
+| 07 | [[07-PostgreSQL-複寫與高可用]] | 專家 | 用 WAL 串流複寫建起可維運的 PostgreSQL 主備：延遲判讀、複寫槽爆磁碟的防呆、pg_rewind 降級與零雙寫切換 |
+| 08 | [[08-PostgreSQL-安全強化]] | 專家 | 收斂 listen_addresses 與 pg_hba、md5 換 scram-sha-256、用自建 CA 強制 hostssl、收乾 PUBLIC 權限、以 pgaudit 建立稽核軌跡，並產出可交稽核的符合性報告 |
 
 ## 建議閱讀順序
 

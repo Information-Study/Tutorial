@@ -1,82 +1,2244 @@
 ---
 title: "psql 操作與常用指令"
-desc: "psql 反斜線指令、連線方式與匯入匯出"
-aliases: [psql, meta command]
-tags: [群組/軟體與開發工具, 服務/postgresql, 主題/sql]
+desc: "把 psql 當維運操作台：連線來源判讀、反斜線指令盤點、ON_ERROR_STOP 腳本模式與可回滾的改資料流程"
+aliases: [psql, meta command, psqlrc, pgpass, pg_service.conf, ON_ERROR_STOP]
+tags: [群組/軟體與開發工具, 服務/postgresql, 主題/sql, 主題/維運]
 category: 資料庫與資料儲存
 difficulty: 入門
-status: 待撰寫
+status: 完成
 distro: [ubuntu, rhel]
-prerequisites: ["[[01-PostgreSQL-安裝與初始化]]"]
-updated: 2026-08-27
+prerequisites: ["[[01-PostgreSQL-安裝與初始化]]", "[[03-SQL基礎操作]]"]
+updated: 2026-08-28
 ---
 
 # psql 操作與常用指令
 
 > [!abstract] 這篇你會學到
-> - 熟練 \l \dt \d+ 等常用查詢
-> - 用 psql 執行腳本與匯出結果
-> - 設定順手的 .psqlrc
+> - 判讀 `psql` 的連線錯誤訊息，30 秒內分辨「連不到伺服器」與「連上了但被拒絕」
+> - 用 `\l \dt \d+ \du \dp \dn+ \dx` 在五分鐘內盤點一台不熟的資料庫，交得出稽核要的清單
+> - 寫出**不會半套匯入**的腳本：`-X -v ON_ERROR_STOP=1 --single-transaction` 三件套
+> - ★★★★ 在正式機改資料時，用「單一交易 + 影響列數門檻 + 自動 ROLLBACK」讓誤操作**當場退回**，而不是隔天做 PITR
+> - 設定 `~/.psqlrc`、`~/.pgpass`、`~/.pg_service.conf`，讓密碼不進 `ps`、不進 `.psql_history`、不進伺服器日誌
+> - 看懂 psql 與 `mysql` client 在同一件事上的做法差異，兩套資料庫都能上手
 
 ## 前置知識
 
-- [[01-PostgreSQL-安裝與初始化]]
+- [[01-PostgreSQL-安裝與初始化]] — 服務起得來、`postgres` 系統帳號存在、知道 cluster 在哪
+- [[03-SQL基礎操作]] — ★★★★ **本篇不重講 SQL 語法**。`SELECT` / `JOIN` / 交易 / `EXPLAIN` 的判讀全部在那一篇，本篇只講「psql 這個工具怎麼用」
+- [[02-PostgreSQL-角色與權限]] — 本篇用到的 `ops_ro` / `ops_rw` 帳號在那裡建立
+- [[03-終端機與Shell入門]] — 管線、重導向、`less` 的基本操作
+- [[01-Bash腳本結構與安全預設]] — 實戰範例的腳本骨架（`set -euo pipefail`、`trap`）
+
+---
 
 ## 觀念說明
 
-<!-- TODO: 待撰寫 — 這個工具解決什麼問題、底層在做什麼 -->
+### psql 不是「PostgreSQL 版的 mysql」，它是操作台 ★★★
+
+`mysql` client 幾乎只做一件事：把你打的字送給伺服器。
+psql 做的事多得多 —— 它自己有一套**反斜線指令（meta-command）**、有變數、有 `\if` 條件判斷、
+有輸出格式引擎，還會在**本地端**讀寫檔案。理解「哪些事在本地做、哪些事送到伺服器」，
+是所有 psql 疑難雜症的分水嶺。
+
+```text
+        你打的一行字
+              │
+              ▼
+   ┌──────────────────────────┐
+   │  psql 前端（跑在你的機器）│
+   │                          │
+   │  以 \ 開頭？             │
+   │   ├─ 是 → 本地執行 ──────┼──► \copy 讀你的硬碟、\i 讀你的硬碟
+   │   │        （\dt \d \x   │     \! 用你的權限跑 shell
+   │   │          \i \o \!）  │     ★★★★ 這些指令伺服器完全不知道
+   │   │                      │
+   │   └─ 否 → 送到伺服器 ────┼──► libpq ──► TCP 5432 或 unix socket
+   └──────────────────────────┘                    │
+                                                   ▼
+                                     ┌───────────────────────────┐
+                                     │ PostgreSQL 伺服器          │
+                                     │ pg_hba.conf 比對 ★★★★     │
+                                     │ COPY 讀的是「伺服器的硬碟」│
+                                     └───────────────────────────┘
+```
+
+三個立刻用得上的推論：
+
+| ★ | 推論 | 後果 |
+| --- | --- | --- |
+| ★★★★ | `\dt`、`\d`、`\x` **不是 SQL** | 不能寫進應用程式、不能給 JDBC/PDO、不能放進 `pg_dump` 出來的檔案 |
+| ★★★★ | `\copy` 在**你的機器**讀寫檔案，`COPY` 在**伺服器**讀寫檔案 | 兩者搞混會出現「檔案不見了」（其實在資料庫主機上）或 `Permission denied` |
+| ★★★ | `\!` 用**你的 OS 權限**跑 shell | 在正式機開 psql 等於開了一個 shell，`\!` 的稽核軌跡跟資料庫日誌是分開的 |
+
+### 一句話走到伺服器前，先經過三道判斷 ★★★★
+
+新手在 PostgreSQL 上卡最久的不是 SQL，是**連不上**。連線的每一個環節都影響
+`pg_hba.conf` 比對到哪一列（比對規則的完整說明在 [[04-PostgreSQL-設定檔與pg_hba]]）：
+
+```text
+  psql            → 沒給 -h？          → 走 unix socket /var/run/postgresql/.s.PGSQL.5432
+  psql -h /var/run/postgresql          → 明確走 unix socket
+  psql -h 127.0.0.1                    → 走 TCP loopback
+  psql -h 10.1.2.20                    → 走 TCP 網路
+                                              │
+                                              ▼
+                             pg_hba.conf 由上而下逐列比對
+                             local  ← 只有 unix socket 會比到這種列
+                             host   ← 只有 TCP 會比到這種列
+                                              │
+                                              ▼
+                          peer / trust / scram-sha-256 / md5 / cert
+```
+
+> [!warning] ★★★★ 這是 PostgreSQL 與 MySQL 差最多的一點
+> MySQL 的 `-h localhost` 走 socket、`-h 127.0.0.1` 走 TCP，權限授權的主機字串不同 ——
+> 這件事在 PostgreSQL **更嚴重**，因為它連「用哪種認證方式」都不一樣：
+> 走 socket 通常是 `peer`（比對你的 **OS 使用者名稱**），走 TCP 通常是 `scram-sha-256`（要密碼）。
+> 所以會出現「`psql -U app` 說 Peer authentication failed，但 `psql -h 127.0.0.1 -U app` 就成功」
+> 這種看起來很鬼的現象。它一點都不鬼，只是比到了不同列。
+
+### psql ↔ mysql client 對照表 ★★★★
+
+同一件事在兩套資料庫怎麼做。**這張表建議印出來貼在螢幕旁邊**，
+機關環境常常兩套都要管（[[03-SQL基礎操作]] 是 MySQL 那一側的完整版）：
+
+| 要做的事 | `mysql` client | `psql` | ★ |
+| --- | --- | --- | --- |
+| 列出所有資料庫 | `SHOW DATABASES;` | `\l` | ★★ |
+| 切換資料庫 | `USE appdb;` | `\c appdb` ★★★ **會重新連線一次** | ★★★ |
+| 列出資料表 | `SHOW TABLES;` | `\dt`（只看目前 `search_path`） | ★★★ |
+| 看表結構 | `DESC t;` / `SHOW CREATE TABLE t\G` | `\d t` / `\d+ t` | ★★★ |
+| 列出帳號 | `SELECT user,host FROM mysql.user;` | `\du` | ★★ |
+| 看物件權限 | `SHOW GRANTS FOR 'app'@'%';` | `\dp t` 或 `\z t` | ★★★ |
+| 直式輸出 | 句尾用 `\G` | `\x on`，或句尾用 `\gx` | ★★ |
+| 執行 SQL 檔 | `source f.sql` | `\i f.sql`（相對路徑用 `\ir`） | ★★★ |
+| 一次性查詢 | `mysql -e "…"` | `psql -c "…"` | ★★ |
+| 密碼不寫在指令列 | `~/.my.cnf` 的 `[client]` | `~/.pgpass` + `~/.pg_service.conf` | ★★★★ |
+| 出錯就停 | 預設就停 | ★★★★★ **預設不停**，一定要 `-v ON_ERROR_STOP=1` | ★★★★★ |
+| 分頁器 | `pager less -SFX` | `\pset pager` / `PSQL_PAGER` | ★★ |
+| 匯出 CSV | `--batch` / `INTO OUTFILE` | `\copy (…) TO 'f.csv' CSV HEADER` | ★★★ |
+| 提示字元帶主機名 | `prompt` | `PROMPT1` | ★★★★ |
+| 砍掉卡住的連線 | `KILL CONNECTION <id>` | `SELECT pg_terminate_backend(<pid>);` | ★★★ |
+| 顯示執行時間 | 預設顯示 | `\timing on` | ★★ |
+| 關掉自動提交 | `SET autocommit=0;` | `\set AUTOCOMMIT off` | ★★★ |
+| **DDL 能不能 rollback** | ★★★★ **不能**（隱含提交） | ★★★★ **可以**，`ALTER TABLE` 放進交易能退回 | ★★★★ |
+| 交易中出錯之後 | 後面的句子照跑 | ★★★★★ **整個交易變 aborted，後面全部被忽略** | ★★★★★ |
+
+最後兩列是本篇最重要的兩個差異，下面各有專節。
+
+### ★★★★★ 交易中一句錯，後面全部作廢
+
+從 MySQL 過來的人第一次遇到都會愣住：
+
+```sql
+BEGIN;
+UPDATE app.applications SET status = 'returned' WHERE case_no = 'A1140812001';
+UPDATE app.applications SET statuz  = 'returned' WHERE case_no = 'A1140812002';  -- 打錯欄位名
+SELECT count(*) FROM app.applications;
+```
+
+預期輸出：
+
+```text
+BEGIN
+UPDATE 1
+ERROR:  column "statuz" of relation "applications" does not exist
+LINE 1: UPDATE app.applications SET statuz  = 'returned' WHERE case_...
+                                    ^
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+```
+
+★★★★★ **第三句沒有執行**，而且從此刻起這條連線裡的每一句都會回同一個錯，
+直到你下 `ROLLBACK`（或 `COMMIT`，但那也只會變成 rollback）。
+好處是**不會做半套**；壞處是互動操作時很煩。psql 給了解法：
+
+```text
+appdb=> \set ON_ERROR_ROLLBACK interactive
+```
+
+★★★ 開啟後 psql 會在每一句前偷偷下 `SAVEPOINT`，出錯就自動退回到那個 savepoint，
+交易本身不會死。`interactive` 表示**只在互動模式生效**，跑 `-f` 腳本時不生效 ——
+這正是我們要的：腳本要「一句錯就整批退回」，人要「打錯字不用重來」。
+
+### DDL 可以放進交易，這改變了改結構的做法 ★★★★
+
+```sql
+BEGIN;
+ALTER TABLE app.applications ADD COLUMN returned_reason text;
+CREATE INDEX CONCURRENTLY ...   -- ★★★★ 這一句是例外，不能在交易裡
+ROLLBACK;
+```
+
+在 MySQL，`ALTER TABLE` 一下去就回不來了（見 [[03-SQL基礎操作]] 的 DDL 段落）；
+在 PostgreSQL，除了 `CREATE INDEX CONCURRENTLY`、`VACUUM`、`CREATE DATABASE` 這幾個明確例外，
+**DDL 是交易安全的**。實務意義：正式機的結構變更可以先 `BEGIN` → 改 → 驗 → 不對就 `ROLLBACK`。
+
+> [!danger] ★★★★ 但交易開著的期間，`ALTER TABLE` 握著 ACCESS EXCLUSIVE 鎖
+> 你在那裡慢慢驗證的每一秒，**所有讀寫這張表的查詢都在排隊**，前台就是白畫面。
+> 「可以 rollback」不等於「可以慢慢來」。驗證動作要事先寫成一句 SQL，貼上去按 Enter 就好。
+
+### Debian/Ubuntu 的 psql 其實是包裝過的 ★★★
+
+Ubuntu 的 `psql` 來自 `postgresql-client-common`，是一支叫 `pg_wrapper` 的轉接器，
+它會依 `PGCLUSTER`、`--cluster`、`-p` 連接埠、`~/.postgresqlrc`、`/etc/postgresql-common/user_clusters`
+決定要呼叫哪個版本的真正執行檔。同機裝了兩個大版本時這件事會咬人：
+
+```bash
+pg_lsclusters
+```
+
+預期輸出：
+
+```text
+Ver Cluster Port Status Owner    Data directory              Log file
+16  main    5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log
+17  upgrade 5433 online postgres /var/lib/postgresql/17/main /var/log/postgresql/postgresql-17-main.log
+```
+
+★★★★ 兩個叢集同時在跑時，`psql` 預設連哪一個**不是你以為的那個**。升級期間要明確指定：
+
+```bash
+psql --cluster 17/upgrade -l        # 或 PGCLUSTER=17/upgrade psql -l
+```
+
+---
 
 ## 基礎操作
 
-<!-- TODO: 待撰寫 — 每個指令附「輸入 → 預期輸出」 -->
+### 連線：三個不要
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U ops_ro -d appdb
+```
+
+預期輸出：
+
+```text
+Password for user ops_ro:                          # ★★★ 密碼在這裡輸入，不寫在指令列
+psql (16.4 (Ubuntu 16.4-0ubuntu0.24.04.2))
+SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)
+Type "help" for help.
+
+appdb=>                                            # ★★★ 結尾是 > 表示非超級使用者
+```
+
+| ★ | 不要這樣做 | 為什麼 |
+| --- | --- | --- |
+| ★★★★★ | `PGPASSWORD='P@ssw0rd' psql …` 寫在指令列 | 密碼留在 `~/.bash_history`；同機的 root 還能從 `/proc/<pid>/environ` 讀到。官方文件明確**不建議**使用 |
+| ★★★★★ | `psql "postgresql://app:P@ssw0rd@10.1.2.20/appdb"` | 密碼直接出現在 `ps aux`，**同機任何使用者都看得到** |
+| ★★★★ | 日常用 `postgres` 超級使用者連 | 查資料用唯讀角色就夠。`postgres` 能繞過所有 RLS 與權限，出事時稽核軌跡分不出是誰 |
+| ★★★ | 有時 `psql -U app` 有時 `psql -h 127.0.0.1 -U app` | 兩者比到 `pg_hba.conf` 的不同列、用不同認證方式，會出現「昨天可以今天不行」 |
+
+驗證密碼真的沒有外洩到行程清單：
+
+```bash
+ps -eo args | grep -c '[p]ostgresql://[^ ]*:[^@]*@'
+```
+
+預期輸出：
+
+```text
+0                                                  # ★★★★ 一定要是 0
+```
+
+### 三種連線寫法，正式環境只推薦第三種
+
+**（1）旗標式**
+
+```bash
+psql -h 10.1.2.20 -p 5432 -U ops_ro -d appdb
+```
+
+**（2）連線 URI**
+
+```bash
+psql "postgresql://ops_ro@10.1.2.20:5432/appdb?sslmode=verify-full&sslrootcert=/etc/ssl/certs/gov-ca.pem"
+```
+
+★★★ URI 適合寫在文件裡給人照抄，**但絕對不要把密碼寫進去**（見上表第二列）。
+
+**（3）★★★★ service 名稱 —— 正式環境的正解**
+
+把每一台資料庫的連線參數寫成一個名字，指令列只出現名字：
+
+```ini
+# ═══════════ ~/.pg_service.conf（權限 600）═══════════
+[prod-app]
+host=10.1.2.20
+port=5432
+dbname=appdb
+user=ops_ro
+sslmode=verify-full
+sslrootcert=/etc/ssl/certs/gov-ca.pem
+# ★★★ 連線後自動設定，避免忘記加 schema
+options=-c search_path=app,public
+
+[prod-app-rw]
+host=10.1.2.20
+port=5432
+dbname=appdb
+user=ops_rw
+sslmode=verify-full
+sslrootcert=/etc/ssl/certs/gov-ca.pem
+
+[staging]
+host=10.1.9.20
+port=5432
+dbname=appdb
+user=ops_rw
+sslmode=require
+```
+
+```bash
+chmod 600 ~/.pg_service.conf
+psql service=prod-app
+```
+
+預期輸出：
+
+```text
+psql (16.4 (Ubuntu 16.4-0ubuntu0.24.04.2))
+SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)
+Type "help" for help.
+
+appdb=>
+```
+
+★★★★ 好處有三個，全都是維運價值：
+
+1. 連線參數集中一處，**改一次全部腳本跟著改**（例如資料庫搬家換 IP）
+2. `sslrootcert` 這種一定會被漏掉的參數，寫一次就不會忘
+3. 腳本裡只出現 `service=prod-app`，**看程式碼的人不會知道 IP 與帳號**
+
+全機共用的 service 檔放在 `PGSYSCONFDIR`，用這個指令確認它在哪：
+
+```bash
+pg_config --sysconfdir
+```
+
+預期輸出（Ubuntu／Debian）：
+
+```text
+/etc/postgresql-common
+```
+
+即 `/etc/postgresql-common/pg_service.conf`。★★ 找不到 `pg_config` 時裝 `libpq-dev` 或 `postgresql-server-dev-16`。
+
+### `~/.pgpass`：密碼唯一該待的地方 ★★★★
+
+```bash
+cat > ~/.pgpass <<'EOF'
+# hostname:port:database:username:password    ★ 五欄，* 表示任意
+10.1.2.20:5432:appdb:ops_ro:R3ad0nly-Pa55
+10.1.2.20:5432:appdb:ops_rw:Wr1te-Pa55
+10.1.9.20:5432:*:ops_rw:staging-pass
+EOF
+chmod 600 ~/.pgpass
+```
+
+驗證：
+
+```bash
+ls -l ~/.pgpass
+```
+
+預期輸出：
+
+```text
+-rw------- 1 ops ops 168 Aug 28 14:02 /home/ops/.pgpass    # ★★★★ 一定要是 -rw-------
+```
+
+權限沒改好的話 psql 會**直接忽略整個檔案**並警告，然後你會以為是密碼錯：
+
+```text
+WARNING: password file "/home/ops/.pgpass" has group or world access; permissions should be u=rw (0600) or less
+psql: error: connection to server at "10.1.2.20", port 5432 failed: fe_sendauth: no password supplied
+```
+
+| ★ | 細節 | 說明 |
+| --- | --- | --- |
+| ★★★★ | 權限必須 `0600` | 否則整檔被忽略，錯誤訊息卻是「沒有提供密碼」，方向會抓錯 |
+| ★★★ | `hostname` 欄要跟你**指令列打的字**一致 | 打 `-h db-prod` 就不會比對到寫 `10.1.2.20` 的那列 |
+| ★★★ | 密碼裡的 `:` 與 `\` 要用 `\` 跳脫 | 否則欄位被切錯 |
+| ★★ | 換路徑用 `PGPASSFILE` | 給服務帳號用時很方便，例如 `PGPASSFILE=/etc/app/pgpass` |
+| ★★★★ | ★ 用 service 檔時**不要**在裡面寫密碼 | 密碼一律留在 `.pgpass`，兩個檔各司其職 |
+
+### `\conninfo`：確認你到底連到誰 ★★★★
+
+改資料之前先按這一個指令，比什麼都值得：
+
+```text
+appdb=> \conninfo
+```
+
+預期輸出：
+
+```text
+You are connected to database "appdb" as user "ops_rw" on host "10.1.2.20" (address "10.1.2.20") at port "5432".
+SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)
+```
+
+三個要看的地方：**資料庫名**、**使用者**、**主機**。少了 `SSL connection` 那一行代表這條連線是明文的
+（處理個資的系統，這是稽核缺失，見 [[08-PostgreSQL-安全強化]]）。
+
+### `~/.psqlrc`：把提示字元改成「不會下錯機器」的樣子 ★★★★
+
+正式機最常見的事故不是指令寫錯，是**在正式機的視窗下了測試機的指令**。
+
+```text
+-- ═══════════ ~/.psqlrc（權限 600）═══════════
+-- ★★★ 開頭關掉回音，否則每一行設定都會印一次 "Timing is on." 之類的訊息
+\set QUIET 1
+
+\timing on
+\x auto
+\pset null '[NULL]'
+\pset linestyle unicode
+\pset border 2
+
+-- ★★★★ 互動時打錯字不會炸掉整個交易（腳本模式不生效，正是我們要的）
+\set ON_ERROR_ROLLBACK interactive
+
+-- ★★★ 錯誤訊息帶 SQLSTATE 與約束名稱，排錯時省一半時間
+\set VERBOSITY verbose
+
+-- ★★★ 每個資料庫各自一份歷史，不會在 appdb 誤按上鍵叫出 configdb 的 DELETE
+\set HISTFILE ~/.psql_history-:DBNAME
+
+-- ★★★★ 開頭加一個空白的指令不會進歷史（要打含密碼的指令時用）
+\set HISTCONTROL ignorespace
+
+\set COMP_KEYWORD_CASE upper
+
+-- ★★★★ 提示字元：使用者@主機:埠 資料庫 交易狀態
+\set PROMPT1 '%[%033[1;31m%]%n@%m:%>%[%033[0m%] %/%R%x%# '
+\set PROMPT2 '  ...%R%x> '
+
+\unset QUIET
+```
+
+```bash
+chmod 600 ~/.psqlrc
+```
+
+連線後的提示字元（主機名與埠是紅色的）：
+
+```text
+ops_rw@db-prod-01:5432 appdb=>
+```
+
+開了交易之後會多一個 `*`：
+
+```text
+ops_rw@db-prod-01:5432 appdb=*>       # ★★★★ 有 * 表示交易還開著，還沒 COMMIT
+ops_rw@db-prod-01:5432 appdb=!>       # ★★★★★ 有 ! 表示交易已經爆掉，後面全部無效
+```
+
+常用的提示字元替換碼：
+
+| 代碼 | 意義 | ★ |
+| --- | --- | --- |
+| `%M` | 完整主機名（走 socket 時顯示 `[local]`） | ★★★ |
+| `%m` | 主機名取到第一個點為止 | ★★★★ 正式機一定要有 |
+| `%>` | 連接埠 | ★★★ 多叢集時分辨 5432/5433 |
+| `%n` | 連線使用者 | ★★★ |
+| `%/` | 目前資料庫 | ★★★★ |
+| `%#` | 超級使用者顯示 `#`，其他顯示 `>` | ★★★★ 看到 `#` 就該問自己為什麼用超管 |
+| `%R` | 狀態：`=` 正常 / `^` 單行模式 / `!` 連線已斷 | ★★★ |
+| `%x` | 交易狀態：空 / `*` 交易中 / `!` 交易已失敗 | ★★★★★ |
+| `%p` | 後端行程 PID | ★★ 要跨視窗 `pg_terminate_backend` 時很方便 |
+| `%[ %]` | 包住不可見字元（顏色碼），不包會讓游標位置算錯 | ★★★ |
+
+> [!danger] ★★★★ 這一行是最便宜的保險
+> 有人在測試機視窗下 `DELETE FROM app.applications;`，沒事；
+> 同一句貼到**沒有顏色標記的正式機視窗**，就是資安事件。
+> **提示字元帶主機名的成本是 30 秒，事故的成本是幾天的 PITR 還原作業。**
+
+> [!warning] ★★★★ 腳本一律加 `-X`
+> `~/.psqlrc` 裡的 `\timing on`、`\x auto`、`\pset border 2` 會讓**腳本的輸出格式整個跑掉**，
+> 解析輸出的 shell script 會拿到多出來的 `Time: 3.412 ms` 行。
+> 所有非互動用途的 psql 都要加 `-X`（`--no-psqlrc`）。這一點下面「腳本模式」還會再講一次。
+
+### 物件盤點：接手一台不熟的資料庫，五分鐘搞清楚裡面有什麼
+
+**（1）`\l` 有哪些資料庫**
+
+```text
+appdb=> \l
+```
+
+預期輸出（欄位隨版本略有增減，PG 15 起多了 Locale Provider / ICU 欄）：
+
+```text
+                          List of databases
+   Name    |  Owner   | Encoding |   Collate   |    Ctype    | Access privileges
+-----------+----------+----------+-------------+-------------+-------------------
+ appdb     | appowner | UTF8     | zh_TW.UTF-8 | zh_TW.UTF-8 |
+ postgres  | postgres | UTF8     | zh_TW.UTF-8 | zh_TW.UTF-8 |
+ template0 | postgres | UTF8     | zh_TW.UTF-8 | zh_TW.UTF-8 | =c/postgres          +
+           |          |          |             |             | postgres=CTc/postgres
+(4 rows)
+```
+
+★★★ `\l+` 會多出**每個資料庫的大小**，做容量規劃時用這個：
+
+```text
+appdb=> \l+
+```
+
+```text
+   Name    |  Owner   | ... |  Size   | Tablespace |    Description
+-----------+----------+-----+---------+------------+-------------------
+ appdb     | appowner | ... | 4218 MB | pg_default |
+```
+
+**（2）`\dn+` 有哪些 schema —— ★★★★ PostgreSQL 才有的一層**
+
+MySQL 的「database」約等於 PostgreSQL 的「schema」，這是兩套系統最容易對錯的概念。
+
+```text
+appdb=> \dn+
+```
+
+預期輸出：
+
+```text
+                                  List of schemas
+  Name  |       Owner       |           Access privileges           |      Description
+--------+-------------------+---------------------------------------+------------------------
+ app    | appowner          | appowner=UC/appowner                 +|
+        |                   | ops_ro=U/appowner                     |
+ public | pg_database_owner | pg_database_owner=UC/pg_database_owner+| standard public schema
+        |                   | =U/pg_database_owner                  |
+```
+
+★★★★ 注意 `public` 那一列只有 `=U/`（USAGE），**沒有 `C`（CREATE）**。
+PostgreSQL 15 起 `public` schema 不再預設讓所有人建表，這是安全性的重大改善；
+從 13/14 升上來的系統，應用會突然報 `permission denied for schema public`。
+處理方式在 [[02-PostgreSQL-角色與權限]]。
+
+**（3）`\dt` 有哪些表 —— ★★★ 它只看 `search_path`**
+
+```text
+appdb=> \dt
+```
+
+預期輸出：
+
+```text
+Did not find any relations.
+```
+
+★★★★ 看到這行**不要以為資料庫是空的**。`\dt` 只列 `search_path` 上的 schema，
+而應用的表通常在 `app` 這種自訂 schema 裡。三種查法：
+
+```text
+appdb=> \dt app.*
+appdb=> \dt *.*
+appdb=> SET search_path = app, public;
+```
+
+`\dt *.*` 的預期輸出：
+
+```text
+          List of relations
+ Schema |     Name     | Type  |  Owner
+--------+--------------+-------+----------
+ app    | applications | table | appowner
+ app    | attachments  | table | appowner
+ app    | audit_log    | table | appowner
+ app    | citizens     | table | appowner
+(4 rows)
+```
+
+`\dt+ app.*` 多出**大小**與 persistence，盤點容量時用它：
+
+```text
+ Schema |     Name     | Type  |  Owner   | Persistence | Access method |  Size   | Description
+--------+--------------+-------+----------+-------------+---------------+---------+-------------
+ app    | applications | table | appowner | permanent   | heap          | 1284 MB |
+ app    | audit_log    | table | appowner | permanent   | heap          | 2903 MB |
+```
+
+**（4）`\d+ 表名` 看結構 —— 最常用的一個指令**
+
+```text
+appdb=> \d app.applications
+```
+
+預期輸出：
+
+```text
+                                          Table "app.applications"
+     Column      |           Type           | Collation | Nullable |                 Default
+-----------------+--------------------------+-----------+----------+------------------------------------------
+ id              | bigint                   |           | not null | nextval('app.applications_id_seq'::regclass)
+ case_no         | character varying(20)    |           | not null |
+ citizen_id      | bigint                   |           | not null |
+ status          | character varying(16)    |           | not null | 'draft'::character varying
+ submitted_at    | timestamp with time zone |           |          |
+ updated_at      | timestamp with time zone |           | not null | now()
+Indexes:
+    "applications_pkey" PRIMARY KEY, btree (id)
+    "applications_case_no_key" UNIQUE CONSTRAINT, btree (case_no)
+    "idx_applications_status_submitted" btree (status, submitted_at)
+Check constraints:
+    "applications_status_check" CHECK (status::text = ANY (ARRAY['draft','submitted','returned','done']::text[]))
+Foreign-key constraints:
+    "applications_citizen_id_fkey" FOREIGN KEY (citizen_id) REFERENCES app.citizens(id)
+Referenced by:
+    TABLE "app.attachments" CONSTRAINT "attachments_application_id_fkey" FOREIGN KEY (application_id) REFERENCES app.applications(id)
+Triggers:
+    trg_applications_audit AFTER INSERT OR DELETE OR UPDATE ON app.applications FOR EACH ROW EXECUTE FUNCTION app.write_audit()
+```
+
+★★★★ `Referenced by` 與 `Triggers` 這兩段是 `DESC` 在 MySQL 給不了的，
+**刪資料前一定要看**：有 FK 指過來就刪不掉，有 trigger 就代表你的 `UPDATE` 會連帶寫別張表。
+
+**（5）`\du` 有哪些角色**
+
+```text
+appdb=> \du
+```
+
+預期輸出：
+
+```text
+                             List of roles
+ Role name |                         Attributes
+-----------+------------------------------------------------------------
+ appowner  |
+ ops_ro    |
+ ops_rw    |
+ postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS
+```
+
+★★★ PostgreSQL 16 起 `\du` 拿掉了 `Member of` 欄位，角色的成員關係改用 `\drg` 看：
+
+```text
+appdb=> \drg
+```
+
+```text
+            List of role grants
+ Role name | Member of | Options | Grantor
+-----------+-----------+---------+----------
+ ops_ro    | readonly  | INHERIT | postgres
+```
+
+**（6）`\dp` 誰能動哪張表 —— 稽核最常要的一份清單 ★★★★**
+
+```text
+appdb=> \dp app.applications
+```
+
+預期輸出：
+
+```text
+                                   Access privileges
+ Schema |     Name     | Type  |        Access privileges        | Column privileges | Policies
+--------+--------------+-------+---------------------------------+-------------------+----------
+ app    | applications | table | appowner=arwdDxt/appowner       +|                   |
+        |              |       | ops_ro=r/appowner               +|                   |
+        |              |       | ops_rw=arwd/appowner            |                   |
+```
+
+權限字母對照：`r` SELECT、`w` UPDATE、`a` INSERT、`d` DELETE、`D` TRUNCATE、
+`x` REFERENCES、`t` TRIGGER。★★★★ 看到某個帳號有 `D`（TRUNCATE）就要問為什麼。
+
+**（7）其他常用的盤點指令**
+
+```text
+appdb=> \dx                 -- 裝了哪些 extension
+appdb=> \di app.*           -- 索引
+appdb=> \ds app.*           -- sequence
+appdb=> \dv app.*           -- view
+appdb=> \df app.*           -- function
+appdb=> \dconfig work_mem   -- 伺服器設定值（PG 15+）
+```
+
+`\dx` 預期輸出：
+
+```text
+                       List of installed extensions
+    Name    | Version |   Schema   |             Description
+------------+---------+------------+--------------------------------------
+ pg_stat_statements | 1.10 | public | track planning and execution statistics
+ plpgsql    | 1.0     | pg_catalog | PL/pgSQL procedural language
+```
+
+★★★ `\dconfig` 是 PG 15 才有的。舊版用 `SHOW work_mem;` 或
+`SELECT name, setting FROM pg_settings WHERE name='work_mem';`。
+
+### 輸出格式：`\x`、`\pset` 與分頁器
+
+**`\x auto` —— 寬表自動轉直式**
+
+```text
+appdb=> \x auto
+Expanded display is used automatically.
+appdb=> SELECT * FROM app.applications WHERE case_no = 'A1140812001';
+```
+
+預期輸出：
+
+```text
+-[ RECORD 1 ]+---------------------------
+id           | 48213
+case_no      | A1140812001
+citizen_id   | 10294
+status       | submitted
+submitted_at | 2026-08-12 09:41:22.183+08
+updated_at   | 2026-08-12 09:41:22.183+08
+```
+
+★★★ 單句想要直式又不想改設定，句尾用 `\gx` 取代分號（相當於 MySQL 的 `\G`）：
+
+```sql
+SELECT * FROM app.applications WHERE id = 48213 \gx
+```
+
+**分頁器**
+
+```text
+appdb=> \pset pager on
+appdb=> \pset pager always     -- ★★ 連短結果也進分頁器
+appdb=> \pset pager off        -- ★★★ 要複製貼上、或輸出要導進檔案時關掉
+```
+
+搭配環境變數讓寬表**不折行**：
+
+```bash
+export PSQL_PAGER='less -SFX'
+```
+
+| 旗標 | 作用 | ★ |
+| --- | --- | --- |
+| `-S` | 不折行，寬表用左右鍵捲動 | ★★★ 最重要的一個 |
+| `-F` | 內容不到一頁就直接印出 | ★★ |
+| `-X` | 離開時不清畫面（結果留在 scrollback，要截圖給開發時用） | ★★★ |
+
+**`\timing`**
+
+```text
+appdb=> \timing on
+Timing is on.
+appdb=> SELECT count(*) FROM app.audit_log;
+```
+
+```text
+  count
+----------
+ 18429301
+(1 row)
+
+Time: 3241.882 ms (00:03.242)     # ★★★ 超過一秒的查詢就該進 EXPLAIN，見 06 篇
+```
+
+### 檔案進出：`\i`、`\o`、`\copy`、`\e`、`\!`
+
+```text
+appdb=> \i /opt/sql/monthly-report.sql      -- 執行 SQL 檔（絕對路徑）
+appdb=> \ir sub/detail.sql                  -- ★★★ 相對於「目前這個腳本所在目錄」
+appdb=> \o /tmp/out.txt                     -- 之後的查詢結果寫到檔案
+appdb=> \o                                  -- 恢復輸出到螢幕
+appdb=> \e                                  -- 用 $EDITOR 編輯目前的查詢緩衝區
+appdb=> \! ls -l /var/backups/pg            -- ★★★ 用「你的」OS 權限跑 shell
+appdb=> \! date
+```
+
+`\!` 的預期輸出：
+
+```text
+Thu Aug 28 14:07:31 CST 2026
+```
+
+★★★★ `\ir` 與 `\i` 的差別在正式部署時很關鍵：一整包 SQL 用 `\i` 互相引用時，
+相對路徑是相對於**你當下的工作目錄**，換個目錄跑就找不到檔；`\ir` 是相對於**引用它的那個檔**，
+所以整包搬到哪都能跑。
 
 > [!info]- Rocky / AlmaLinux（RHEL 系）對照
-> <!-- TODO: 待撰寫 — 套件名、路徑或行為差異 -->
+> ```bash
+> # 只要 client
+> sudo dnf install -y postgresql16
+> # 完整伺服器（PGDG 套件庫）
+> sudo dnf install -y postgresql16-server
+> sudo /usr/pgsql-16/bin/postgresql-16-setup initdb
+> sudo systemctl enable --now postgresql-16
+> ```
+>
+> ★★★★ 五個一定會咬人的差異：
+>
+> | 項目 | Ubuntu / Debian | Rocky / AlmaLinux（PGDG） |
+> | --- | --- | --- |
+> | ★★★★ 執行檔位置 | `/usr/bin/psql`（`pg_wrapper` 轉接） | `/usr/pgsql-16/bin/psql`，**預設不在 PATH** |
+> | ★★★★ 設定檔位置 | `/etc/postgresql/16/main/` | **在資料目錄裡**：`/var/lib/pgsql/16/data/postgresql.conf` |
+> | ★★★ 資料目錄 | `/var/lib/postgresql/16/main` | `/var/lib/pgsql/16/data` |
+> | ★★★ 叢集管理 | `pg_lsclusters` / `pg_ctlcluster` | **沒有這些指令**，直接用 `systemctl` 與 `PGDATA` |
+> | ★★★ 服務名稱 | `postgresql@16-main` | `postgresql-16` |
+>
+> 把 psql 放進 PATH：
+> ```bash
+> echo 'export PATH=/usr/pgsql-16/bin:$PATH' | sudo tee /etc/profile.d/pgsql16.sh
+> ```
+>
+> ★★★ socket 目錄不要用猜的，直接問伺服器：
+> ```bash
+> sudo -u postgres psql -Atc "SHOW unix_socket_directories;"
+> ```
+> 預期輸出：
+> ```text
+> /var/run/postgresql
+> ```
+>
+> ★★★★ SELinux 是額外變數：把資料目錄或 `log_directory` 換到非標準路徑時，
+> 一定要 `semanage fcontext -a -t postgresql_db_t "/data/pgsql(/.*)?"` 再 `restorecon -Rv`，
+> 否則服務起不來而且日誌只寫「Permission denied」。
+
+---
 
 ## 進階用法
 
-<!-- TODO: 待撰寫 — 組合技、參數深入、與其他工具串接 -->
+### 腳本模式三件套：`-X`、`ON_ERROR_STOP`、`--single-transaction` ★★★★★
+
+這是本篇對維運人員最有價值的一段。**PostgreSQL 的 `psql -f` 預設遇到錯誤會繼續往下跑**，
+而且最後**回傳 0**。
+
+先看錯誤示範：
+
+```bash
+cat > /tmp/bad.sql <<'EOF'
+CREATE TABLE app.t1 (id int);
+INSERT INTO app.t_not_exist VALUES (1);
+CREATE TABLE app.t2 (id int);
+EOF
+
+psql service=prod-app -f /tmp/bad.sql
+echo "exit=$?"
+```
+
+預期輸出：
+
+```text
+CREATE TABLE
+psql:/tmp/bad.sql:2: ERROR:  relation "app.t_not_exist" does not exist
+LINE 1: INSERT INTO app.t_not_exist VALUES (1);
+                    ^
+CREATE TABLE
+exit=0                                  # ★★★★★ 中間爆了，回傳值卻是 0
+```
+
+★★★★★ **CI/CD 與 cron 看的就是回傳值**。這一行 `exit=0` 的意思是：
+你的部署腳本會告訴你「資料庫遷移成功」，然後 `t1` 建好了、`t2` 建好了、中間那筆資料沒進去，
+**資料庫處在一個沒有人設計過的中間狀態**。這是 PostgreSQL 部署事故的第一大成因。
+
+正確寫法：
+
+```bash
+psql service=prod-app \
+     -X \
+     -v ON_ERROR_STOP=1 \
+     --single-transaction \
+     -f /tmp/bad.sql
+echo "exit=$?"
+```
+
+預期輸出：
+
+```text
+psql:/tmp/bad.sql:2: ERROR:  relation "app.t_not_exist" does not exist
+LINE 1: INSERT INTO app.t_not_exist VALUES (1);
+                    ^
+psql:/tmp/bad.sql:2: STATEMENT:  INSERT INTO app.t_not_exist VALUES (1);
+exit=3                                  # ★★★★ 3 = 腳本出錯且 ON_ERROR_STOP 生效
+```
+
+★★★★ 而且因為有 `--single-transaction`，**連 `t1` 都沒有建成**，資料庫回到執行前的樣子。
+
+三個旗標各自的角色：
+
+| 旗標 | 作用 | 沒加的後果 | ★ |
+| --- | --- | --- | --- |
+| `-X` / `--no-psqlrc` | 不讀 `~/.psqlrc` | 輸出多出 `Time:` 等行，解析輸出的腳本壞掉；別人的 psqlrc 可能設了 `AUTOCOMMIT off` | ★★★★ |
+| `-v ON_ERROR_STOP=1` | 出錯立刻停並回傳 3 | ★★★★★ 半套執行且回傳 0 | ★★★★★ |
+| `--single-transaction`（`-1`） | 整個檔案包成一個交易 | 停下來的時候前面的已經提交了，要人工收拾 | ★★★★ |
+
+psql 的回傳值一覽（寫監控腳本一定要背）：
+
+| 回傳值 | 意義 | ★ |
+| --- | --- | --- |
+| `0` | 正常結束 | ★★ |
+| `1` | psql 自己的致命錯誤（找不到檔案、記憶體不足） | ★★★ |
+| `2` | ★★★★ **連線失敗或連線中途斷掉** | ★★★★ |
+| `3` | 腳本執行出錯，且 `ON_ERROR_STOP` 有設 | ★★★★★ |
+
+> [!warning] ★★★★ `--single-transaction` 有兩個不能用的場合
+> 1. 檔案裡有 `CREATE INDEX CONCURRENTLY`、`VACUUM`、`CREATE DATABASE`
+>    這類**不能在交易區塊內執行**的指令 —— 會直接報錯。
+> 2. 檔案本身已經有 `BEGIN` / `COMMIT` —— 會變成巢狀，
+>    出現 `WARNING: there is already a transaction in progress`，
+>    而且中間那個 `COMMIT` 會提早把交易關掉，`--single-transaction` 的保護就破功了。
+>    ★★★★ 所以本篇實戰腳本會先 `grep` 檢查 SQL 檔裡有沒有 `COMMIT`。
+
+### psql 變數與三種引號 ★★★★
+
+```text
+appdb=> \set target_case 'A1140812001'
+appdb=> \echo :target_case
+A1140812001
+```
+
+三種代換方式**意義完全不同**，用錯就是 SQL injection：
+
+| 寫法 | 展開成 | 用在哪 | ★ |
+| --- | --- | --- | --- |
+| `:var` | 原文照貼，**不加引號** | 數字、識別字片段 | ★★ |
+| `:'var'` | 包成**字串常值**並正確跳脫單引號 | ★★★★ 所有來自外部的值 | ★★★★ |
+| `:"var"` | 包成**識別字**（雙引號） | 表名、欄名 | ★★★ |
+
+```bash
+psql service=prod-app -X -v ON_ERROR_STOP=1 \
+  -v case_no="A1140812001" \
+  -c "SELECT id, status FROM app.applications WHERE case_no = :'case_no';"
+```
+
+預期輸出：
+
+```text
+  id   |  status
+-------+-----------
+ 48213 | submitted
+(1 row)
+```
+
+> [!danger] ★★★★★ 用 `:var` 接外部輸入等於把 SQL 開放給對方寫
+> 如果上面寫成 `WHERE case_no = ':case_no'`（自己加引號），
+> 傳入 `A' OR '1'='1` 就會變成 `WHERE case_no = 'A' OR '1'='1'` —— **整張表都符合**。
+> 承辦人員從 Excel 貼過來的字串裡有一個單引號就會出事，不需要有人惡意攻擊。
+> **一律用 `:'var'`，讓 psql 自己處理跳脫。**
+
+### `\gset`、`\gexec`、`\gdesc`：讓 SQL 產生 SQL
+
+**`\gset` 把查詢結果存進變數**（結果必須剛好一列）：
+
+```sql
+SELECT count(*) AS affected FROM app.applications WHERE status = 'submitted'
+\gset
+\echo '待處理案件:' :affected
+```
+
+預期輸出：
+
+```text
+待處理案件: 37
+```
+
+★★★★ 這是實戰腳本能做到「影響列數超過門檻就自動 ROLLBACK」的關鍵。
+
+**`\gexec` 把查詢結果當成 SQL 執行** —— 批次授權、批次重建索引都靠它：
+
+```sql
+SELECT format('GRANT SELECT ON %I.%I TO ops_ro;', schemaname, tablename)
+FROM pg_tables WHERE schemaname = 'app' ORDER BY tablename
+\gexec
+```
+
+預期輸出：
+
+```text
+GRANT
+GRANT
+GRANT
+GRANT
+```
+
+★★★ 對這種指令**先不要加 `\gexec`**，先看它產出什麼：
+
+```text
+                        format
+------------------------------------------------------
+ GRANT SELECT ON app.applications TO ops_ro;
+ GRANT SELECT ON app.attachments TO ops_ro;
+ GRANT SELECT ON app.audit_log TO ops_ro;
+ GRANT SELECT ON app.citizens TO ops_ro;
+(4 rows)
+```
+
+看過確認沒問題，再按上鍵加 `\gexec`。★★★★ **`\gexec` 是最快的批次操作，也是最快的批次事故。**
+
+**`\gdesc` 只看欄位型別、不執行**：
+
+```sql
+SELECT case_no, count(*) FROM app.applications GROUP BY 1 \gdesc
+```
+
+預期輸出：
+
+```text
+ Column  |         Type
+---------+-----------------------
+ case_no | character varying(20)
+ count   | bigint
+```
+
+★★★ 寫程式對接欄位型別、或要確認一句大查詢的輸出結構卻不想真的跑它時很好用。
+
+### 給機器看的輸出：`-A -t --csv`
+
+```bash
+psql service=prod-app -X -A -t -c "SELECT count(*) FROM app.applications;"
+```
+
+預期輸出：
+
+```text
+48213
+```
+
+| 旗標 | 作用 | ★ |
+| --- | --- | --- |
+| `-A` | 不對齊（不畫表格框線） | ★★★★ |
+| `-t` | 不印欄位標題與 `(N rows)` 尾巴 | ★★★★ |
+| `-F '\|'` | 自訂欄位分隔字元 | ★★ |
+| `--csv` | 直接輸出標準 CSV（會處理逗號與引號跳脫） | ★★★★ 給人的報表用這個 |
+| `-P pager=off` | 關掉分頁器 | ★★★ 導進檔案時必加 |
+
+> [!danger] ★★★★ 監控腳本最常見的坑
+> `psql -c "SELECT count(*) …"` 不加 `-At` 時，輸出是**帶框線的表格**：
+> ```text
+>  count
+> -------
+>  48213
+> (1 row)
+> ```
+> 拿去跟門檻值比大小會得到 `[: 整數表達式預期` 之類的錯誤，
+> 而糟糕的腳本會把這個錯誤吞掉，變成**告警永遠不會觸發**。
+
+### `\copy` vs `COPY`：這兩個字差一個反斜線，檔案落在不同機器 ★★★★
+
+```text
+appdb=> \copy (SELECT case_no, status, submitted_at FROM app.applications WHERE status='submitted') TO '/tmp/pending.csv' WITH (FORMAT csv, HEADER)
+```
+
+預期輸出：
+
+```text
+COPY 37
+```
+
+同一件事寫成伺服器端的 `COPY`：
+
+```sql
+COPY (SELECT case_no, status FROM app.applications) TO '/tmp/pending.csv' WITH (FORMAT csv, HEADER);
+```
+
+預期輸出（用一般帳號執行）：
+
+```text
+ERROR:  must be superuser or have privileges of the pg_write_server_files role to COPY to a file
+HINT:  Anyone can COPY to stdout or from stdin. psql's \copy command also works for anyone.
+```
+
+| ★ | 項目 | `\copy`（psql 前端） | `COPY`（伺服器端） |
+| --- | --- | --- | --- |
+| ★★★★ | 檔案在哪台機器 | **你的機器** | **資料庫主機** |
+| ★★★★ | 需要什麼權限 | 你的 OS 權限 + 資料表權限 | `pg_read_server_files` / `pg_write_server_files` 或超級使用者 |
+| ★★★ | 能不能寫進 SQL 檔給別人跑 | 能，但只有 psql 認得 | 能，任何 client 都能 |
+| ★★★ | 大檔案效率 | 資料要過網路 | 直接寫本機碟，較快 |
+| ★★★★ | 稽核觀點 | 資料**離開了主機**，要納入個資流向紀錄 | 檔案留在主機上 |
+
+★★★★ 機關情境的判斷準則：**匯出個資給人，一律用 `\copy` 匯到跳板機**，
+不要在資料庫主機上留下一堆沒人管的 CSV —— 那些檔案不會被備份加密、不會被輪替，
+最後在某次搬機時整包被複製出去。
+
+### 中文 CSV 給 Excel：一定要補 BOM ★★★
+
+```bash
+{ printf '\xEF\xBB\xBF'
+  psql service=prod-app -X --csv -P pager=off \
+    -c "SELECT case_no AS 案號, status AS 狀態, submitted_at AS 送件時間 FROM app.applications WHERE status='submitted';"
+} > /tmp/pending-utf8bom.csv
+
+file /tmp/pending-utf8bom.csv
+```
+
+預期輸出：
+
+```text
+/tmp/pending-utf8bom.csv: Unicode text, UTF-8 (with BOM) text
+```
+
+★★★ 沒有 BOM，Excel 在繁體中文 Windows 上會用 Big5 解讀 UTF-8，中文全部變亂碼，
+然後承辦會說「你給的檔案壞掉了」。
+
+### 誰卡住了？`pg_stat_activity` 與兩個終結函式 ★★★★
+
+```sql
+SELECT pid,
+       usename,
+       application_name,
+       client_addr,
+       state,
+       now() - state_change AS 停在這狀態多久,
+       left(query, 50) AS 在做什麼
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+ORDER BY state_change;
+```
+
+預期輸出：
+
+```text
+  pid  | usename | application_name | client_addr | state               | 停在這狀態多久 | 在做什麼
+-------+---------+------------------+-------------+---------------------+----------------+---------------------------
+ 21847 | ops_rw  | psql             | 10.1.2.30   | idle in transaction | 00:41:22       | UPDATE app.applications S
+ 22103 | app     | Laravel          | 10.1.2.40   | active              | 00:00:47       | SELECT * FROM app.applica
+```
+
+★★★★★ `idle in transaction` 撐了 41 分鐘 = **有人開了交易忘了 `COMMIT`**。
+它握著列鎖，所有碰到那些列的查詢都在排隊，而且 autovacuum 清不掉舊版本，
+表會持續膨脹（見 [[06-PostgreSQL-效能調校與索引]]）。
+
+兩個處理函式，**差別很大**：
+
+```sql
+SELECT pg_cancel_backend(22103);       -- ★★★ 只取消「目前那句查詢」，連線還在，交易還在
+SELECT pg_terminate_backend(21847);    -- ★★★★ 砍掉整條連線，未提交的交易 rollback
+```
+
+預期輸出：
+
+```text
+ pg_cancel_backend
+-------------------
+ t
+```
+
+> [!tip] ★★★ 先 cancel 再 terminate
+> `pg_cancel_backend` 相當於幫對方按 `Ctrl+C`，對「跑太久的 SELECT」剛好。
+> 對 `idle in transaction` 沒用（它沒有正在跑的查詢），這時才用 `pg_terminate_backend`。
+> ★★★★ terminate 之前先看 `usename` 與 `client_addr` 確認你砍的不是複寫連線
+> （見 [[07-PostgreSQL-複寫與高可用]]）。
+
+★★ 在你自己的 psql 裡，按一次 `Ctrl+C` 就是對自己下 `pg_cancel_backend`：
+
+```text
+appdb=> SELECT pg_sleep(300);
+^CCancel request sent
+ERROR:  canceling statement due to user request
+```
+
+### `\watch`：把一句查詢變成監控畫面 ★★★
+
+```text
+appdb=> SELECT state, count(*) FROM pg_stat_activity GROUP BY state ORDER BY 2 DESC;
+appdb=> \watch i=5 c=12
+```
+
+預期輸出：
+
+```text
+                Thu 28 Aug 2026 02:31:04 PM CST (every 5s)
+
+        state        | count
+---------------------+-------
+ idle                |    18
+ active              |     3
+ idle in transaction |     1
+```
+
+★★★ `i=`（interval，秒）與 `c=`（count，執行幾次）是 PostgreSQL 16 起才有的寫法。
+16 以前只能寫 `\watch 5`，而且沒有次數上限、只能 `Ctrl+C` 停。
+
+### 錯誤訊息不夠用時：`\errverbose` 與 `VERBOSITY`
+
+```text
+appdb=> INSERT INTO app.applications (case_no, citizen_id) VALUES ('A1140812001', 10294);
+ERROR:  duplicate key value violates unique constraint "applications_case_no_key"
+DETAIL:  Key (case_no)=(A1140812001) already exists.
+appdb=> \errverbose
+```
+
+預期輸出：
+
+```text
+ERROR:  23505: duplicate key value violates unique constraint "applications_case_no_key"
+DETAIL:  Key (case_no)=(A1140812001) already exists.
+SCHEMA NAME:  app
+TABLE NAME:  applications
+CONSTRAINT NAME:  applications_case_no_key
+LOCATION:  _bt_check_unique, nbtinsert.c:664
+```
+
+★★★★ `23505` 這種 SQLSTATE 才是**應用程式該判斷的東西**（訊息文字會隨語系與版本變）。
+開發回報「偶爾會失敗」時，請他們把 SQLSTATE 給你，不要只給中文錯誤字串。
+
+---
 
 ## 完整實戰範例
 
-<!-- TODO: 待撰寫 — 一個可整段照做的情境 -->
+### 情境
+
+機關「線上申辦系統」（Ubuntu 24.04 + PostgreSQL 16 + Laravel + Nuxt，
+架構見 [[03-範例-Nuxt與PostgreSQL]]）。星期四下午你接到兩件事：
+
+1. **承辦回報**：8/12 系統異常那天，有一批申辦案件卡在 `submitted` 狀態退不回去，
+   要把 `submitted_at` 在 2026-08-12 當天、狀態仍為 `submitted` 的案件改成 `returned`。
+   承辦說「大概三十幾件」。
+2. **資安室要**：這個月的資料庫帳號權限盤點 CSV，9/5 前交。
+
+第 1 件事是本篇的重點：**在正式機改資料**。原則只有一條 ——
+**「大概三十幾件」不是驗收條件，「影響列數必須 ≤ 50，否則自動退回」才是。**
+
+### 【0】前置：把連線設定與備份目錄準備好
+
+```bash
+# ★★★ 只做一次
+install -d -m 0750 -o ops -g ops /var/backups/pg-apply
+install -d -m 0750 -o ops -g ops /var/log/pg-ops
+```
+
+確認 service 名稱連得上，且連的是**你以為的那台**：
+
+```bash
+psql service=prod-app-rw -X -At -c \
+  "SELECT current_database()||' @ '||coalesce(host(inet_server_addr()),'local')||' as '||current_user;"
+```
+
+預期輸出：
+
+```text
+appdb @ 10.1.2.20 as ops_rw
+```
+
+★★★★ 這一行對不上就**立刻停手**。所有事故的第一步都是「連錯機器」。
+
+### 【1】把變更寫成檔案，不要貼多行 SQL
+
+```bash
+cat > /opt/sql/2026-08-28-return-stuck-cases.sql <<'EOF'
+-- 案由：資訊室工單 #20260828-03，8/12 系統異常卡件退回
+-- 撰寫：ops / 覆核：系統管理師
+-- ★★★★ 這個檔案裡不准出現 BEGIN / COMMIT / ROLLBACK，交易由外層腳本控制
+
+UPDATE app.applications
+   SET status     = 'returned',
+       updated_at = now()
+ WHERE status = 'submitted'
+   AND submitted_at >= timestamptz '2026-08-12 00:00:00+08'
+   AND submitted_at <  timestamptz '2026-08-13 00:00:00+08';
+EOF
+```
+
+> [!danger] ★★★★ 為什麼一定要寫成檔案
+> 終端機貼上多行 SQL 時可能被截斷（tmux 緩衝區、SSH 斷續、換行處理），
+> 一句 `UPDATE … WHERE status='submitted' AND submitted_at >= …` 被截成
+> `UPDATE app.applications SET status='returned';` —— **整張表被改**。
+> 寫成檔案 + `-f` 沒有這個風險，而且**檔案本身就是稽核軌跡**（誰、什麼時候、改了什麼）。
+
+### 【2】核心腳本：`/usr/local/bin/pg-safe-apply.sh`
+
+```bash
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════
+# pg-safe-apply.sh — 在正式機安全套用一段 DML
+#   單一交易 + 影響列數門檻 + 超標自動 ROLLBACK + 事前表級備份
+# 用法：pg-safe-apply.sh <service> <變更.sql> <驗證用計數SQL> <門檻>
+# ═══════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+SERVICE="${1:?用法: $0 <service> <變更.sql> <計數SQL檔> <門檻列數>}"
+SQL_FILE="${2:?缺少變更 SQL 檔}"
+COUNT_SQL="${3:?缺少驗證用計數 SQL 檔}"
+MAX_ROWS="${4:-50}"
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+WORKDIR="/var/backups/pg-apply/${STAMP}"
+LOG="/var/log/pg-ops/apply-${STAMP}.log"
+
+# ★★★★ -X 不讀 psqlrc、ON_ERROR_STOP 一錯就停、pager 關掉才能導向檔案
+PSQL=(psql "service=${SERVICE}" -X -q -v ON_ERROR_STOP=1 -P pager=off)
+
+log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LOG"; }
+die()  { printf '[%s] ★ 失敗：%s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LOG" >&2; exit 1; }
+
+trap 'rc=$?; [[ $rc -ne 0 ]] && log "腳本以 exit=${rc} 結束，變更未提交（交易已回滾）"' EXIT
+
+# ── 【1】前置檢查 ────────────────────────────────────────────────
+preflight() {
+  log "=== 【1】前置檢查 ==="
+  [[ -r "$SQL_FILE"   ]] || die "讀不到變更檔 $SQL_FILE"
+  [[ -r "$COUNT_SQL"  ]] || die "讀不到計數檔 $COUNT_SQL"
+  [[ "$MAX_ROWS" =~ ^[0-9]+$ ]] || die "門檻必須是整數，收到：$MAX_ROWS"
+
+  # ★★★★ 變更檔裡不准自己控交易，否則 --single-transaction 的保護會破功
+  if grep -Eiq '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|END)[[:space:]]*;' "$SQL_FILE"; then
+    die "變更檔含 BEGIN/COMMIT/ROLLBACK，交易必須由本腳本控制"
+  fi
+  # ★★★★★ 這兩個字出現在正式機的變更檔幾乎都是災難
+  if grep -Eiq '\b(DROP[[:space:]]+(TABLE|DATABASE|SCHEMA)|TRUNCATE)\b' "$SQL_FILE"; then
+    die "變更檔含 DROP/TRUNCATE，請走變更管理流程另案處理"
+  fi
+  install -d -m 0750 "$WORKDIR"
+  log "變更檔 $SQL_FILE 檢查通過，門檻 ${MAX_ROWS} 列"
+}
+
+# ── 【2】確認連的是哪一台 ────────────────────────────────────────
+identify() {
+  log "=== 【2】確認連線目標 ==="
+  local who
+  who="$("${PSQL[@]}" -At -c \
+    "SELECT current_database()||' @ '||coalesce(host(inet_server_addr()),'local')||' as '||current_user;")" \
+    || die "連不上 service=${SERVICE}（psql 回傳 $?）"
+  log "目標：${who}"
+  "${PSQL[@]}" -At -c "SELECT version();" | tee -a "$LOG" >/dev/null
+}
+
+# ── 【3】事前備份：真正的回滾底牌 ────────────────────────────────
+backup_before() {
+  log "=== 【3】事前備份受影響的表 ==="
+  # ★★★★ 交易能回滾「還沒 COMMIT 的」；已經 COMMIT 的只能靠這份 dump 或 PITR
+  pg_dump "service=${SERVICE}" -Fc -t app.applications \
+          -f "${WORKDIR}/applications-before.dump" \
+    || die "pg_dump 失敗，沒有備份就不動手"
+  local sz
+  sz="$(stat -c %s "${WORKDIR}/applications-before.dump")"
+  [[ "$sz" -gt 1024 ]] || die "備份檔只有 ${sz} bytes，明顯不對"
+  log "備份完成：${WORKDIR}/applications-before.dump（${sz} bytes）"
+}
+
+# ── 【4】套用（單一交易，超標自動 ROLLBACK）──────────────────────
+apply() {
+  log "=== 【4】套用變更 ==="
+  local wrap="${WORKDIR}/wrapper.sql"
+  cat > "$wrap" <<WRAP
+\\set ON_ERROR_STOP on
+BEGIN;
+
+-- 事前計數
+\\ir ${COUNT_SQL}
+\\gset before_
+
+-- 套用變更
+\\ir ${SQL_FILE}
+
+-- 事後計數
+\\ir ${COUNT_SQL}
+\\gset after_
+
+-- ★★★★ ::text 轉字串，\\if 才吃得到 true/false
+SELECT (abs(:after_n - :before_n) > ${MAX_ROWS})::text AS too_many \\gset
+
+\\echo 'BEFORE_N=' :before_n
+\\echo 'AFTER_N=' :after_n
+
+\\if :too_many
+  \\echo 'APPLY_RESULT=ROLLBACK'
+  ROLLBACK;
+\\else
+  \\echo 'APPLY_RESULT=COMMIT'
+  COMMIT;
+\\endif
+WRAP
+
+  local out
+  out="$("${PSQL[@]}" -f "$wrap" 2>&1)" || {
+    printf '%s\n' "$out" | tee -a "$LOG"
+    die "套用過程出錯，交易已回滾（psql exit=$?）"
+  }
+  printf '%s\n' "$out" | tee -a "$LOG"
+
+  if grep -q '^APPLY_RESULT=ROLLBACK' <<<"$out"; then
+    die "影響列數超過門檻 ${MAX_ROWS}，已自動 ROLLBACK。請重新檢視 WHERE 條件"
+  fi
+  grep -q '^APPLY_RESULT=COMMIT' <<<"$out" || die "找不到結果標記，狀態不明，立刻人工確認"
+  log "變更已提交"
+}
+
+# ── 【5】提交後驗證 ──────────────────────────────────────────────
+verify() {
+  log "=== 【5】提交後驗證 ==="
+  local left
+  left="$("${PSQL[@]}" -At -f "$COUNT_SQL")"
+  log "驗證查詢回傳：${left}"
+  [[ "$left" == "0" ]] || die "驗證未通過：仍有 ${left} 筆符合原條件"
+  log "★ 驗證通過"
+}
+
+main() {
+  preflight
+  identify
+  backup_before
+  apply
+  verify
+  log "=== 完成，工作目錄 ${WORKDIR} ==="
+}
+main "$@"
+```
+
+計數 SQL（**同一個檔案跑兩次**，事前事後各一次）：
+
+```bash
+cat > /opt/sql/2026-08-28-count.sql <<'EOF'
+SELECT count(*) AS n
+  FROM app.applications
+ WHERE status = 'submitted'
+   AND submitted_at >= timestamptz '2026-08-12 00:00:00+08'
+   AND submitted_at <  timestamptz '2026-08-13 00:00:00+08';
+EOF
+```
+
+### 【3】實際執行
+
+```bash
+sudo install -m 0750 -o ops -g ops /tmp/pg-safe-apply.sh /usr/local/bin/pg-safe-apply.sh
+
+pg-safe-apply.sh prod-app-rw \
+  /opt/sql/2026-08-28-return-stuck-cases.sql \
+  /opt/sql/2026-08-28-count.sql \
+  50
+```
+
+預期輸出（成功）：
+
+```text
+[14:41:02] === 【1】前置檢查 ===
+[14:41:02] 變更檔 /opt/sql/2026-08-28-return-stuck-cases.sql 檢查通過，門檻 50 列
+[14:41:02] === 【2】確認連線目標 ===
+[14:41:02] 目標：appdb @ 10.1.2.20 as ops_rw
+[14:41:03] === 【3】事前備份受影響的表 ===
+[14:41:19] 備份完成：/var/backups/pg-apply/20260828-144102/applications-before.dump（38214912 bytes）
+[14:41:19] === 【4】套用變更 ===
+BEGIN
+UPDATE 37
+BEFORE_N= 37
+AFTER_N= 0
+APPLY_RESULT=COMMIT
+COMMIT
+[14:41:20] 變更已提交
+[14:41:20] === 【5】提交後驗證 ===
+[14:41:20] 驗證查詢回傳：0
+[14:41:20] ★ 驗證通過
+[14:41:20] === 完成，工作目錄 /var/backups/pg-apply/20260828-144102 ===
+```
+
+★★★★ 如果承辦說的「三十幾件」其實是三千件（WHERE 條件寫錯、時區寫錯），輸出會是：
+
+```text
+[14:41:19] === 【4】套用變更 ===
+BEGIN
+UPDATE 3184
+BEFORE_N= 3184
+AFTER_N= 0
+APPLY_RESULT=ROLLBACK
+ROLLBACK
+[14:41:21] ★ 失敗：影響列數超過門檻 50，已自動 ROLLBACK。請重新檢視 WHERE 條件
+[14:41:21] 腳本以 exit=1 結束，變更未提交（交易已回滾）
+```
+
+★★★★★ **資料庫沒有任何改變。** 這就是把「大概三十幾件」變成可驗收條件的價值。
+
+### 【4】回滾：三層，由輕到重
+
+| 層級 | 情境 | 做法 | ★ |
+| --- | --- | --- | --- |
+| ★ 第一層 | 還沒 COMMIT | 腳本自動 `ROLLBACK`，什麼都不用做 | ★★ |
+| ★★★★ 第二層 | 已 COMMIT，才發現條件錯 | 用事前的 dump 還原到暫存表比對後修正（下方指令） | ★★★★ |
+| ★★★★★ 第三層 | 已 COMMIT，且應用又寫入了新資料 | ★★★★★ 只能走 PITR，見 [[05-PostgreSQL-備份與還原]] | ★★★★★ |
+
+第二層的實際做法 —— **不要直接把 dump 蓋回正式表**：
+
+```bash
+# ★★★★ 還原到另一個 schema，先比對再決定改哪幾列
+psql service=prod-app-rw -X -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS rollback_20260828;"
+
+pg_restore -d "service=prod-app-rw" \
+  --no-owner --no-privileges \
+  -t applications \
+  --schema-only /var/backups/pg-apply/20260828-144102/applications-before.dump
+```
+
+> [!danger] ★★★★★ 絕對不要用 `pg_restore -c`（`--clean`）救火
+> `--clean` 會先 `DROP TABLE` 再重建。從你按下 Enter 到還原完成的那幾分鐘，
+> **表是不存在的**，應用端會噴 `relation does not exist`，
+> 而且這段時間內應用寫入的所有新資料**永久消失**。
+> 正確順序永遠是：還原到別的 schema → 比對 → 只修需要修的列。
+
+### 【5】另一件事：稽核用的權限盤點 CSV
+
+```bash
+#!/usr/bin/env bash
+# /usr/local/bin/pg-audit-report.sh — 產出資安室要的權限盤點 CSV
+set -euo pipefail
+
+SERVICE="${1:-prod-app}"
+OUTDIR="${2:-/var/log/pg-ops}"
+STAMP="$(date +%Y%m%d)"
+OUT="${OUTDIR}/pg-權限盤點-${STAMP}.csv"
+
+PSQL=(psql "service=${SERVICE}" -X -q --csv -P pager=off -v ON_ERROR_STOP=1)
+
+# ★★★ 先寫 BOM，Excel 才不會把中文當 Big5
+printf '\xEF\xBB\xBF' > "$OUT"
+
+"${PSQL[@]}" >> "$OUT" <<'SQL'
+SELECT r.rolname            AS "角色",
+       r.rolsuper           AS "超級使用者",
+       r.rolcreaterole      AS "可建角色",
+       r.rolcreatedb        AS "可建資料庫",
+       r.rolreplication     AS "可複寫",
+       r.rolcanlogin        AS "可登入",
+       coalesce(to_char(r.rolvaliduntil,'YYYY-MM-DD'),'永不過期') AS "密碼到期日",
+       coalesce(string_agg(m.rolname, ' / ' ORDER BY m.rolname),'—') AS "隸屬群組"
+  FROM pg_roles r
+  LEFT JOIN pg_auth_members am ON am.member = r.oid
+  LEFT JOIN pg_roles m        ON m.oid = am.roleid
+ WHERE r.rolname NOT LIKE 'pg\_%'
+ GROUP BY r.rolname, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+          r.rolreplication, r.rolcanlogin, r.rolvaliduntil
+ ORDER BY r.rolsuper DESC, r.rolname;
+SQL
+
+chmod 640 "$OUT"
+lines="$(( $(wc -l < "$OUT") - 1 ))"
+[[ "$lines" -ge 1 ]] || { echo "★ 產出的 CSV 沒有資料列" >&2; exit 1; }
+echo "已產出 ${OUT}（${lines} 個角色）"
+```
+
+預期輸出：
+
+```text
+已產出 /var/log/pg-ops/pg-權限盤點-20260828.csv（6 個角色）
+```
+
+```bash
+head -3 /var/log/pg-ops/pg-權限盤點-20260828.csv
+```
+
+預期輸出：
+
+```text
+角色,超級使用者,可建角色,可建資料庫,可複寫,可登入,密碼到期日,隸屬群組
+postgres,t,t,t,t,t,永不過期,—
+appowner,f,f,f,f,t,2026-12-31,—
+```
+
+★★★ 排程化（`systemd timer` 與 cron 的選型見 [[02-systemd-timer與cron選型]]）：
+
+```bash
+sudo tee /etc/cron.d/pg-audit-report <<'EOF'
+# 每月 1 日 06:00 產出權限盤點
+0 6 1 * * ops /usr/local/bin/pg-audit-report.sh prod-app >> /var/log/pg-ops/audit-cron.log 2>&1
+EOF
+```
+
+★★★★ cron 環境沒有你 shell 的變數，`~/.pg_service.conf` 與 `~/.pgpass` 必須在
+**執行帳號（這裡是 `ops`）的家目錄**下，權限 600。cron 的陷阱另見 [[03-cron排程實務與陷阱]]。
+
+### 驗收檢查表
+
+| # | 檢查項 | 指令 | 預期結果 | ★ |
+| --- | --- | --- | --- | --- |
+| 1 | 連線指向正確主機 | `psql service=prod-app-rw -XAtc "SELECT inet_server_addr();"` | `10.1.2.20` | ★★★★ |
+| 2 | 連線有加密 | `psql service=prod-app -Xc '\conninfo'` | 有 `SSL connection` 那一行 | ★★★★ |
+| 3 | 密碼檔權限正確 | `stat -c '%a %n' ~/.pgpass ~/.pg_service.conf` | 兩個都是 `600` | ★★★★ |
+| 4 | 密碼沒進行程清單 | `ps -eo args \| grep -c '[p]ostgresql://[^ ]*:[^@]*@'` | `0` | ★★★★★ |
+| 5 | 事前備份存在且不是空的 | `ls -l /var/backups/pg-apply/*/applications-before.dump` | 大小 > 1 KB | ★★★★ |
+| 6 | 變更後沒有殘留 | `psql service=prod-app -XAt -f /opt/sql/2026-08-28-count.sql` | `0` | ★★★★ |
+| 7 | 沒有殘留的長交易 | `psql service=prod-app -XAtc "SELECT count(*) FROM pg_stat_activity WHERE state='idle in transaction' AND now()-state_change > interval '5 min';"` | `0` | ★★★★ |
+| 8 | 腳本回傳值正確 | `pg-safe-apply.sh …; echo $?` | 成功 `0`／超標 `1` | ★★★ |
+| 9 | CSV 有 BOM | `file /var/log/pg-ops/pg-權限盤點-*.csv` | `UTF-8 (with BOM)` | ★★★ |
+| 10 | 操作紀錄留存 | `ls -l /var/log/pg-ops/apply-*.log` | 有本次時間戳的檔 | ★★★★ |
+| 11 | 明文密碼沒進歷史 | `grep -ciE "password '" ~/.psql_history*` | `0` | ★★★★★ |
+
+---
 
 ## 常見錯誤與排錯
 
 | 現象 | 原因 | 解法 |
 | --- | --- | --- |
-|  |  |  |
+| ★★★★★ `psql -f migrate.sql` 印了一堆 `ERROR` 卻回傳 `0`，CI 顯示部署成功，資料半套 | psql 預設**不會**因為 SQL 錯誤而停止，也不影響回傳值 | 一律 `-X -v ON_ERROR_STOP=1 --single-transaction`。回傳 3 才是「腳本有錯」。見「腳本模式三件套」 |
+| ★★★★★ `ALTER ROLE app PASSWORD 'xxx';` 之後密碼出現在 `~/.psql_history` 與伺服器日誌 | psql 會記錄整句；`log_statement=ddl` 以上也會寫進 server log | 改用 `\password app`（psql 在**本地**算完雜湊才送出）。已外洩的要立刻改密碼並清 `.psql_history` |
+| ★★★★★ 交易 `COMMIT` 之後才發現 WHERE 條件錯，改了三千筆 | 沒有影響列數門檻、沒有事前備份 | 立刻停止應用寫入，走 [[05-PostgreSQL-備份與還原]] 的 PITR。事前防：本篇 `pg-safe-apply.sh` 的門檻機制 |
+| ★★★★ `connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: No such file or directory` | 服務沒起來，或叢集在別的埠／別的 socket 目錄 | `pg_lsclusters` 看狀態與埠；`systemctl status postgresql@16-main`；多叢集用 `--cluster 16/main` |
+| ★★★★ `FATAL: Peer authentication failed for user "app"` | 走 unix socket 比到 `local … peer` 那列，peer 比對的是**OS 使用者名稱**，不是密碼 | 加 `-h 127.0.0.1` 改走 TCP，或依 [[04-PostgreSQL-設定檔與pg_hba]] 調整該列 |
+| ★★★★ `FATAL: no pg_hba.conf entry for host "10.1.2.30", user "app", database "appdb", no encryption` | 來源 IP／使用者／資料庫**沒有任何一列 `host` 規則符合** | 補一列 `host appdb app 10.1.2.0/24 scram-sha-256`，然後 `reload`（不是 restart）。`no encryption` 表示對方沒用 SSL |
+| ★★★★ `ERROR: current transaction is aborted, commands ignored until end of transaction block` 之後怎麼打都是這句 | 交易裡有一句失敗了，整個交易進入 aborted 狀態 | 下 `ROLLBACK;`（或 `\q` 重連）。互動時設 `\set ON_ERROR_ROLLBACK interactive` 就不會再遇到 |
+| ★★★★ `COPY` 匯出成功但檔案「不見了」 | 用了伺服器端 `COPY`，檔案寫在**資料庫主機**上，不是你的機器 | 改用 `\copy`（有反斜線）。要匯個資給人一律用 `\copy` 匯到跳板機 |
+| ★★★★ `WARNING: password file has group or world access` 接著 `fe_sendauth: no password supplied` | `~/.pgpass` 權限不是 600，**整個檔案被忽略** | `chmod 600 ~/.pgpass`。★ 這個錯誤訊息會誤導你去查密碼對不對 |
+| ★★★★ 監控腳本永遠不告警，手動跑卻正常 | `psql -c` 沒加 `-At`，輸出帶表格框線，數值比較永遠失敗且錯誤被吞掉 | 加 `-A -t -P pager=off`；腳本開頭加 `set -euo pipefail` 讓錯誤浮出來 |
+| ★★★ `ERROR: relation "applications" does not exist` 但 `\dt *.*` 明明看得到 | 表在 `app` schema，而 `search_path` 只有 `"$user", public` | 寫全名 `app.applications`，或在 service 檔加 `options=-c search_path=app,public` |
+| ★★★ `\dt` 回 `Did not find any relations.`，以為資料庫是空的 | `\dt` 只列 `search_path` 上的 schema | 用 `\dt *.*` 或 `\dn` 先看有哪些 schema |
+| ★★★ 表名／欄名明明打對了還是 `does not exist` | 建表時用了雙引號（`CREATE TABLE "Applications"`），PostgreSQL **大小寫敏感** | 查詢時也要加雙引號 `"Applications"`。★★★ 長遠解法是全部改成小寫底線命名 |
+| ★★★ 匯出的 CSV 用 Excel 開，中文全變亂碼 | 沒有 UTF-8 BOM，Excel 用系統預設編碼（Big5）解讀 | 先 `printf '\xEF\xBB\xBF'` 再接 `--csv` 輸出 |
+| ★★★ 執行大查詢時 `psql` 整個吃光記憶體被 OOM killer 砍掉 | psql 預設把**整個結果集**先讀進前端記憶體才顯示 | 加 `--variable=FETCH_COUNT=1000` 分批取回，或改用 `\copy … TO` 直接落檔 |
+| ★★★ Ubuntu 上明明裝了 16，`psql --version` 卻顯示 17 | `pg_wrapper` 依 `~/.postgresqlrc`、`user_clusters`、埠號挑版本 | `pg_lsclusters` 確認；明確指定 `psql --cluster 16/main` 或 `PGCLUSTER=16/main` |
+| ★★★ 查詢結果被分頁器吃掉，`> file` 出來的檔案是空的或含控制字元 | 分頁器（`less`）攔截了輸出 | 加 `-P pager=off`，或在互動時 `\pset pager off` |
+| ★★★ `\i sub/detail.sql` 在 A 目錄能跑、在 B 目錄跑不動 | `\i` 的相對路徑是相對於**目前工作目錄** | 改用 `\ir`（相對於引用它的那個檔） |
+| ★★ `psql: warning: extra command-line argument "appdb" ignored` | 已經用 `-d appdb` 又在最後多打一次資料庫名 | 二選一：`psql -d appdb` 或 `psql appdb` |
+| ★★ `\du` 找不到 `Member of` 欄位 | PostgreSQL 16 起這一欄被移除 | 改用 `\drg` 查角色成員關係 |
+
+### 排查步驟
+
+情境：**應用回報「連不上資料庫」，你手上只有一台跳板機。**
+
+**【1】先看錯誤訊息屬於哪一類 —— 這一步決定後面走哪條路**
+
+```bash
+psql "service=prod-app" -X -c 'SELECT 1;'
+```
+
+三種可能，路徑完全不同：
+
+```text
+# 情況 A —— 連不到伺服器（TCP 層／服務層）
+psql: error: connection to server at "10.1.2.20", port 5432 failed: Connection refused
+        Is the server running on that host and accepting TCP/IP connections?
+→ 跳到【2】
+
+# 情況 B —— 連到了，但被 pg_hba 或密碼擋下（FATAL 開頭）
+psql: error: connection to server at "10.1.2.20", port 5432 failed: FATAL:  password authentication failed for user "ops_ro"
+→ 跳到【4】
+
+# 情況 C —— 連上了，但資料庫或角色不存在
+psql: error: connection to server at "10.1.2.20", port 5432 failed: FATAL:  database "appdb" does not exist
+→ 跳到【5】
+```
+
+★★★★ 判斷準則：**訊息裡有沒有 `FATAL:`**。有 `FATAL:` 代表**封包已經到伺服器、伺服器回話了**，
+問題在認證或授權；沒有 `FATAL:`（`Connection refused` / `No such file or directory` / `timeout`）
+代表根本沒接上，問題在服務、防火牆或監聽設定。
+
+**【2】伺服器有在跑嗎、在聽哪個埠**
+
+```bash
+pg_lsclusters
+```
+
+預期輸出（正常）：
+
+```text
+Ver Cluster Port Status Owner    Data directory              Log file
+16  main    5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log
+```
+
+- 看到 `down` → 服務沒起來，`systemctl status postgresql@16-main` 看原因，**問題在【3】**
+- 看到 `online` 但 `Port` 是 `5433` → 連錯埠，改 service 檔的 `port`
+- 看到兩個叢集都 online → ★★★★ 你很可能連到升級用的那個，用 `--cluster` 明確指定
+
+**【3】服務起不來，日誌在哪**
+
+```bash
+sudo tail -30 /var/log/postgresql/postgresql-16-main.log
+```
+
+常見兩種：
+
+```text
+FATAL:  could not create lock file "/var/run/postgresql/.s.PGSQL.5432.lock": Permission denied
+→ socket 目錄權限或 SELinux（RHEL）問題
+
+FATAL:  data directory "/var/lib/postgresql/16/main" has invalid permissions
+DETAIL:  Permissions should be u=rwx (0700) or u=rwx,g=rx (0750).
+→ 資料目錄權限被改壞，chmod 0700 並確認擁有者是 postgres
+```
+
+**【4】被擋下：讓伺服器告訴你比到 `pg_hba.conf` 哪一列 ★★★★**
+
+這是 PostgreSQL 排錯最有價值的一招 —— **不要用猜的，日誌會直接寫出行號**：
+
+```bash
+sudo tail -20 /var/log/postgresql/postgresql-16-main.log
+```
+
+預期輸出：
+
+```text
+2026-08-28 14:03:11.482 CST [21847] ops_ro@appdb FATAL:  password authentication failed for user "ops_ro"
+2026-08-28 14:03:11.482 CST [21847] ops_ro@appdb DETAIL:  Password does not match for user "ops_ro".
+        Connection matched pg_hba.conf line 96: "host    appdb    ops_ro    10.1.2.0/24    scram-sha-256"
+```
+
+★★★★ `Connection matched … line 96` 這一行告訴你：
+**認證方式是對的（比到了你以為的那列），純粹是密碼不對**。
+
+反過來，如果日誌寫的是：
+
+```text
+        Connection matched pg_hba.conf line 91: "host    all    all    10.1.2.0/24    md5"
+```
+
+代表比到了**上面一列更寬鬆的規則**（`pg_hba.conf` 由上而下，**第一個符合的就定案，不會再往下找**），
+你辛苦加在第 96 行的 `scram-sha-256` 根本沒被用到。完整規則見 [[04-PostgreSQL-設定檔與pg_hba]]。
+
+★★★ PostgreSQL 16 起這行訊息會連設定檔路徑一起印出來，格式略有不同，但行號一定有。
+
+**【5】角色與資料庫真的存在嗎**
+
+用一定連得上的本機 socket 路徑繞過去確認：
+
+```bash
+sudo -u postgres psql -Atc "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname='ops_ro';"
+sudo -u postgres psql -Atc "SELECT datname FROM pg_database WHERE datname='appdb';"
+```
+
+預期輸出：
+
+```text
+ops_ro|t
+appdb
+```
+
+- 第一句回空白 → 角色不存在（打錯字，或被誰刪了）
+- 第一句回 `ops_ro|f` → ★★★★ 角色存在但 **`NOLOGIN`**，這是「群組角色」不能直接登入
+- 第二句回空白 → 資料庫不存在，先確認你是不是連到了測試機
+
+**【6】密碼從哪裡來的**
+
+```bash
+PGPASSFILE=~/.pgpass psql "service=prod-app" -X -c 'SELECT 1;' 2>&1 | head -3
+stat -c '%a %n' ~/.pgpass
+```
+
+預期輸出：
+
+```text
+600 /home/ops/.pgpass
+```
+
+- 出現 `WARNING: password file … has group or world access` → 權限問題，整檔被忽略
+- 出現 `fe_sendauth: no password supplied` 但檔案權限正確 → ★★★ `.pgpass` 裡的
+  **hostname 欄跟你連線用的字串對不上**（例如檔案寫 `10.1.2.20`，service 檔寫 `db-prod.gov.tw`）
+
+**【7】是不是 SSL 的問題**
+
+```bash
+psql "service=prod-app" -X -c '\conninfo'
+```
+
+預期輸出：
+
+```text
+You are connected to database "appdb" as user "ops_ro" on host "10.1.2.20" ... at port "5432".
+SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)
+```
+
+錯誤時的兩種訊息：
+
+```text
+psql: error: connection to server at "10.1.2.20", port 5432 failed: server does not support SSL, but SSL was required
+→ 伺服器沒開 ssl=on，見 08-PostgreSQL-安全強化
+
+psql: error: connection to server at "10.1.2.20", port 5432 failed: SSL error: certificate verify failed
+→ sslmode=verify-full 但 sslrootcert 指的 CA 憑證不對，或憑證的 CN/SAN 跟連線用的主機名對不上
+```
+
+★★★★ `verify-full` 會同時檢查**憑證鏈**與**主機名**。用 IP 連線但憑證只簽了 DNS 名稱，
+這一步一定失敗 —— 這時要改用 DNS 名稱連，不是把 `sslmode` 降級成 `require`。
+
+---
 
 ## 安全性注意事項
 
-> [!warning] 注意
-> <!-- TODO: 待撰寫 -->
+> [!danger] ★★★★★ 絕對禁止：把密碼寫在指令列或環境變數裡
+> ```bash
+> psql "postgresql://app:P@ssw0rd@10.1.2.20/appdb"        # ✗ ps aux 全機可見
+> PGPASSWORD='P@ssw0rd' psql -h 10.1.2.20 -U app appdb    # ✗ /proc/<pid>/environ、bash_history
+> ```
+> **同一台機器上任何使用者執行 `ps -ef` 就拿到了你的資料庫密碼。**
+> 機關的跳板機通常有十幾個人共用，這等同把正式庫的帳密公告在佈告欄。
+> 正解只有一個：`~/.pgpass`（權限 600）+ `~/.pg_service.conf`。
+
+> [!danger] ★★★★★ 絕對禁止：用 `ALTER ROLE … PASSWORD '明文'` 改密碼
+> ```sql
+> ALTER ROLE app PASSWORD 'NewP@ss123';     -- ✗
+> ```
+> 這一句會留在**三個地方**：你的 `~/.psql_history`、伺服器的 `log_statement` 日誌
+> （很多機關為了稽核把它開到 `ddl` 或 `all`）、以及日誌集中系統（見 [[09-日誌集中與SIEM]]）。
+> 日誌通常保存半年以上而且**很多人有讀取權限**。
+> 正解：
+> ```text
+> appdb=> \password app
+> Enter new password for user "app":
+> Enter it again:
+> ```
+> `\password` 在**你的機器上**先算好 SCRAM 雜湊才送出，
+> 伺服器日誌與歷史檔裡都只會出現 `ALTER USER app PASSWORD 'SCRAM-SHA-256$4096:...'`。
+
+> [!danger] ★★★★★ 絕對禁止：在正式機用超級使用者做日常查詢
+> `postgres` 角色會**繞過所有 RLS 政策與物件權限**。
+> 用它查一次個資表，稽核軌跡上只會看到「postgres 查了 citizens」，
+> 追不出是哪一位人員、為了哪一張工單。
+> 個資法要求的「使用軌跡」在這裡直接斷掉（見 [[07-台灣資安法規與個資法]]）。
+> 每個人一個具名帳號、透過群組角色授權，見 [[02-PostgreSQL-角色與權限]]。
+
+> [!danger] ★★★★ 絕對禁止：把含個資的 `\copy` 結果留在共用目錄
+> ```text
+> appdb=> \copy (SELECT * FROM app.citizens) TO '/tmp/c.csv' CSV HEADER
+> COPY 284193
+> ```
+> `/tmp` 是 0777，**全機任何帳號都讀得到 28 萬筆身分證字號**，而且不會被備份加密、
+> 不會被輪替、下次重開機才消失（如果 `/tmp` 是 tmpfs 的話）。
+> 正解：
+> ```bash
+> install -d -m 0700 ~/exports
+> # \copy … TO '/home/ops/exports/c.csv'
+> gpg --encrypt --recipient 資安室 ~/exports/c.csv && shred -u ~/exports/c.csv
+> ```
+
+### 機關情境的具體要求
+
+| ★ | 要求 | psql 這一側的具體作法 |
+| --- | --- | --- |
+| ★★★★★ | 個資查詢要有**使用軌跡** | 禁用共用帳號；每人一個具名角色；`log_statement`／`pgaudit` 記錄；`application_name` 帶工單號：`options=-c application_name=TICKET-20260828-03` |
+| ★★★★ | 最小權限 | 日常用 `ops_ro`（只有 `SELECT`），要改資料才切 `ops_rw`；`\dp` 定期盤點，`D`（TRUNCATE）權限一律收回 |
+| ★★★★ | 傳輸加密 | service 檔一律 `sslmode=verify-full` + `sslrootcert`；`\conninfo` 沒有 SSL 那行就是缺失 |
+| ★★★★ | 變更留痕 | 所有正式機變更寫成 `.sql` 檔（含案由與覆核人）+ 腳本日誌，保留期比稽核週期長 |
+| ★★★ | 資料外流控管 | 匯出用 `\copy` 到受控目錄 → 加密 → `shred`；匯出筆數寫進交接紀錄 |
+| ★★★ | 密碼生命週期 | `ALTER ROLE app VALID UNTIL '2026-12-31';`，盤點 CSV 的「密碼到期日」欄就是給稽核看的 |
+| ★★★ | 歷史檔管理 | `\set HISTCONTROL ignorespace`；離職／交接時 `shred -u ~/.psql_history*` |
+
+---
 
 ## 速查表
 
-| 指令 / 參數 | 說明 | 範例 |
+### 連線與身分
+
+| 指令 | 說明 | ★ |
 | --- | --- | --- |
-|  |  |  |
+| `psql service=prod-app` | 用 service 檔連線（**正式環境唯一推薦**） | ★★★★ |
+| `psql -h 127.0.0.1 -U ops_ro -d appdb` | 明確走 TCP loopback | ★★★ |
+| `psql -U app`（不給 `-h`） | 走 unix socket，會比到 `pg_hba` 的 `local` 列 | ★★★★ |
+| `\conninfo` | **改資料前必按**：確認資料庫／使用者／主機／SSL | ★★★★ |
+| `\c otherdb` | 切換資料庫（會重新連線一次） | ★★★ |
+| `\password <role>` | 改密碼，雜湊在本地算，明文不進日誌 | ★★★★★ |
+| `\q` 或 `Ctrl+D` | 離開 | ★ |
+
+### 物件盤點
+
+| 指令 | 說明 | ★ |
+| --- | --- | --- |
+| `\l` / `\l+` | 資料庫清單／含大小 | ★★ |
+| `\dn+` | schema 清單與權限（`public` 的 `C` 權限要注意） | ★★★★ |
+| `\dt *.*` | **所有** schema 的表（`\dt` 只看 `search_path`） | ★★★★ |
+| `\dt+ app.*` | 含大小，容量盤點用 | ★★★ |
+| `\d+ app.applications` | 欄位、索引、FK、**Referenced by**、Triggers | ★★★★ |
+| `\du` / `\drg` | 角色清單／角色成員關係（PG 16 起分家） | ★★★ |
+| `\dp app.t` / `\z app.t` | 物件權限，稽核清單來源 | ★★★★ |
+| `\dx` | 已安裝的 extension | ★★ |
+| `\df app.*` / `\di` / `\ds` / `\dv` | function／索引／sequence／view | ★★ |
+| `\dconfig work_mem` | 伺服器設定值（PG 15+；舊版用 `SHOW`） | ★★ |
+
+### 腳本模式旗標（★★★★ 這張表最該背）
+
+| 旗標 | 作用 | ★ |
+| --- | --- | --- |
+| `-X` | 不讀 `~/.psqlrc` | ★★★★ |
+| `-v ON_ERROR_STOP=1` | 出錯立即停止並回傳 3 | ★★★★★ |
+| `--single-transaction` / `-1` | 整個檔案包成一個交易 | ★★★★ |
+| `-A -t` | 不對齊、不印標題與列數（給程式吃） | ★★★★ |
+| `--csv` | 標準 CSV 輸出（給人看的報表） | ★★★★ |
+| `-P pager=off` | 關掉分頁器 | ★★★ |
+| `-q` | 安靜模式，不印 `SELECT 1` 之類的訊息 | ★★ |
+| `-c "SQL"` | 執行一句就離開 | ★★★ |
+| `-f file.sql` | 執行檔案 | ★★★ |
+| `-v key=value` | 傳入 psql 變數，SQL 內用 `:'key'` 取用 | ★★★★ |
+| `--variable=FETCH_COUNT=1000` | 分批取回，避免大結果集吃爆記憶體 | ★★★ |
+
+### 輸出格式與互動
+
+| 指令 | 說明 | ★ |
+| --- | --- | --- |
+| `\x auto` | 寬表自動轉直式 | ★★★ |
+| `… \gx` | 單句直式輸出（等同 MySQL 的 `\G`） | ★★★ |
+| `\timing on` | 顯示每句耗時 | ★★★ |
+| `\pset pager off` | 要複製或導向檔案時關掉分頁 | ★★★ |
+| `\pset null '[NULL]'` | 讓 NULL 與空字串看得出差別 | ★★★★ |
+| `\watch i=5 c=12` | 每 5 秒重跑，共 12 次（PG 16+） | ★★★ |
+| `\errverbose` | 顯示 SQLSTATE 與約束名稱 | ★★★★ |
+| `\e` / `\i` / `\ir` / `\o` / `\!` | 編輯／執行檔／相對執行／輸出到檔／跑 shell | ★★★ |
+| `\gset` / `\gexec` / `\gdesc` | 存進變數／把結果當 SQL 跑／只看欄位型別 | ★★★★ |
+| `\?` / `\h ALTER TABLE` | 反斜線指令說明／SQL 語法說明 | ★★ |
+
+### 檔案與路徑
+
+| 路徑 | 用途 | ★ |
+| --- | --- | --- |
+| `~/.pgpass`（600） | **密碼唯一該待的地方** | ★★★★★ |
+| `~/.pg_service.conf`（600） | 連線設定命名，不含密碼 | ★★★★ |
+| `/etc/postgresql-common/pg_service.conf` | 全機共用 service（用 `pg_config --sysconfdir` 確認） | ★★★ |
+| `~/.psqlrc` | 互動設定（★★★★ 腳本一律 `-X` 略過） | ★★★★ |
+| `~/.psql_history` | 指令歷史，★★★★ 可能含密碼，交接時要 `shred` | ★★★★ |
+| `/var/run/postgresql/.s.PGSQL.5432` | unix socket（Ubuntu 主線） | ★★★ |
+| `/etc/postgresql/16/main/` | 設定檔（Ubuntu；RHEL 在資料目錄裡） | ★★★★ |
+| `/var/log/postgresql/postgresql-16-main.log` | ★★★★ 排認證問題就看這個 | ★★★★ |
+
+### 錯誤訊息 → 先查哪裡
+
+| 訊息片段 | 問題在 | 先做什麼 | ★ |
+| --- | --- | --- | --- |
+| `Connection refused` | 服務／埠／防火牆 | `pg_lsclusters`、`ss -lntp \| grep 5432` | ★★★★ |
+| `No such file or directory`（socket） | 服務沒起來或 socket 路徑不同 | `systemctl status postgresql@16-main` | ★★★★ |
+| `FATAL: Peer authentication failed` | `pg_hba` 的 `local … peer` | 改走 `-h 127.0.0.1`，或調 `pg_hba` | ★★★★ |
+| `FATAL: no pg_hba.conf entry` | 沒有任何規則符合來源 | 看伺服器日誌的 `Connection matched … line N` | ★★★★ |
+| `FATAL: password authentication failed` | 密碼或 `.pgpass` | `stat -c %a ~/.pgpass` 必須是 600 | ★★★★ |
+| `current transaction is aborted` | 交易裡有一句失敗 | `ROLLBACK;` | ★★★★ |
+| `relation … does not exist` | `search_path` 或大小寫 | `\dt *.*` 確認 schema | ★★★ |
+| `must be superuser … to COPY` | 用了伺服器端 `COPY` | 改用 `\copy` | ★★★★ |
+| `server does not support SSL` | 伺服器 `ssl` 沒開 | 見 [[08-PostgreSQL-安全強化]] | ★★★★ |
+
+### 危險程度分級
+
+| ★ | 動作 | 前置條件 |
+| --- | --- | --- |
+| ★ | `\dt` `\d+` `\du` `\dp` `SELECT` | 用 `ops_ro` 就好 |
+| ★★★ | `\copy … TO`（含個資） | 受控目錄 + 事後加密刪除 + 記錄筆數 |
+| ★★★★ | `UPDATE` / `DELETE` | 檔案化 + `--single-transaction` + 影響列數門檻 + 事前 `pg_dump` |
+| ★★★★ | `\gexec` | **先不加 `\gexec` 看產出什麼** |
+| ★★★★★ | `ALTER TABLE` / `DROP` / `TRUNCATE` | 變更管理流程 + 維護時段 + 完整備份 + 回滾腳本 |
+| ★★★★★ | `pg_terminate_backend` | 先確認 `usename`／`client_addr` 不是複寫連線 |
+
+---
 
 ## 練習題
 
-> [!question]- 練習 1
-> <!-- TODO: 待撰寫 -->
+> [!question]- 練習 1：把一台陌生資料庫盤點出來（★★★）
+> 你剛接手一台前同事留下的 PostgreSQL，只知道 `sudo` 密碼。
+> 請在**不修改任何資料**的前提下，產出一份包含以下項目的清單：
+> 有哪些資料庫、每個多大、`appdb` 裡有哪些 schema 與表、最大的三張表、有哪些角色可以登入。
+>
+> **參考解答**
+>
+> ```bash
+> sudo -u postgres psql -c '\l+'
+> ```
+> 找出目標資料庫後：
+> ```bash
+> sudo -u postgres psql -d appdb -c '\dn+'
+> sudo -u postgres psql -d appdb -c '\dt+ *.*'
+> ```
+> 最大的三張表用 SQL 比 `\dt+` 好排序：
+> ```bash
+> sudo -u postgres psql -d appdb -X -c "
+> SELECT schemaname||'.'||relname AS 表,
+>        pg_size_pretty(pg_total_relation_size(relid)) AS 含索引大小
+>   FROM pg_catalog.pg_statio_user_tables
+>  ORDER BY pg_total_relation_size(relid) DESC
+>  LIMIT 3;"
+> ```
+> 預期輸出：
+> ```text
+>        表        | 含索引大小
+> -----------------+------------
+>  app.audit_log   | 2903 MB
+>  app.applications| 1284 MB
+>  app.attachments | 402 MB
+> ```
+> 可登入的角色：
+> ```bash
+> sudo -u postgres psql -X -At -c \
+>   "SELECT rolname FROM pg_roles WHERE rolcanlogin AND rolname NOT LIKE 'pg\_%';"
+> ```
+> ★★★★ 兩個提醒：（1）`\dt` 不加 `*.*` 會漏掉自訂 schema，很容易誤判「資料庫是空的」；
+> （2）`sudo -u postgres` 是超級使用者，盤點完就換回具名唯讀帳號，不要一路用它辦公。
+
+> [!question]- 練習 2：讓一個會失敗的匯入「乾淨地失敗」（★★★★）
+> 準備一個含三句 SQL 的檔案，中間那句故意寫錯。先用 `psql -f` 直接跑，
+> 記錄回傳值與資料庫狀態；再加上三件套重跑一次，比較差異。
+>
+> **參考解答**
+>
+> ```bash
+> cat > /tmp/mig.sql <<'EOF'
+> CREATE TABLE app.t1 (id int);
+> INSERT INTO app.t_typo VALUES (1);
+> CREATE TABLE app.t2 (id int);
+> EOF
+>
+> psql service=staging -f /tmp/mig.sql; echo "exit=$?"
+> psql service=staging -X -At -c "SELECT count(*) FROM pg_tables WHERE schemaname='app' AND tablename IN ('t1','t2');"
+> ```
+> 預期輸出：
+> ```text
+> CREATE TABLE
+> psql:/tmp/mig.sql:2: ERROR:  relation "app.t_typo" does not exist
+> CREATE TABLE
+> exit=0
+> 2                                   # ★★★★★ 半套成功了，回傳值卻是 0
+> ```
+> 清掉重來，加上三件套：
+> ```bash
+> psql service=staging -X -c "DROP TABLE IF EXISTS app.t1, app.t2;"
+> psql service=staging -X -v ON_ERROR_STOP=1 --single-transaction -f /tmp/mig.sql; echo "exit=$?"
+> psql service=staging -X -At -c "SELECT count(*) FROM pg_tables WHERE schemaname='app' AND tablename IN ('t1','t2');"
+> ```
+> 預期輸出：
+> ```text
+> psql:/tmp/mig.sql:2: ERROR:  relation "app.t_typo" does not exist
+> exit=3
+> 0                                   # ★★★★ 什麼都沒建，資料庫回到原狀
+> ```
+> ★★★★ 結論：CI/CD 判斷部署成功與否靠的是回傳值，`exit=0` 加上半套的結構，
+> 就是「上線後才發現資料庫怪怪的」這類事故的標準劇本。
+
+> [!question]- 練習 3：把「改一批資料」變成可驗收的動作（★★★★★）
+> 在測試庫上，把 `app.applications` 裡 `status='draft'` 且 `updated_at` 超過 90 天的案件
+> 改成 `expired`。要求：影響列數超過 100 就自動退回、事前有備份、事後有驗證。
+>
+> **參考解答**
+>
+> 變更檔（不含 BEGIN/COMMIT）：
+> ```sql
+> -- /opt/sql/expire-old-drafts.sql
+> UPDATE app.applications
+>    SET status = 'expired', updated_at = now()
+>  WHERE status = 'draft'
+>    AND updated_at < now() - interval '90 days';
+> ```
+> 計數檔：
+> ```sql
+> -- /opt/sql/expire-old-drafts-count.sql
+> SELECT count(*) AS n FROM app.applications
+>  WHERE status = 'draft' AND updated_at < now() - interval '90 days';
+> ```
+> 執行：
+> ```bash
+> pg-safe-apply.sh staging \
+>   /opt/sql/expire-old-drafts.sql \
+>   /opt/sql/expire-old-drafts-count.sql \
+>   100
+> ```
+> 預期輸出（超標時）：
+> ```text
+> BEGIN
+> UPDATE 2841
+> BEFORE_N= 2841
+> AFTER_N= 0
+> APPLY_RESULT=ROLLBACK
+> ROLLBACK
+> [15:02:11] ★ 失敗：影響列數超過門檻 100，已自動 ROLLBACK。請重新檢視 WHERE 條件
+> ```
+> ★★★★★ 這時**正確的反應不是把門檻調到 3000**，而是回頭問：
+> 「這 2841 筆真的都該過期嗎？有沒有一批是資料遷移時 `updated_at` 沒帶進來的？」
+> 門檻的價值在於**逼你在提交前先解釋數字**。確認無誤後再明確地把門檻設成 3000 執行，
+> 這個「調整門檻」的動作本身就是稽核軌跡的一部分。
+
+---
 
 ## 小測驗
 
-<!-- 最多 10 題，針對關鍵細節與易錯觀念 -->
+Q1. **`psql -U app` 說 `Peer authentication failed`，但 `psql -h 127.0.0.1 -U app` 就連得上。
+    這兩條指令到底差在哪裡？**
 
-Q1. 
-Q2. 
-Q3. 
+Q2. **`psql -f migrate.sql` 印出了 `ERROR`，`echo $?` 卻是 `0`。
+    為什麼？在 CI/CD 裡這會造成什麼後果？**
+
+Q3. **`\copy` 與 `COPY` 差一個反斜線。請說出至少三個實際差異，
+    以及「匯出個資給資安室」時該用哪一個、為什麼。**
+
+Q4. **下面這句話錯在哪？請寫出正確做法。**
+    ```sql
+    ALTER ROLE app PASSWORD 'NewP@ss123';
+    ```
+
+Q5. **`\dt` 回 `Did not find any relations.`，但你確定這個資料庫有 200 張表。
+    請寫出兩個查法，並說明根因。**
+
+Q6. **提示字元變成 `appdb=!>`，此時你打任何查詢都回同一個錯誤。
+    發生了什麼事？該打哪一個指令？如何讓它以後不要再發生（互動時）？**
+
+Q7. **監控腳本 `psql -c "SELECT count(*) …"` 拿回來的值跟門檻比大小永遠不成立，
+    告警從來沒觸發過。先查哪裡？**
+
+Q8. **`pg_cancel_backend(pid)` 與 `pg_terminate_backend(pid)` 差在哪？
+    對一條 `idle in transaction` 撐了 40 分鐘的連線，該用哪一個？**
+
+Q9. **這一段 psql 腳本有一個嚴重的安全問題，指出來並改正：**
+    ```bash
+    CASE_NO="$1"
+    psql service=prod -X -v c="$CASE_NO" \
+      -c "SELECT * FROM app.applications WHERE case_no = ':c';"
+    ```
+
+Q10. **應用回報連不上資料庫。你看到的訊息是
+     `psql: error: connection to server at "10.1.2.20", port 5432 failed: FATAL: no pg_hba.conf entry for host "10.1.2.30", user "app", database "appdb", no encryption`。
+     請寫出接下來的三個動作，以及每一步要看什麼。**
 
 > [!question]- 測驗答案
-> **Q1.** 
-> **Q2.** 
-> **Q3.** 
+> **Q1.** 差在**走哪條路連線**，進而決定比對到 `pg_hba.conf` 的哪一列。
+> 不給 `-h` 時 psql 走 unix socket（`/var/run/postgresql/.s.PGSQL.5432`），
+> 只會比對 `local` 開頭的列；給 `-h 127.0.0.1` 走 TCP，只會比對 `host` 開頭的列。
+> 典型的 Ubuntu 預設檔長這樣：
+> ```text
+> local   all   all                  peer            ← psql -U app 比到這列
+> host    all   all   127.0.0.1/32   scram-sha-256   ← psql -h 127.0.0.1 比到這列
+> ```
+> ★★★★ `peer` 比對的是你的 **OS 使用者名稱**必須等於資料庫角色名稱 ——
+> 你用 `ops` 這個 OS 帳號想登入 `app` 角色，名字不合就 FATAL，
+> 跟密碼對不對完全無關（它根本沒問密碼）。
+> 這也是為什麼 `sudo -u postgres psql` 一定成功：OS 使用者剛好叫 `postgres`。
+> 詳見「一句話走到伺服器前，先經過三道判斷」與 [[04-PostgreSQL-設定檔與pg_hba]]。
+>
+> **Q2.** 因為 **psql 預設遇到 SQL 錯誤會繼續往下跑**，而且回傳值不受影響。
+> 這跟 `mysql` client 的行為相反，是從 MySQL 轉過來最容易踩的一個坑。
+> ```bash
+> psql -X -v ON_ERROR_STOP=1 --single-transaction -f migrate.sql; echo $?
+> # → 3
+> ```
+> ★★★★★ CI/CD 判斷成功與否**只看回傳值**，所以 pipeline 會顯示綠燈、
+> 部署流程繼續往下跑，但資料庫處在一個「前半段遷移做了、後半段沒做」的狀態 ——
+> **沒有任何人設計過這個狀態**，接下來的錯誤會出現在完全不相干的地方。
+> `--single-transaction` 讓失敗時連前半段都退回，資料庫維持在乾淨的舊狀態。
+> psql 回傳值：0 正常、1 psql 自己的錯、2 連線失敗、3 腳本出錯且有 `ON_ERROR_STOP`。
+> 見「腳本模式三件套」與練習 2。
+>
+> **Q3.** 三個差異：
+> ```text
+> \copy … TO '/tmp/x.csv'   → 檔案寫在「執行 psql 的那台機器」，用你的 OS 權限
+> COPY  … TO '/tmp/x.csv'   → 檔案寫在「資料庫主機」，需要 pg_write_server_files 或超管
+> ```
+> 1. **檔案落在不同機器**（最常造成「檔案不見了」的誤會）。
+> 2. **權限要求不同**：`\copy` 任何人都能用；`COPY … TO 檔案` 要特權角色，
+>    否則回 `ERROR: must be superuser or have privileges of the pg_write_server_files role`。
+> 3. **`\copy` 只有 psql 認得**，寫進 `.sql` 檔給其他 client 跑會失敗。
+>
+> ★★★★ 匯出個資給資安室**用 `\copy`**：資料落在受控的跳板機而不是資料庫主機。
+> 在資料庫主機的 `/tmp` 留下的個資 CSV 不會被加密、不會被輪替，
+> 而且下一次搬機或做映像檔時會整包被複製出去。見「`\copy` vs `COPY`」與安全性注意事項。
+>
+> **Q4.** 這一句會把**明文密碼**留在三個地方：
+> `~/.psql_history`、伺服器的 `log_statement` 日誌、以及日誌集中／SIEM 系統。
+> 機關為了稽核常把 `log_statement` 開到 `ddl` 或 `all`，日誌保存半年以上、多人可讀。
+> 正確做法：
+> ```text
+> appdb=> \password app
+> Enter new password for user "app":
+> Enter it again:
+> ```
+> ★★★★★ `\password` 是 **psql 前端**的指令：它在你的機器上算好 SCRAM-SHA-256 雜湊，
+> 送出去的是 `ALTER USER app PASSWORD 'SCRAM-SHA-256$4096:...'`，
+> 日誌裡看到的只有雜湊值。
+> 如果已經用明文下過，要做三件事：立刻再改一次密碼、`shred -u ~/.psql_history*`、
+> 通知日誌管理者處理那段日誌。見安全性注意事項第二個 danger。
+>
+> **Q5.** 根因：`\dt` **只列出目前 `search_path` 上的 schema**，
+> 而預設 `search_path` 是 `"$user", public`，應用的表通常在 `app` 這種自訂 schema 裡。
+> 兩個查法：
+> ```text
+> appdb=> \dt *.*            -- 列出所有 schema 的表
+> appdb=> \dn                -- 先看有哪些 schema，再 \dt app.*
+> ```
+> ★★★★ 這是 PostgreSQL 與 MySQL 的觀念落差：MySQL 的「database」約等於
+> PostgreSQL 的「schema」，一個 PostgreSQL 資料庫裡可以有很多個 schema。
+> 長期解法是在 service 檔加 `options=-c search_path=app,public`，
+> 這樣連線一建立就有正確的 `search_path`，不用每次手動 `SET`。
+> 見「物件盤點」第（3）點。
+>
+> **Q6.** `!` 表示**交易已進入 aborted 狀態** —— 這條交易裡有一句 SQL 失敗了，
+> 從那一刻起同一交易內的所有指令都被忽略，只會回：
+> ```text
+> ERROR:  current transaction is aborted, commands ignored until end of transaction block
+> ```
+> 該打的指令：
+> ```sql
+> ROLLBACK;
+> ```
+> （下 `COMMIT` 也可以，但結果一樣是回滾，而且容易讓人誤以為東西存進去了。）
+> ★★★★ 讓它以後不要再煩人：
+> ```text
+> appdb=> \set ON_ERROR_ROLLBACK interactive
+> ```
+> psql 會在每句前偷偷下 `SAVEPOINT`，出錯就退回到那個點，交易本身活著。
+> `interactive` 表示只在互動模式生效 —— 腳本模式**故意不生效**，
+> 因為腳本要的正是「一句錯就整批退回」。寫進 `~/.psqlrc` 一勞永逸。
+> 見「交易中一句錯，後面全部作廢」。
+>
+> **Q7.** 先查 **psql 的輸出格式**，不是查 SQL 也不是查資料。
+> 沒加 `-A -t` 時 `psql -c` 的輸出是帶框線的表格：
+> ```text
+>  count
+> -------
+>  48213
+> (1 row)
+> ```
+> 拿這串字去做 `[ "$n" -gt 100 ]` 會得到 `integer expression expected`，
+> 而腳本如果沒有 `set -euo pipefail`，這個錯誤會被吞掉，**告警永遠不觸發**。
+> 正確寫法：
+> ```bash
+> n="$(psql service=prod -X -At -P pager=off -c "SELECT count(*) FROM app.applications;")"
+> [[ "$n" -gt 100 ]] && echo "告警"
+> ```
+> ★★★★ 這類「監控看起來有裝、其實從來沒響過」的問題，在稽核時是重大缺失，
+> 因為紀錄上你有監控機制，實際上沒有。定期用假資料驗證告警會不會響。
+> 見「給機器看的輸出」。
+>
+> **Q8.** `pg_cancel_backend(pid)` 相當於幫對方按 `Ctrl+C`：
+> **只取消目前正在執行的那一句查詢**，連線還在、交易還在、鎖也還在。
+> `pg_terminate_backend(pid)` 直接砍掉整條連線，未提交的交易會被 rollback，鎖才會釋放。
+> ```sql
+> SELECT pg_cancel_backend(22103);      -- 對「跑太久的 SELECT」用這個
+> SELECT pg_terminate_backend(21847);   -- 對 idle in transaction 用這個
+> ```
+> ★★★★ `idle in transaction` 的連線**沒有正在跑的查詢**，所以 cancel 對它完全無效，
+> 必須用 terminate。原則是「先 cancel，無效再 terminate」。
+> ★★★★ terminate 前務必先看 `usename` 與 `client_addr` ——
+> 砍到複寫連線會讓 standby 中斷（見 [[07-PostgreSQL-複寫與高可用]]）。
+> 見「誰卡住了？`pg_stat_activity` 與兩個終結函式」。
+>
+> **Q9.** 問題在 `':c'` —— 自己加了引號，psql 就**原文貼上**不做跳脫，等於 SQL injection。
+> 傳入 `A' OR '1'='1` 會展開成：
+> ```sql
+> SELECT * FROM app.applications WHERE case_no = 'A' OR '1'='1';
+> ```
+> **整張表都符合**。這不需要有人惡意攻擊 —— 承辦從 Excel 貼過來的字串裡有一個單引號就會出事。
+> 正確寫法是讓 psql 自己包引號：
+> ```bash
+> psql service=prod -X -v c="$CASE_NO" \
+>   -c "SELECT * FROM app.applications WHERE case_no = :'c';"
+> ```
+> ★★★★★ 三種代換記清楚：`:c` 原文貼上、`:'c'` 包成字串常值（會跳脫）、
+> `:"c"` 包成識別字（表名欄名用）。**所有來自外部的值一律用 `:'c'`。**
+> 如果這句是 `DELETE` 而不是 `SELECT`，後果是整張表被清空。
+> 見「psql 變數與三種引號」。
+>
+> **Q10.** 三個動作：
+> 【1】確認訊息類型 —— 有 `FATAL:` 代表**封包到得了伺服器、伺服器回話了**，
+> 問題不在網路或服務，在 `pg_hba.conf` 的授權。不必再去查防火牆。
+> 【2】看伺服器日誌，讓它告訴你比到哪一列（**不要用猜的**）：
+> ```bash
+> sudo tail -20 /var/log/postgresql/postgresql-16-main.log
+> ```
+> 沒有任何 `Connection matched` 就是真的沒有規則符合；
+> 有的話看它比到的行號是不是你以為的那一行。
+> 【3】補規則並 **reload（不是 restart）**：
+> ```text
+> host    appdb    app    10.1.2.0/24    scram-sha-256
+> ```
+> ```bash
+> sudo -u postgres psql -c "SELECT pg_reload_conf();"
+> ```
+> ★★★★ 兩個關鍵細節：（a）`pg_hba.conf` **由上而下、第一個符合的就定案**，
+> 新規則放在一條更寬鬆的 `host all all …` 下面等於沒加；
+> （b）訊息尾巴的 `no encryption` 表示對方**沒有用 SSL** ——
+> 如果你的規則寫的是 `hostssl`，那就永遠比不到。
+> 完整比對規則見 [[04-PostgreSQL-設定檔與pg_hba]]，排錯流程見本篇【4】。
+
+---
 
 ## 延伸閱讀
 
-- [[03-SQL基礎操作]]
-- [[05-PostgreSQL-備份與還原]]
+- [[01-PostgreSQL-安裝與初始化]] — 本篇所有指令的前提：叢集起得來、資料目錄與設定檔在哪
+- [[02-PostgreSQL-角色與權限]] — `ops_ro` / `ops_rw` 怎麼建、`public` schema 的預設權限風險、`ALTER DEFAULT PRIVILEGES`
+- [[04-PostgreSQL-設定檔與pg_hba]] — ★★★★ 本篇排查步驟【4】的完整版：比對順序、`peer`/`trust`/`scram-sha-256` 的差異、改完該 reload 還是 restart
+- [[05-PostgreSQL-備份與還原]] — ★★★★★ 本篇「敢按 Enter」的底氣來自這裡：`pg_dump` 選項、WAL 歸檔與 PITR 還原演練
+- [[06-PostgreSQL-效能調校與索引]] — `\timing` 顯示三秒之後該做什麼：`EXPLAIN ANALYZE`、索引種類與 autovacuum
+- [[07-PostgreSQL-複寫與高可用]] — `pg_terminate_backend` 之前要確認的複寫連線長什麼樣
+- [[08-PostgreSQL-安全強化]] — `sslmode=verify-full`、`scram-sha-256`、稽核設定與個資情境的完整要求
+- [[03-SQL基礎操作]] — SQL 語法本體（`JOIN`、`NULL` 三值邏輯、交易與鎖、`EXPLAIN` 判讀）在這一篇，本篇刻意不重複
+- [[03-範例-Nuxt與PostgreSQL]] — 應用端怎麼連、連線池與 `search_path` 要怎麼設
+- [[07-台灣資安法規與個資法]] — 個資查詢軌跡、匯出控管的法規依據
+- PostgreSQL 16 官方文件 — psql：<https://www.postgresql.org/docs/16/app-psql.html>
+- PostgreSQL 16 官方文件 — 連線字串與 service 檔：<https://www.postgresql.org/docs/16/libpq-connect.html>
+- PostgreSQL 16 官方文件 — 密碼檔 `.pgpass`：<https://www.postgresql.org/docs/16/libpq-pgpass.html>
+- PostgreSQL 16 官方文件 — `pg_stat_activity` 與系統管理函式：<https://www.postgresql.org/docs/16/functions-admin.html>

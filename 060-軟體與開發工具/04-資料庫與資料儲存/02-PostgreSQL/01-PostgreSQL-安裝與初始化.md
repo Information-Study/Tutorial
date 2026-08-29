@@ -36,18 +36,9 @@ updated: 2026-08-28
 
 ### 機關環境為什麼會冒出 PostgreSQL
 
-本手冊主軸 LXMP 用的是 MySQL，但你遲早會在機關裡遇到 PostgreSQL，通常來自這三個地方：
-
-```text
-  ① 採購來的套裝系統          GIS（PostGIS）、開源 ERP、Zabbix、Keycloak、Gitea
-                              → 廠商規格書直接寫「需 PostgreSQL 14 以上」
-
-  ② AI / 向量檢索             pgvector 擴充；或與 Qdrant 並存做 metadata 儲存
-                              → 見 03-Qdrant 那一章
-
-  ③ 新開發專案                Laravel / Nuxt 團隊選 PostgreSQL 當預設
-                              → 見 03-範例-Nuxt與PostgreSQL
-```
+本手冊主軸 LXMP 用的是 MySQL，但你遲早會在機關裡遇到 PostgreSQL，來源不外乎三種：
+**① 採購來的套裝系統**（PostGIS、開源 ERP、Zabbix、Keycloak、Gitea —— 規格書直接寫「需 PostgreSQL 14 以上」）、
+**② AI 與向量檢索**（pgvector 擴充）、**③ 新開發專案**（見 [[03-範例-Nuxt與PostgreSQL]]）。
 
 ★★★★ 這三種來源的共同點是：**版本是別人決定的，你只能配合**。
 所以本篇第一個重點不是「怎麼裝」，是**「怎麼裝到指定的那個大版本」** ——
@@ -61,21 +52,15 @@ MySQL 出身的人在 PostgreSQL 上第一個撞牆點就是這裡。MySQL 的 `
 跨庫查詢 `SELECT * FROM a.t1 JOIN b.t2` 是家常便飯；**PostgreSQL 不行**。
 
 ```text
-┌─────────────────────────────────────────────────────────────────────┐
-│ cluster（叢集）  = 一個 postgres 主行程 + 一個 datadir + 一個埠      │
-│   /var/lib/postgresql/17/main   listen 5432                         │
-│                                                                     │
-│   ├── role（角色）★ 全 cluster 共用，不屬於任何 database             │
-│   │     postgres / appuser / bkpuser / readonly                     │
-│   │                                                                 │
-│   ├── database: postgres     ← 管理用的預設庫，不要拿來放業務資料    │
-│   ├── database: template0    ★★★ 唯讀樣板，救命用，不要動           │
-│   ├── database: template1    ← CREATE DATABASE 的預設來源           │
-│   └── database: appdb        ← 你的業務庫
-│         ├── schema: public   ← 預設 schema
-│         ├── schema: audit    ← 稽核表放這裡
-│         └── schema: reporting
-└─────────────────────────────────────────────────────────────────────┘
+cluster（叢集）= 一個 postgres 主行程 + 一個 datadir + 一個埠
+  /var/lib/postgresql/17/main   listen 5432
+  ├── role（角色）★★★ 全 cluster 共用，不屬於任何 database：postgres / appuser / bkpuser
+  ├── database: postgres     ← 管理用的預設庫，不要放業務資料
+  ├── database: template0    ★★★ 唯讀樣板，救命用，不要動
+  ├── database: template1    ← CREATE DATABASE 的預設來源
+  └── database: appdb        ← 你的業務庫
+        ├── schema: public   ← 預設 schema
+        └── schema: audit    ← 稽核表放這裡
 ```
 
 | 概念 | MySQL 的對應物 | ★ 差在哪裡（會咬人的地方） |
@@ -95,12 +80,10 @@ MySQL 出身的人在 PostgreSQL 上第一個撞牆點就是這裡。MySQL 的 `
 
 ### ★★★★★ 裝完當下的六個決定，會鎖住未來三年
 
-這張表是本篇存在的理由。**打勾的那三項在 `initdb` 執行之後就不能改了**，要改只能重建 cluster。
-
 | 裝完當下的決定 | 建完還能不能改 | 選錯的後果 |
 | --- | --- | --- |
-| **版本／來源** ★★★ | 能（但要 `pg_upgrade`／dump-restore） | 兩年後沒有安全更新，或廠商系統不支援 |
-| **encoding（字元集）** ★★★★★ | **不能** | 中文變亂碼；`SQL_ASCII` 的庫連 `\copy` 出來都是垃圾。只能整庫重匯 |
+| **版本／來源** ★★★ | 能（要 `pg_upgrade`／dump-restore） | 兩年後沒有安全更新，或廠商系統不支援 |
+| **encoding（字元集）** ★★★★★ | **不能** | 中文變亂碼，只能整庫重匯，已壞的資料救不回來 |
 | **locale / 定序** ★★★★★ | **不能**（PG 15+ 可用 ICU 在 database 層繞過） | 中文排序錯亂、`LIKE 'abc%'` 不吃索引 |
 | **data checksums** ★★★★ | **不能**（要 `pg_checksums` 離線開啟） | 磁碟默默壞了你不會知道，備份把壞資料一起備走 |
 | **datadir 位置** ★★★ | 能（要停機搬） | 系統碟爆滿 → ★★★★★ **PostgreSQL 會 PANIC 停機** |
@@ -123,10 +106,10 @@ PostgreSQL 社群政策很單純：**每個大版本支援 5 年**，每年 9 �
 | --- | --- | --- | --- | --- |
 | **18** | 2025-09 | 2030-11 | 新建案、Ubuntu 26.04 內建 | ★★★★ **2026 之後的新機首選**；★★★ 注意 `initdb` **預設開啟 data checksums** |
 | **17** | 2024-09 | 2029-11 | 目前最穩的主流選擇 | ★★★★ **本篇主線**。生態（擴充、備份工具、監控）支援最完整 |
-| **16** | 2023-09 | 2028-11 | **Ubuntu 24.04 內建版** | ★★★ 不想加第三方套件庫就用它，但要在文件寫明「2028 到期」 |
+| **16** | 2023-09 | 2028-11 | **Ubuntu 24.04 內建版** | ★★★ 不加第三方套件庫就用它，但文件要寫明「2028 到期」 |
 | **15** | 2022-10 | 2027-11 | 既有系統 | ★★ 新建案不要選 |
-| **14** | 2021-09 | **2026-11-12** | 既有系統 | ★★★★★ **三個月後就沒有安全更新**，接手到這種機器要立刻排升級 |
-| 13 以下 | — | 已 EOL | — | ★★★★★ 已無安全更新，屬於資安缺失，必須列管 |
+| **14** | 2021-09 | **2026-11-12** | 既有系統 | ★★★★★ **三個月後沒有安全更新**，接手到要立刻排升級 |
+| 13 以下 | — | 已 EOL | — | ★★★★★ 已無安全更新，屬資安缺失，必須列管 |
 
 ```bash
 # ★★ 自己查一次，不要相信任何文件裡寫死的版本號
@@ -248,11 +231,10 @@ LC_ALL=
 
 ```bash
 sudo apt update
-sudo apt install -y postgresql postgresql-contrib
+sudo apt install -y postgresql postgresql-contrib   # ★★★ contrib 提供 pg_stat_statements/pgcrypto/postgres_fdw，一定會用到
 ```
 
-★★★ `postgresql-contrib` 提供 `pg_stat_statements`、`pgcrypto`、`postgres_fdw` 等官方擴充，
-**幾乎一定會用到，一起裝**。裝完 Debian 系會**自動建好一個叫 `main` 的 cluster 並啟動**：
+裝完 Debian 系會**自動建好一個叫 `main` 的 cluster 並啟動**：
 
 ```bash
 pg_lsclusters
@@ -500,14 +482,9 @@ SQL
  template1 | UTF8 | en_US.UTF-8 | en_US.UTF-8
 ```
 
-| 檢查項 | 看到什麼要警覺 | 星級 |
-| --- | --- | --- |
-| `pg_encoding_to_char(encoding)` | **`SQL_ASCII`** → 資料已經在累積損傷，且**不能線上修** | ★★★★★ |
-| `datcollate` | `C` / `POSIX` → 中文排序會是位元組序 | ★★★★ |
-| `password_encryption` | `md5` → 弱雜湊，PG 14 起預設已是 scram | ★★★★ |
-| `data_checksums` | `off` → 靜默資料損毀不會被偵測 | ★★★ |
-| `listen_addresses` | `*` 且防火牆沒收斂 → 資料庫直接暴露 | ★★★★★ |
-| `rolsuper` 為 `t` 的帳號數 | 超過 `postgres` 一個 → 權限失控 | ★★★★ |
+★★★★ 判讀口訣：**`SQL_ASCII` 是最高警戒**（資料已在累積損傷且不能線上修）；
+`datcollate` 是 `C`／`POSIX` 代表中文排序會變成位元組序；`password_encryption` 是 `md5` 屬資安缺失；
+`listen_addresses` 是 `*` 而防火牆沒收斂等於資料庫直接暴露；superuser 超過 `postgres` 一個就是權限失控。
 
 ---
 
@@ -563,13 +540,11 @@ sudo -u postgres psql -c "\l"
 ```
 
 > [!tip] ★★★★ 建錯了怎麼救（依嚴重度排序）
-> 1. **只有某個 database 建錯** → `pg_dump` 出來，`DROP DATABASE`，
->    用 `CREATE DATABASE appdb ENCODING 'UTF8' TEMPLATE template0 LOCALE 'en_US.UTF-8';` 重建再匯回。
->    ★★★ **`TEMPLATE template0` 這句不能省** —— 從 `template1` 複製時不允許改 encoding。
-> 2. **整個 cluster 建錯**（`template0` 也是 `SQL_ASCII`） → 只能**重建 cluster**。
->    Debian 系：`pg_dropcluster 17 main --stop` 後重新 `pg_createcluster`（★★★★★ 會刪掉全部資料，先備份）。
-> 3. **資料已經以錯誤的 encoding 寫進去** → ★★★★★ **無法自動修**。`SQL_ASCII` 的庫連
->    「這串位元組原本是什麼編碼」都沒有記錄，只能靠人工逐表判斷。**這就是為什麼要在裝的時候就對。**
+> ① **只有某個 database 錯** → `pg_dump` 出來、`DROP DATABASE`，改用
+> `CREATE DATABASE appdb ENCODING 'UTF8' TEMPLATE template0 ...` 重建再匯回。
+> ★★★ **`TEMPLATE template0` 不能省** —— 從 `template1` 複製時不允許改 encoding。
+> ② **整個 cluster 錯**（`template0` 也是 `SQL_ASCII`）→ 只能 `pg_dropcluster` 重建（★★★★★ 先備份）。
+> ③ **資料已經以錯誤 encoding 寫進去** → ★★★★★ **無法自動修**，只能人工逐表判斷。
 
 ---
 
@@ -853,16 +828,10 @@ Ver Cluster Port Status Owner    Data directory                Log file
 17  main    5432 online postgres /data/pgsql/17/main           /var/log/postgresql/postgresql-17-main.log
 ```
 
-★★★★ **連錯埠是這個特性最大的副作用**。三個保命習慣：
+★★★★ **連錯埠是這個特性最大的副作用**。三個保命習慣：明確帶 `-p`、
+用 `export PGPORT=5432 PGHOST=/var/run/postgresql` 鎖定 shell、或用 `--cluster` 包裝：
 
 ```bash
-# 【1】永遠明確指定埠
-psql -h 127.0.0.1 -p 5433 -U postgres -c 'SELECT version();'
-
-# 【2】用環境變數鎖定，避免手滑
-export PGPORT=5432 PGHOST=/var/run/postgresql
-
-# 【3】★★★ 用 --cluster 指定（postgresql-common 的用戶端包裝）
 psql --cluster 16/legacy -c 'SELECT version();'
 ```
 
@@ -898,17 +867,10 @@ FATAL:  no pg_hba.conf entry for host "[local]", user "postgres", database "post
 ★★★★ **關鍵事實：`pg_hba.conf` 是純文字檔，而你有 root。** 所以永遠救得回來：
 
 ```bash
-# 【1】備份現況（★★★ 先留證，事後要寫報告）
-sudo cp /etc/postgresql/17/main/pg_hba.conf /root/pg_hba.conf.broken.$(date +%F_%H%M)
-
-# 【2】把 local peer 那行加回最上面
-sudo sed -i '1i local   all   postgres   peer' /etc/postgresql/17/main/pg_hba.conf
-
-# 【3】reload（★★★ pg_hba 只要 reload，不用 restart，服務不會斷）
-sudo pg_ctlcluster 17 main reload
-
-# 【4】驗證
-sudo -u postgres psql -c 'SELECT current_user;'
+sudo cp /etc/postgresql/17/main/pg_hba.conf /root/pg_hba.broken.$(date +%F_%H%M)  # 【1】先留證
+sudo sed -i '1i local   all   postgres   peer' /etc/postgresql/17/main/pg_hba.conf  # 【2】只加回這一行
+sudo pg_ctlcluster 17 main reload      # 【3】★★★ pg_hba 只要 reload，服務不會斷
+sudo -u postgres psql -c 'SELECT current_user;'                                     # 【4】驗證
 ```
 
 ```text
@@ -1609,18 +1571,14 @@ sudo -u postgres psql -d appdb -c "SELECT count(*) FROM pg_stat_database WHERE c
 | `ALTER SYSTEM SET x = y;` | 寫進 `postgresql.auto.conf`，★★★ **不要手改那個檔** | ★★★ |
 | `ALTER SYSTEM RESET x;` | 撤銷上一行 | ★★★ |
 
-### 檔案路徑（Ubuntu / RHEL）
+### 檔案路徑
+
+★★★★ 完整的 Ubuntu／RHEL 路徑對照見本篇「套件名、服務名、路徑對照」那張表。三個最常忘的：
 
 | 用途 | Ubuntu | RHEL（PGDG） | 星級 |
 | --- | --- | --- | --- |
-| 主設定檔 | `/etc/postgresql/17/main/postgresql.conf` | `/var/lib/pgsql/17/data/postgresql.conf` | ★★★★ |
-| 認證設定 | `/etc/postgresql/17/main/pg_hba.conf` | `/var/lib/pgsql/17/data/pg_hba.conf` | ★★★★ |
-| `ALTER SYSTEM` 寫入處 | `<datadir>/postgresql.auto.conf` | 同左 | ★★★ |
-| 資料目錄 | `/var/lib/postgresql/17/main` | `/var/lib/pgsql/17/data` | ★★★★ |
-| WAL | `<datadir>/pg_wal/` | 同左 | ★★★★ |
-| 日誌 | `/var/log/postgresql/postgresql-17-main.log` | `<datadir>/log/` | ★★★★ |
-| socket | `/var/run/postgresql/` | `/var/run/postgresql/` | ★★★ |
-| 執行檔 | `/usr/lib/postgresql/17/bin/` | `/usr/pgsql-17/bin/` | ★★★ |
+| `ALTER SYSTEM` 寫入處 | `<datadir>/postgresql.auto.conf` | 同左（★★★ 不要手改） | ★★★★ |
+| WAL | `<datadir>/pg_wal/`（★★★★ 寫滿會 PANIC） | 同左 | ★★★★ |
 | 開機自啟開關 | `/etc/postgresql/17/main/start.conf` | `systemctl enable postgresql-17` | ★★★ |
 
 ### 判斷準則
