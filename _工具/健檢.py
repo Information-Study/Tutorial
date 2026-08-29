@@ -197,19 +197,37 @@ else:
 say("\n【5】已完成篇章的必備段落")
 need = ["## 小測驗", "測驗答案", "## 練習題", "## 延伸閱讀"]
 lack = defaultdict(list)
-done_notes = [f for f in notes if frontmatter(f).get("status", "").startswith("完成")]
+# 總結小考（exam）本身就是考卷，不需要「小測驗／練習題」那幾段
+def is_exam(f: Path) -> bool:
+    m = SEQ_RE.match(f.name)
+    return bool(m) and m.group(2) == "exam"
+
+
+done_notes = [f for f in notes
+              if frontmatter(f).get("status", "").startswith("完成") and not is_exam(f)]
+exams = [f for f in notes if is_exam(f)]
 for f in done_notes:
     text = f.read_text(encoding="utf-8")
     for seg in need:
         if seg not in text:
             lack[seg].append(f)
+
+# 小考另有自己的規格：100 題、每題都要指回原文
+for f in exams:
+    text = f.read_text(encoding="utf-8")
+    nq = len(re.findall(r"^Q\d+\.", text, re.M))
+    nref = text.count("→ 詳見")
+    if nq != 100:
+        problem(f"總結小考題數 {nq} ≠ 100：{f.relative_to(ROOT)}")
+    if nref < nq:
+        problem(f"總結小考有 {nq - nref} 題缺「→ 詳見」原文連結：{f.relative_to(ROOT)}")
 if lack:
     for seg, fs in lack.items():
         problem(f"{len(fs)} 篇已完成的文章缺「{seg}」")
         for f in fs[:3]:
             say(f"    {f.relative_to(ROOT)}")
 else:
-    say(f"  ✓ {len(done_notes)} 篇已完成的文章段落齊全")
+    say(f"  ✓ {len(done_notes)} 篇已完成的文章段落齊全，{len(exams)} 份總結小考規格符合")
 
 # ── 6. 群組標籤一致性 ────────────────────────────────────
 say("\n【6】群組標籤一致性")
