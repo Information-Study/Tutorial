@@ -22,6 +22,7 @@ BODY = {
     "guide": ["觀念說明", "逐步說明", "__RHEL__", "完整實戰範例", "__ERR__",
               "__LIST__", "__EX__", "__QUIZ__"],
     "ref": ["__REF__", "__QUIZ__"],
+    "exam": ["__REF__"],
 }
 BLOCKS = {
     "__RHEL__": "> [!info]- Rocky / AlmaLinux（RHEL 系）對照\n> <!-- TODO: 待撰寫 -->\n",
@@ -39,7 +40,7 @@ BLOCKS = {
 
 
 # 新命名：<群組3碼>-<章2碼>[-<子章2碼>]-<序2碼>-<類型>-<主題前綴>-<標題>.md
-NAME_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx)-")
+NAME_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx|exam)-")
 
 
 def numeric_prefix(directory: Path) -> str:

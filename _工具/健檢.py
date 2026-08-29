@@ -31,7 +31,7 @@ VALID_STATUS = {"待撰寫", "撰寫中", "完成"}
 VALID_DIFF = {"入門", "進階", "專家"}
 
 # 新命名：<群組3碼>-<章2碼>[-<子章2碼>]-<序2碼>-<類型>-<主題前綴>-<標題>.md
-SEQ_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx)-")
+SEQ_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx|exam)-")
 
 problems: list[str] = []
 notices: list[str] = []
