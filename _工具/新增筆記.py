@@ -38,9 +38,32 @@ BLOCKS = {
 }
 
 
+# 新命名：<群組3碼>-<章2碼>[-<子章2碼>]-<序2碼>-<類型>-<主題前綴>-<標題>.md
+NAME_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx)-")
+
+
+def numeric_prefix(directory: Path) -> str:
+    """由資料夾路徑推導編號前綴：群組 3 碼，其後每層 2 碼。"""
+    segs = []
+    for i, part in enumerate(directory.relative_to(VAULT).parts):
+        m = re.match(r"^(\d+)-", part)
+        if not m:
+            raise SystemExit(f"資料夾未依編號命名，無法推導檔名：{part}")
+        segs.append(m.group(1) if i == 0 else f"{int(m.group(1)):02d}")
+    return "-".join(segs)
+
+
+def topic_prefix(directory: Path) -> str:
+    """預設主題前綴＝最深一層資料夾去掉編號後的名稱。"""
+    return re.sub(r"^\d+-", "", directory.name)
+
+
 def next_number(directory: Path) -> str:
-    nums = [int(m.group(1)) for p in directory.glob("*.md")
-            if (m := re.match(r"^(\d+)-", p.name)) and not p.name.startswith("00-")]
+    nums = []
+    for p in directory.glob("*.md"):
+        m = NAME_RE.match(p.name)
+        if m and m.group(2) != "idx":
+            nums.append(int(m.group(1).split("-")[-1]))
     return f"{max(nums, default=0) + 1:02d}"
 
 
@@ -55,6 +78,8 @@ def main() -> None:
     ap.add_argument("--aliases", default="")
     ap.add_argument("--prereq", default="", help="逗號分隔的筆記名稱（不含 .md）")
     ap.add_argument("--related", default="", help="逗號分隔的筆記名稱（不含 .md）")
+    ap.add_argument("--prefix", default="",
+                    help="主題前綴（如 MySQL、SSH、網概）；省略則取最深一層資料夾名稱")
     args = ap.parse_args()
 
     directory = VAULT / args.directory
@@ -69,12 +94,15 @@ def main() -> None:
         items = [x.strip() for x in s.split(",") if x.strip()]
         return "[" + ", ".join(f'"[[{x}]]"' for x in items) + "]"
 
-    def bullets(s, fallback="- [[00-首頁]]"):
+    def bullets(s, fallback="- [[000-00-idx-索引-首頁]]"):
         items = [x.strip() for x in s.split(",") if x.strip()]
         return "\n".join(f"- [[{x}]]" for x in items) if items else fallback
 
     num = next_number(directory)
-    path = directory / f"{num}-{args.title.replace(' ', '')}.md"
+    prefix = args.prefix or topic_prefix(directory)
+    path = directory / (
+        f"{numeric_prefix(directory)}-{num}-{args.kind}-{prefix}-"
+        f"{args.title.replace(' ', '')}.md")
     if path.exists():
         raise SystemExit(f"檔案已存在：{path}")
 

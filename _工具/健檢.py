@@ -30,6 +30,9 @@ NOTE_ONLY = ["difficulty", "distro", "prerequisites"]
 VALID_STATUS = {"待撰寫", "撰寫中", "完成"}
 VALID_DIFF = {"入門", "進階", "專家"}
 
+# 新命名：<群組3碼>-<章2碼>[-<子章2碼>]-<序2碼>-<類型>-<主題前綴>-<標題>.md
+SEQ_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx)-")
+
 problems: list[str] = []
 notices: list[str] = []
 
@@ -113,16 +116,20 @@ num_issues = 0
 for d in sorted({f.parent for f in files}):
     if d == ROOT or any(part in SKIP_DIRS for part in d.parts):
         continue
-    nums = []
-    for f in sorted(d.glob("[0-9][0-9]-*.md")):
-        if IS_IDX(f):
+    nums, idx_nums = [], set()
+    for f in sorted(d.glob("*.md")):
+        m = SEQ_RE.match(f.name)
+        if not m:
             continue
-        nums.append(int(f.name[:2]))
+        seq = int(m.group(1).split("-")[-1])
+        # 索引頁（idx）不參與連號檢查，但其佔用的號碼不算跳號
+        (idx_nums.add(seq) if m.group(2) == "idx" else nums.append(seq))
     if not nums:
         continue
     sub = {int(x.name[:2]) for x in d.iterdir() if x.is_dir() and re.match(r"^\d\d-", x.name)}
     dup = [n for n, c in Counter(nums).items() if c > 1]
-    gaps = [n for n in range(1, max(nums) + 1) if n not in nums and n not in sub]
+    gaps = [n for n in range(1, max(nums) + 1)
+            if n not in nums and n not in sub and n not in idx_nums]
     if dup or gaps:
         num_issues += 1
         rel = d.relative_to(ROOT)

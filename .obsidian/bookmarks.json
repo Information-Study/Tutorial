@@ -1,38 +1,102 @@
 {
   "items": [
-    { "type": "file", "path": "000-索引/00-首頁.md", "title": "🏠 首頁" },
-    { "type": "file", "path": "000-索引/01-學習路徑.md", "title": "🧭 學習路徑" },
+    {
+      "type": "file",
+      "path": "000-索引/000-00-idx-索引-首頁.md",
+      "title": "🏠 首頁"
+    },
+    {
+      "type": "file",
+      "path": "000-索引/000-01-idx-索引-學習路徑.md",
+      "title": "🧭 學習路徑"
+    },
     {
       "type": "group",
       "title": "📌 速查",
       "items": [
-        { "type": "file", "path": "000-索引/02-指令速查表.md", "title": "指令速查" },
-        { "type": "file", "path": "000-索引/03-設定檔路徑速查.md", "title": "設定檔路徑" },
-        { "type": "file", "path": "000-索引/04-連接埠速查.md", "title": "連接埠" },
-        { "type": "file", "path": "000-索引/05-名詞解釋.md", "title": "名詞解釋" }
+        {
+          "type": "file",
+          "path": "000-索引/000-02-ref-索引-指令速查表.md",
+          "title": "指令速查"
+        },
+        {
+          "type": "file",
+          "path": "000-索引/000-03-ref-索引-設定檔路徑速查.md",
+          "title": "設定檔路徑"
+        },
+        {
+          "type": "file",
+          "path": "000-索引/000-04-ref-索引-連接埠速查.md",
+          "title": "連接埠"
+        },
+        {
+          "type": "file",
+          "path": "000-索引/000-05-ref-索引-名詞解釋.md",
+          "title": "名詞解釋"
+        }
       ]
     },
     {
       "type": "group",
       "title": "⭐ 五大優先章節",
       "items": [
-        { "type": "file", "path": "060-軟體與開發工具/01-常用工具/00-常用工具-索引.md", "title": "常用工具" },
-        { "type": "file", "path": "060-軟體與開發工具/02-Web伺服器/00-Web伺服器-索引.md", "title": "Web 伺服器" },
-        { "type": "file", "path": "060-軟體與開發工具/03-應用執行環境/00-應用執行環境-索引.md", "title": "應用執行環境" },
-        { "type": "file", "path": "090-資訊安全/01-憑證與PKI/00-憑證與PKI-索引.md", "title": "憑證與 PKI" },
-        { "type": "file", "path": "130-實務案例/01-專案部署實戰/00-部署實戰-索引.md", "title": "專案部署實戰" }
+        {
+          "type": "file",
+          "path": "060-軟體與開發工具/01-常用工具/060-01-00-idx-常用工具.md",
+          "title": "常用工具"
+        },
+        {
+          "type": "file",
+          "path": "060-軟體與開發工具/02-Web伺服器/060-02-00-idx-Web伺服器.md",
+          "title": "Web 伺服器"
+        },
+        {
+          "type": "file",
+          "path": "060-軟體與開發工具/03-應用執行環境/060-03-00-idx-應用執行環境.md",
+          "title": "應用執行環境"
+        },
+        {
+          "type": "file",
+          "path": "090-資訊安全/01-憑證與PKI/090-01-00-idx-PKI-憑證與PKI.md",
+          "title": "憑證與 PKI"
+        },
+        {
+          "type": "file",
+          "path": "130-實務案例/01-專案部署實戰/130-01-00-idx-部署實戰.md",
+          "title": "專案部署實戰"
+        }
       ]
     },
     {
       "type": "group",
       "title": "🔍 常用搜尋",
       "items": [
-        { "type": "search", "query": "status:待撰寫", "title": "待撰寫" },
-        { "type": "search", "query": "status:撰寫中", "title": "撰寫中" },
-        { "type": "search", "query": "tag:#主題/LXMP", "title": "LXMP 相關" },
-        { "type": "search", "query": "未實機驗證", "title": "未實機驗證" }
+        {
+          "type": "search",
+          "query": "status:待撰寫",
+          "title": "待撰寫"
+        },
+        {
+          "type": "search",
+          "query": "status:撰寫中",
+          "title": "撰寫中"
+        },
+        {
+          "type": "search",
+          "query": "tag:#主題/LXMP",
+          "title": "LXMP 相關"
+        },
+        {
+          "type": "search",
+          "query": "未實機驗證",
+          "title": "未實機驗證"
+        }
       ]
     },
-    { "type": "file", "path": "990-收件匣", "title": "📥 收件匣" }
+    {
+      "type": "file",
+      "path": "990-收件匣",
+      "title": "📥 收件匣"
+    }
   ]
 }
