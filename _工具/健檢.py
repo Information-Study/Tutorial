@@ -21,6 +21,10 @@ SKIP_DIRS = {".git", ".obsidian", ".trash"}
 #   000-索引（MOC/速查）、980-附錄、990-收件匣 不在此列
 CONTENT_RE = re.compile(r"^(0[1-9]0|1[123]0)-")
 
+# 索引頁判定：新命名帶 `-idx-`，舊命名以 00- 開頭
+def IS_IDX(f) -> bool:
+    return "-idx-" in f.name or f.name.startswith("00-")
+
 REQUIRED = ["title", "desc", "aliases", "tags", "category", "status", "updated"]
 NOTE_ONLY = ["difficulty", "distro", "prerequisites"]
 VALID_STATUS = {"待撰寫", "撰寫中", "完成"}
@@ -77,12 +81,12 @@ def is_note(f: Path) -> bool:
     return (
         len(rel) > 1
         and bool(CONTENT_RE.match(rel[0]))
-        and not f.name.startswith("00-")
+        and not IS_IDX(f)
     )
 
 
 notes = [f for f in files if is_note(f)]
-indexes = [f for f in files if f.name.startswith("00-")]
+indexes = [f for f in files if IS_IDX(f)]
 
 say("═" * 62)
 say("  vault 健檢")
@@ -111,7 +115,7 @@ for d in sorted({f.parent for f in files}):
         continue
     nums = []
     for f in sorted(d.glob("[0-9][0-9]-*.md")):
-        if f.name.startswith("00-"):
+        if IS_IDX(f):
             continue
         nums.append(int(f.name[:2]))
     if not nums:
@@ -174,7 +178,7 @@ for d in sorted({f.parent for f in files}):
         continue
     if not str(d.relative_to(ROOT))[0].isdigit():
         continue
-    if not list(d.glob("00-*.md")):
+    if not [x for x in d.glob("*.md") if IS_IDX(x)]:
         no_index.append(d.relative_to(ROOT))
 if no_index:
     for d in no_index:

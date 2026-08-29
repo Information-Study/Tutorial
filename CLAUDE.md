@@ -118,7 +118,7 @@ category: Linux基礎
 difficulty: 入門                # 入門 / 進階 / 專家
 status: 待撰寫                  # 待撰寫 / 撰寫中 / 完成
 distro: [ubuntu, rhel]
-prerequisites: ["[[05-路徑導覽與檔案操作]]"]
+prerequisites: ["[[020-01-05-cmd-Linux-路徑導覽與檔案操作]]"]
 updated: 2026-08-27
 ---
 ```

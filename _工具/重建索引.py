@@ -34,11 +34,13 @@ def front_matter(path: Path) -> dict:
 
 
 def is_index(path: Path) -> bool:
-    return path.name.startswith("00-") and path.name.endswith("索引.md")
+    # 新命名：<編號段>-idx-<主題>-<標題>.md；舊命名：00-…索引.md
+    return "-idx-" in path.name or (
+        path.name.startswith("00-") and path.name.endswith("索引.md"))
 
 
 def find_index(directory: Path):
-    for p in sorted(directory.glob("00-*索引.md")):
+    for p in sorted(x for x in directory.glob("*.md") if is_index(x)):
         return p
     return None
 
@@ -59,7 +61,7 @@ def build_tables(directory: Path, index_path: Path) -> str:
 
     notes = sorted(
         p for p in directory.glob("*.md")
-        if p != index_path and not is_index(p) and p.name != "00-首頁.md"
+        if p != index_path and not is_index(p) and "-idx-" not in p.name
     )
     rows = []
     for p in notes:
@@ -103,7 +105,7 @@ def main() -> int:
     check = "--check" in sys.argv
     changed = 0
     total = 0
-    for path in sorted(VAULT.rglob("00-*索引.md")):
+    for path in sorted(x for x in VAULT.rglob("*.md") if is_index(x)):
         if any(part in SKIP_DIRS for part in path.parts):
             continue
         total += 1
