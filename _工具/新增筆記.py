@@ -40,7 +40,7 @@ BLOCKS = {
 
 
 # 新命名：<群組3碼>-<章2碼>[-<子章2碼>]-<序2碼>-<類型>-<主題前綴>-<標題>.md
-NAME_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx|exam)-")
+NAME_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx|exam|trouble)-")
 
 
 def numeric_prefix(directory: Path) -> str:

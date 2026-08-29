@@ -31,7 +31,7 @@ VALID_STATUS = {"待撰寫", "撰寫中", "完成"}
 VALID_DIFF = {"入門", "進階", "專家"}
 
 # 新命名：<群組3碼>-<章2碼>[-<子章2碼>]-<序2碼>-<類型>-<主題前綴>-<標題>.md
-SEQ_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx|exam)-")
+SEQ_RE = re.compile(r"^(\d{3}(?:-\d{2})+)-(cmd|svc|guide|ref|idx|exam|trouble)-")
 
 problems: list[str] = []
 notices: list[str] = []
@@ -122,6 +122,10 @@ for d in sorted({f.parent for f in files}):
         if not m:
             continue
         seq = int(m.group(1).split("-")[-1])
+        # 98（常見故障排除手冊）與 99（總結小考）是保留號，不參與連號檢查
+        if seq >= 98:
+            idx_nums.add(seq)
+            continue
         # 索引頁（idx）不參與連號檢查，但其佔用的號碼不算跳號
         (idx_nums.add(seq) if m.group(2) == "idx" else nums.append(seq))
     if not nums:
@@ -203,8 +207,15 @@ def is_exam(f: Path) -> bool:
     return bool(m) and m.group(2) == "exam"
 
 
+def is_trouble(f: Path) -> bool:
+    """常見故障排除手冊（98）：不套用一般教學文的段落檢查。"""
+    m = SEQ_RE.match(f.name)
+    return bool(m) and m.group(2) == "trouble"
+
+
 done_notes = [f for f in notes
-              if frontmatter(f).get("status", "").startswith("完成") and not is_exam(f)]
+              if frontmatter(f).get("status", "").startswith("完成")
+              and not is_exam(f) and not is_trouble(f)]
 exams = [f for f in notes if is_exam(f)]
 for f in done_notes:
     text = f.read_text(encoding="utf-8")
