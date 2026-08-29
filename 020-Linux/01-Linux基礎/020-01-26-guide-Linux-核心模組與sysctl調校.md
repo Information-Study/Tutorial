@@ -8,17 +8,17 @@ difficulty: 進階
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[020-01-17-cmd-Linux-systemd服務管理]]", "[[020-01-25-guide-Linux-開機流程與GRUB救援]]"]
-updated: 2026-08-27
+updated: 2026-08-29
 ---
 
 # 核心模組與 sysctl 調校
 
 > [!abstract] 這篇你會學到
-> - 查、載、卸、封鎖核心模組，並讓設定在重開機後仍生效
-> - 用 `sysctl` 調整核心參數，知道**伺服器上線前該調的那十幾個**與各自的意義
-> - 解決 `Too many open files`——分清楚 **`ulimit`、`limits.conf`、systemd `LimitNOFILE`** 三層各管誰
-> - 理解 cgroup v2 如何讓 systemd 限制 CPU／記憶體／I/O
-> - 避開「調了沒效」「調了更慢」的常見陷阱：**先量測再調，一次只調一項**
+> - ★★★ 查、載、卸、封鎖核心模組，並讓設定在重開機後仍生效
+> - ★★★ 用 `sysctl` 調整核心參數，知道**伺服器上線前該調的那十幾個**與各自的意義
+> - ★★★★ 解決 `Too many open files`——分清楚 **`ulimit`、`limits.conf`、systemd `LimitNOFILE`** 三層各管誰
+> - ★★ 理解 cgroup v2 如何讓 systemd 限制 CPU／記憶體／I/O
+> - ★★★★ 避開「調了沒效」「調了更慢」的常見陷阱：**先量測再調，一次只調一項**
 
 ## 前置知識
 
@@ -29,7 +29,7 @@ updated: 2026-08-27
 
 ## 觀念說明
 
-### 核心的三個可調層
+### ★★★ 核心的三個可調層
 
 ```mermaid
 flowchart TB
@@ -43,31 +43,31 @@ flowchart TB
 
 | 層 | 管什麼 | 即時工具 | 持久化位置 |
 | --- | --- | --- | --- |
-| **模組** | 載入哪些驅動與功能 | `modprobe` | `/etc/modules-load.d/`、`/etc/modprobe.d/` |
-| **sysctl** | 核心行為參數 | `sysctl -w` | `/etc/sysctl.d/*.conf` |
-| **程序限制** | 單一程序可開多少檔案／執行緒 | `ulimit` | `/etc/security/limits.d/`、systemd `Limit*=` |
-| **cgroup** | 一群程序的資源配額 | `systemctl set-property` | unit 的 `MemoryMax=` 等 |
+| ★★★ **模組** | 載入哪些驅動與功能 | `modprobe` | `/etc/modules-load.d/`、`/etc/modprobe.d/` |
+| ★★★ **sysctl** | 核心行為參數 | `sysctl -w` | `/etc/sysctl.d/*.conf` |
+| ★★★ **程序限制** | 單一程序可開多少檔案／執行緒 | `ulimit` | `/etc/security/limits.d/`、systemd `Limit*=` |
+| ★★ **cgroup** | 一群程序的資源配額 | `systemctl set-property` | unit 的 `MemoryMax=` 等 |
 
 > [!danger] 調校的兩個鐵律
-> 1. **先量測，有數據證明瓶頸在那裡，才調**——不是看到網路文章就照抄
-> 2. **一次只改一項，改完量測，記錄**——同時改五項，好了不知道是哪項，壞了不知道該還原哪項
+> 1. ★★★★ **先量測，有數據證明瓶頸在那裡，才調**——不是看到網路文章就照抄
+> 2. ★★★★ **一次只改一項，改完量測，記錄**——同時改五項，好了不知道是哪項，壞了不知道該還原哪項
 >
-> 網路上「一鍵優化」的 sysctl 清單，很多是十年前為特定場景寫的，
+> ★★★★ 網路上「一鍵優化」的 sysctl 清單，很多是十年前為特定場景寫的，
 > 照抄到你的機器可能變慢或不穩。本篇列的每一項都附「什麼情況才需要」。
 
 ---
 
 ## 核心模組
 
-### 查看
+### ★★ 查看
 
 ```bash
-lsmod                                      # 已載入的模組
+lsmod                                      # ★★★ 已載入的模組
 lsmod | grep -E '^(zfs|kvm|nf_)'
-modinfo zfs                                # 模組資訊：版本、參數、依賴、簽章
-modinfo -p zfs | head                      # 可調參數
-cat /sys/module/zfs/parameters/zfs_arc_max # 執行中的參數值
-sudo dmesg | grep -i -E 'module|firmware'  # 載入時的訊息
+modinfo zfs                                # ★★ 模組資訊：版本、參數、依賴、簽章
+modinfo -p zfs | head                      # ★★ 可調參數
+cat /sys/module/zfs/parameters/zfs_arc_max # ★★★ 執行中的參數值
+sudo dmesg | grep -i -E 'module|firmware'  # ★★ 載入時的訊息
 ```
 
 ```bash
@@ -81,47 +81,47 @@ nf_conntrack          172032  3 nf_nat,nft_ct,xt_conntrack
 kvm_intel             393216  0
 ```
 
-`Used by` 是引用計數——**非 0 的模組無法卸載**，要先卸掉依賴它的。
+★★★ `Used by` 是引用計數——**非 0 的模組無法卸載**，要先卸掉依賴它的。
 
-### 載入與卸載
+### ★★★ 載入與卸載
 
 ```bash
-sudo modprobe br_netfilter                 # 載入（自動處理依賴）
-sudo modprobe -r br_netfilter              # 卸載
-sudo modprobe zfs zfs_arc_max=4294967296   # 載入時帶參數
-sudo modprobe -n -v ixgbe                  # -n 試跑：只顯示會做什麼
+sudo modprobe br_netfilter                 # ★★★ 載入（自動處理依賴）
+sudo modprobe -r br_netfilter              # ★★★ 卸載
+sudo modprobe zfs zfs_arc_max=4294967296   # ★★ 載入時帶參數
+sudo modprobe -n -v ixgbe                  # ★★★ -n 試跑：只顯示會做什麼
 ```
 
 > [!warning] `insmod` / `rmmod` 是低階工具，不處理依賴
-> `insmod` 要給完整路徑且不會載入依賴模組；`rmmod` 卸載時不管別人還在用。
+> ★★★ `insmod` 要給完整路徑且不會載入依賴模組；`rmmod` 卸載時不管別人還在用。
 > **一律用 `modprobe` / `modprobe -r`。**
 
-### 持久化：開機自動載入
+### ★★★ 持久化：開機自動載入
 
 ```bash
-# 開機載入
+# ★★★ 開機載入
 echo "br_netfilter" | sudo tee /etc/modules-load.d/k8s.conf
 echo "zfs" | sudo tee /etc/modules-load.d/zfs.conf
 
-# 模組參數（載入時套用）
+# ★★★ 模組參數（載入時套用）
 echo "options zfs zfs_arc_max=4294967296" | sudo tee /etc/modprobe.d/zfs.conf
 echo "options kvm_intel nested=1" | sudo tee /etc/modprobe.d/kvm.conf
 ```
 
 > [!warning] 根檔案系統相關的模組參數要重建 initramfs
-> `zfs_arc_max` 這種在 initramfs 階段就載入的模組，改了 `modprobe.d` 之後：
+> ★★★★ `zfs_arc_max` 這種在 initramfs 階段就載入的模組，改了 `modprobe.d` 之後：
 > ```bash
 > sudo update-initramfs -u        # RHEL: sudo dracut -f
 > ```
 > 否則重開機後 initramfs 裡的舊設定先生效。見 [[020-01-25-guide-Linux-開機流程與GRUB救援]]。
 
-### 封鎖模組（blacklist）
+### ★★★★ 封鎖模組（blacklist）
 
 用途：不用的硬體驅動、有安全疑慮的協定、與其他驅動衝突的模組。
 
 ```bash
 sudo tee /etc/modprobe.d/blacklist-custom.conf > /dev/null <<'CONF'
-# 不需要的檔案系統與網路協定（TWGCB / CIS 建議）
+# ★★★★ 不需要的檔案系統與網路協定（TWGCB / CIS 建議）
 install cramfs /bin/false
 install freevxfs /bin/false
 install jffs2 /bin/false
@@ -132,44 +132,44 @@ install dccp /bin/false
 install sctp /bin/false
 install rds /bin/false
 install tipc /bin/false
-# 不用的硬體
+# ★★ 不用的硬體
 blacklist pcspkr
-blacklist nouveau            # 裝 NVIDIA 專有驅動時
+blacklist nouveau            # ★★★ 裝 NVIDIA 專有驅動時
 CONF
 sudo update-initramfs -u
 ```
 
 > [!tip] `blacklist` 與 `install xxx /bin/false` 的差別
-> - `blacklist foo` — 阻止**自動**載入（硬體偵測到時），但 `modprobe foo` 或依賴它的模組仍可載入
-> - `install foo /bin/false` — 任何載入嘗試都執行 `/bin/false` 而失敗，**真正禁用**
+> - ★★★ `blacklist foo` — 阻止**自動**載入（硬體偵測到時），但 `modprobe foo` 或依賴它的模組仍可載入
+> - ★★★★★ `install foo /bin/false` — 任何載入嘗試都執行 `/bin/false` 而失敗，**真正禁用**
 >
 > 資安基準要求的「停用不必要的檔案系統／協定」要用後者。
-> 驗證：`sudo modprobe cramfs` 應該失敗、`lsmod | grep cramfs` 應該為空。
+> ★★★ 驗證：`sudo modprobe cramfs` 應該失敗、`lsmod | grep cramfs` 應該為空。
 
-### 模組簽章與 DKMS
+### ★★★ 模組簽章與 DKMS
 
 ```bash
-sudo mokutil --sb-state                    # Secure Boot 狀態
-modinfo -F sig_key zfs                     # 模組簽章金鑰（空 = 未簽章）
-dkms status                                # DKMS 管理的第三方模組
-sudo dkms autoinstall                      # 為目前核心重建所有 DKMS 模組
+sudo mokutil --sb-state                    # ★★★ Secure Boot 狀態
+modinfo -F sig_key zfs                     # ★★ 模組簽章金鑰（空 = 未簽章）
+dkms status                                # ★★★ DKMS 管理的第三方模組
+sudo dkms autoinstall                      # ★★★★ 為目前核心重建所有 DKMS 模組
 sudo dkms install zfs/2.2.4 -k $(uname -r)
 ```
 
 > [!warning] 核心升級後 DKMS 模組失效是常見故障
-> 症狀：升級核心重開機後 ZFS pool 不見、NVIDIA 顯示驅動失效、VirtualBox 起不來。
+> ★★★★ 症狀：升級核心重開機後 ZFS pool 不見、NVIDIA 顯示驅動失效、VirtualBox 起不來。
 > ```bash
 > dkms status            # 看新核心那行是 installed 還是 built / 缺
 > sudo dkms autoinstall
 > sudo update-initramfs -u
 > ```
-> Ubuntu 的 `linux-headers-generic` 要跟著核心一起裝，DKMS 才有東西可編。
+> ★★★ Ubuntu 的 `linux-headers-generic` 要跟著核心一起裝，DKMS 才有東西可編。
 
 ---
 
 ## sysctl：核心參數
 
-### 運作方式
+### ★★ 運作方式
 
 ```
 /proc/sys/net/ipv4/ip_forward   ← 檔案
@@ -177,74 +177,74 @@ net.ipv4.ip_forward             ← sysctl 名稱（把 / 換成 .）
 ```
 
 ```bash
-sysctl net.ipv4.ip_forward                 # 讀
-cat /proc/sys/net/ipv4/ip_forward          # 同上
-sudo sysctl -w net.ipv4.ip_forward=1       # 寫（立即生效、重開機消失）
-sysctl -a | grep -i somaxconn              # 搜尋
+sysctl net.ipv4.ip_forward                 # ★★ 讀
+cat /proc/sys/net/ipv4/ip_forward          # ★★ 同上
+sudo sysctl -w net.ipv4.ip_forward=1       # ★★★★ 寫（立即生效、重開機消失）
+sysctl -a | grep -i somaxconn              # ★★ 搜尋
 sysctl -a --pattern '^net.ipv4.tcp' | wc -l
 ```
 
-### 持久化
+### ★★★ 持久化
 
 ```bash
 sudo tee /etc/sysctl.d/99-server.conf > /dev/null <<'CONF'
 net.ipv4.ip_forward = 1
 CONF
-sudo sysctl --system                       # 重新載入全部 sysctl.d
-sudo sysctl -p /etc/sysctl.d/99-server.conf   # 只載入這個檔
+sudo sysctl --system                       # ★★★★ 重新載入全部 sysctl.d
+sudo sysctl -p /etc/sysctl.d/99-server.conf   # ★★★ 只載入這個檔
 ```
 
 > [!warning] 載入順序與覆蓋
-> `sysctl --system` 依**檔名字典序**載入 `/etc/sysctl.d/*.conf`、`/run/sysctl.d/`、
+> ★★★★ `sysctl --system` 依**檔名字典序**載入 `/etc/sysctl.d/*.conf`、`/run/sysctl.d/`、
 > `/usr/lib/sysctl.d/`，**後面的覆蓋前面的**，最後才是 `/etc/sysctl.conf`。
-> 自訂設定用 `99-` 開頭確保最後套用；不要直接改 `/etc/sysctl.conf`
+> ★★★★ 自訂設定用 `99-` 開頭確保最後套用；不要直接改 `/etc/sysctl.conf`
 > 或套件提供的 `10-*.conf`。
 >
-> 檢查某參數最終來自哪個檔案：
+> ★★★ 檢查某參數最終來自哪個檔案：
 > ```bash
 > grep -rn "vm.swappiness" /etc/sysctl.d/ /usr/lib/sysctl.d/ /etc/sysctl.conf 2>/dev/null
 > ```
 
-### 伺服器上線前值得看的參數
+### ★★★ 伺服器上線前值得看的參數
 
 以下按**類別**列出，每項附「預設值 / 建議 / 什麼情況才需要調」。
-**沒有那個情況就不要調。**
+★★★★ **沒有那個情況就不要調。**
 
-#### 網路：連線數與佇列
+#### ★★★ 網路：連線數與佇列
 
 | 參數 | 預設 | 建議 | 何時需要 |
 | --- | --- | --- | --- |
-| `net.core.somaxconn` | 4096 | 65535 | **高並行 Web／DB**：accept 佇列滿會丟連線（`ss -s` 看 `overflowed`） |
-| `net.ipv4.tcp_max_syn_backlog` | 依記憶體 | 65535 | 同上，SYN 佇列 |
-| `net.core.netdev_max_backlog` | 1000 | 16384 | 10G 網卡、大量小封包 |
-| `net.ipv4.ip_local_port_range` | 32768 60999 | `1024 65535` | **反向代理／爬蟲**對外開大量連線耗盡埠 |
-| `net.ipv4.tcp_tw_reuse` | 2 | 1 | 同上，允許重用 TIME_WAIT 的埠（**只對外連**有效） |
-| `net.ipv4.tcp_fin_timeout` | 60 | 30 | 大量短連線 |
+| ★★★★ `net.core.somaxconn` | 4096 | 65535 | **高並行 Web／DB**：accept 佇列滿會丟連線（`ss -s` 看 `overflowed`） |
+| ★★★ `net.ipv4.tcp_max_syn_backlog` | 依記憶體 | 65535 | 同上，SYN 佇列 |
+| ★★ `net.core.netdev_max_backlog` | 1000 | 16384 | 10G 網卡、大量小封包 |
+| ★★★ `net.ipv4.ip_local_port_range` | 32768 60999 | `1024 65535` | **反向代理／爬蟲**對外開大量連線耗盡埠 |
+| ★★★ `net.ipv4.tcp_tw_reuse` | 2 | 1 | 同上，允許重用 TIME_WAIT 的埠（**只對外連**有效） |
+| ★★ `net.ipv4.tcp_fin_timeout` | 60 | 30 | 大量短連線 |
 
 ```bash
-# 判斷 somaxconn 是否不夠：這兩個數字持續增加就是
+# ★★★★ 判斷 somaxconn 是否不夠：這兩個數字持續增加就是
 ss -s | grep -i overflow
 netstat -s 2>/dev/null | grep -iE 'overflow|drop' | head
 ```
 
 > [!warning] `tcp_tw_recycle` 已經不存在了
-> 舊教學常叫你開 `net.ipv4.tcp_tw_recycle=1`，它在 Linux 4.12 **已移除**，
+> ★★★ 舊教學常叫你開 `net.ipv4.tcp_tw_recycle=1`，它在 Linux 4.12 **已移除**，
 > 而且在 NAT 環境會造成連線隨機失敗。看到這條就知道那篇教學過時了。
 
-#### 網路：緩衝區（10G 以上才需要）
+#### ★★ 網路：緩衝區（10G 以上才需要）
 
 | 參數 | 建議（10G） |
 | --- | --- |
-| `net.core.rmem_max` / `wmem_max` | 16777216 |
-| `net.ipv4.tcp_rmem` / `tcp_wmem` | `4096 87380 16777216` / `4096 65536 16777216` |
-| `net.ipv4.tcp_congestion_control` | `bbr`（需 `modprobe tcp_bbr`） |
+| ★★ `net.core.rmem_max` / `wmem_max` | 16777216 |
+| ★★ `net.ipv4.tcp_rmem` / `tcp_wmem` | `4096 87380 16777216` / `4096 65536 16777216` |
+| ★★★ `net.ipv4.tcp_congestion_control` | `bbr`（需 `modprobe tcp_bbr`） |
 
 ```bash
 sysctl net.ipv4.tcp_available_congestion_control
 ```
 
 > [!tip] BBR 是少數「幾乎沒有壞處」的調校
-> 對外提供服務（特別是跨國、有封包遺失的路徑）時，BBR 通常明顯改善吞吐：
+> ★★★ 對外提供服務（特別是跨國、有封包遺失的路徑）時，BBR 通常明顯改善吞吐：
 > ```bash
 > echo "tcp_bbr" | sudo tee /etc/modules-load.d/bbr.conf
 > sudo tee /etc/sysctl.d/99-bbr.conf > /dev/null <<'C'
@@ -254,82 +254,82 @@ sysctl net.ipv4.tcp_available_congestion_control
 > sudo sysctl --system
 > ```
 
-#### 網路：安全（TWGCB / CIS 要求）
+#### ★★★★ 網路：安全（TWGCB / CIS 要求）
 
 ```ini
 # /etc/sysctl.d/99-hardening.conf
-net.ipv4.ip_forward = 0                       # 不是路由器／容器主機就關
+net.ipv4.ip_forward = 0                       # ★★★★ 不是路由器／容器主機就關
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.all.log_martians = 1            # 記錄不合理來源的封包
-net.ipv4.conf.all.rp_filter = 1               # 反向路徑過濾（多網卡非對稱路由時用 2）
+net.ipv4.conf.all.log_martians = 1            # ★★ 記錄不合理來源的封包
+net.ipv4.conf.all.rp_filter = 1               # ★★★★ 反向路徑過濾（多網卡非對稱路由時用 2）
 net.ipv4.icmp_echo_ignore_broadcasts = 1
 net.ipv4.icmp_ignore_bogus_error_responses = 1
-net.ipv4.tcp_syncookies = 1                   # SYN flood 防護
-net.ipv6.conf.all.accept_ra = 0               # 不需要 IPv6 自動設定時
+net.ipv4.tcp_syncookies = 1                   # ★★★★ SYN flood 防護
+net.ipv6.conf.all.accept_ra = 0               # ★★ 不需要 IPv6 自動設定時
 net.ipv6.conf.all.accept_redirects = 0
-kernel.randomize_va_space = 2                 # ASLR
-kernel.kptr_restrict = 2                      # 隱藏核心指標
-kernel.dmesg_restrict = 1                     # 一般使用者不能看 dmesg
-kernel.yama.ptrace_scope = 1                  # 限制 ptrace
+kernel.randomize_va_space = 2                 # ★★★ ASLR
+kernel.kptr_restrict = 2                      # ★★ 隱藏核心指標
+kernel.dmesg_restrict = 1                     # ★★ 一般使用者不能看 dmesg
+kernel.yama.ptrace_scope = 1                  # ★★★ 限制 ptrace
 fs.protected_hardlinks = 1
 fs.protected_symlinks = 1
-fs.suid_dumpable = 0                          # setuid 程式不產生 core dump
+fs.suid_dumpable = 0                          # ★★★ setuid 程式不產生 core dump
 ```
 
 > [!danger] `ip_forward` 與容器／虛擬化
-> Docker、PVE、k8s **需要** `ip_forward=1`，而且 Docker 啟動時會自己開。
+> ★★★★ Docker、PVE、k8s **需要** `ip_forward=1`，而且 Docker 啟動時會自己開。
 > 在這些主機上把它關掉會讓容器網路壞掉。
 > 資安基準的「關閉 IP 轉送」對這類主機要申請豁免並記錄——見 [[090-06-07-guide-TWGCB-Linux檢測與符合性報告]]。
 >
-> 同理 `rp_filter=1` 在多網卡非對稱路由（例如 keepalived VIP）會丟封包，改 `2`。
+> ★★★★ 同理 `rp_filter=1` 在多網卡非對稱路由（例如 keepalived VIP）會丟封包，改 `2`。
 
-#### 記憶體
+#### ★★★ 記憶體
 
 | 參數 | 預設 | 建議 | 何時需要 |
 | --- | --- | --- | --- |
-| `vm.swappiness` | 60 | **10** | 伺服器通用（見 [[020-01-15-cmd-Linux-磁碟分割與掛載]]） |
-| `vm.overcommit_memory` | 0 | 1 | **Redis** 要求（否則 bgsave 失敗）；其他別動 |
-| `vm.max_map_count` | 65530 | 262144 | **Elasticsearch / OpenSearch** 要求 |
-| `vm.dirty_ratio` / `dirty_background_ratio` | 20 / 10 | 10 / 5 | 大量寫入時避免一次 flush 卡住 |
-| `vm.vfs_cache_pressure` | 100 | 50 | 大量小檔（inode/dentry 快取更值錢） |
-| `vm.nr_hugepages` | 0 | 依需求 | **PostgreSQL / Oracle** 大記憶體 |
+| ★★★ `vm.swappiness` | 60 | **10** | 伺服器通用（見 [[020-01-15-cmd-Linux-磁碟分割與掛載]]） |
+| ★★★★ `vm.overcommit_memory` | 0 | 1 | **Redis** 要求（否則 bgsave 失敗）；其他別動 |
+| ★★★ `vm.max_map_count` | 65530 | 262144 | **Elasticsearch / OpenSearch** 要求 |
+| ★★ `vm.dirty_ratio` / `dirty_background_ratio` | 20 / 10 | 10 / 5 | 大量寫入時避免一次 flush 卡住 |
+| ★★ `vm.vfs_cache_pressure` | 100 | 50 | 大量小檔（inode/dentry 快取更值錢） |
+| ★★ `vm.nr_hugepages` | 0 | 依需求 | **PostgreSQL / Oracle** 大記憶體 |
 
 > [!warning] `vm.overcommit_memory=2` 會讓很多程式啟動失敗
-> `2` 是「嚴格不超賣」，Java、Chrome、很多 fork 型程式會因為預留失敗而起不來。
+> ★★★★ `2` 是「嚴格不超賣」，Java、Chrome、很多 fork 型程式會因為預留失敗而起不來。
 > 除非你完全理解，否則不要設 `2`。Redis 要的是 `1`。
 
-#### 檔案系統
+#### ★★ 檔案系統
 
 | 參數 | 預設 | 建議 | 何時需要 |
 | --- | --- | --- | --- |
-| `fs.file-max` | 依記憶體（通常百萬級） | 通常不用調 | 全系統檔案描述符上限；先看 `fs.file-nr` 用了多少 |
-| `fs.inotify.max_user_watches` | 8192～65536 | 524288 | **IDE、檔案同步、大型專案監看**報 `ENOSPC` |
-| `fs.inotify.max_user_instances` | 128 | 1024 | 同上 |
-| `fs.aio-max-nr` | 65536 | 1048576 | MySQL InnoDB 大量 AIO |
+| ★★ `fs.file-max` | 依記憶體（通常百萬級） | 通常不用調 | 全系統檔案描述符上限；先看 `fs.file-nr` 用了多少 |
+| ★★★ `fs.inotify.max_user_watches` | 8192～65536 | 524288 | **IDE、檔案同步、大型專案監看**報 `ENOSPC` |
+| ★★ `fs.inotify.max_user_instances` | 128 | 1024 | 同上 |
+| ★★ `fs.aio-max-nr` | 65536 | 1048576 | MySQL InnoDB 大量 AIO |
 
 ```bash
-cat /proc/sys/fs/file-nr          # 已配置 未用 上限
+cat /proc/sys/fs/file-nr          # ★★★ 已配置 未用 上限
 ```
 
 > [!tip] `Too many open files` 通常不是 `fs.file-max`
-> `fs.file-max` 是**全系統**上限，現代預設動輒百萬，很少撞到。
+> ★★★ `fs.file-max` 是**全系統**上限，現代預設動輒百萬，很少撞到。
 > 撞到的幾乎都是**單一程序**的 `nofile`（見下一節）。
-> 先看 `fs.file-nr` 第一欄離上限多遠，再決定該調哪一層。
+> ★★★ 先看 `fs.file-nr` 第一欄離上限多遠，再決定該調哪一層。
 
-#### 核心
+#### ★★ 核心
 
 | 參數 | 說明 |
 | --- | --- |
-| `kernel.pid_max` | PID 上限（預設 4194304，容器多時才需要） |
-| `kernel.threads-max` | 執行緒上限 |
-| `kernel.panic = 10` | kernel panic 10 秒後自動重開（無人值守機器建議） |
-| `kernel.panic_on_oops = 1` | oops 視為 panic |
-| `kernel.sysrq = 1` | 允許 Magic SysRq（救援用，資安基準可能要求關） |
-| `kernel.core_pattern` | core dump 路徑 |
+| ★★ `kernel.pid_max` | PID 上限（預設 4194304，容器多時才需要） |
+| ★★ `kernel.threads-max` | 執行緒上限 |
+| ★★★ `kernel.panic = 10` | kernel panic 10 秒後自動重開（無人值守機器建議） |
+| ★★ `kernel.panic_on_oops = 1` | oops 視為 panic |
+| ★★★ `kernel.sysrq = 1` | 允許 Magic SysRq（救援用，資安基準可能要求關） |
+| ★★ `kernel.core_pattern` | core dump 路徑 |
 
 ---
 

@@ -8,17 +8,17 @@ difficulty: 入門
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[020-01-03-cmd-Linux-終端機與Shell入門]]"]
-updated: 2026-08-27
+updated: 2026-08-29
 ---
 
 # 網路基礎指令
 
 > [!abstract] 這篇你會學到
-> - 用 `ip` 指令族取代早已過時的 `ifconfig` / `route` / `netstat`
-> - 用 **`nmcli`**（RHEL 系與 Ubuntu 桌面）與 **`netplan`**（Ubuntu Server）設定網路
-> - 建立一套**分層排查「連不上」**的固定流程，不再瞎猜
-> - 熟練 **`curl`** 與 **`wget`**，知道什麼時候該用哪一個
-> - 搞懂 DNS 解析路徑：`/etc/hosts`、`systemd-resolved`、`/etc/resolv.conf`
+> - 用 `ip` 指令族取代早已過時的 `ifconfig` / `route` / `netstat` ★★
+> - 用 **`nmcli`**（RHEL 系與 Ubuntu 桌面）與 **`netplan`**（Ubuntu Server）設定網路 ★★★
+> - 建立一套**分層排查「連不上」**的固定流程，不再瞎猜 ★★★
+> - 熟練 **`curl`** 與 **`wget`**，知道什麼時候該用哪一個 ★★
+> - 搞懂 DNS 解析路徑：`/etc/hosts`、`systemd-resolved`、`/etc/resolv.conf` ★★
 
 ## 前置知識
 
@@ -28,7 +28,7 @@ updated: 2026-08-27
 
 ## 觀念說明
 
-### 「連不上」要分層排查
+### 「連不上」要分層排查 ★★★★
 
 九成的網路問題可以用這個順序快速定位：
 
@@ -43,48 +43,48 @@ flowchart TB
     L7["7. 應用層回應正常嗎？<br/>curl -v https://host"]
 ```
 
-> [!tip] 這個順序的價值在於「每一步都排除一整層」
-> - 第 3 步不通 → 問題在本機設定或實體/虛擬網路，不用再看 DNS
-> - 第 4 步不通但第 3 步通 → 路由或上游問題
-> - 第 5 步不通但第 4 步通 → **純 DNS 問題**
-> - 第 6 步不通但第 5 步通 → 防火牆或服務沒啟動
+> [!tip] ★★★ 這個順序的價值在於「每一步都排除一整層」
+> - 第 3 步不通 → 問題在本機設定或實體/虛擬網路，不用再看 DNS ★★
+> - 第 4 步不通但第 3 步通 → 路由或上游問題 ★★
+> - 第 5 步不通但第 4 步通 → **純 DNS 問題** ★★
+> - 第 6 步不通但第 5 步通 → 防火牆或服務沒啟動 ★★
 > - 第 7 步異常但第 6 步通 → 應用層問題
 >
-> **不要跳步驟。** 從第 7 步開始猜是最沒效率的做法。
+> ★★★★ **不要跳步驟。** 從第 7 步開始猜是最沒效率的做法。
 
-### 舊指令與新指令對照
+### 舊指令與新指令對照 ★★
 
 `ifconfig`、`route`、`netstat` 屬於 `net-tools`，**已停止維護超過十年**，
 許多現代功能（多 IP、策略路由、VLAN、namespace）它們顯示不出來。
 
 | 舊（net-tools） | 新（iproute2） | 說明 |
 | --- | --- | --- |
-| `ifconfig` | **`ip addr`** | 查看 IP |
+| `ifconfig` | **`ip addr`** | ★★★ 查看 IP |
 | `ifconfig eth0 up/down` | `ip link set eth0 up/down` | 啟用/停用介面 |
 | `ifconfig eth0 192.0.2.1/24` | `ip addr add 192.0.2.1/24 dev eth0` | 設定 IP |
-| `route -n` | **`ip route`** | 路由表 |
+| `route -n` | **`ip route`** | ★★ 路由表 |
 | `route add default gw X` | `ip route add default via X` | 新增路由 |
 | `arp -a` | `ip neigh` | ARP 表 |
-| `netstat -tlnp` | **`ss -tlnp`** | 監聽中的埠 |
+| `netstat -tlnp` | **`ss -tlnp`** | ★★★ 監聽中的埠 |
 | `netstat -i` | `ip -s link` | 介面統計 |
 
-> [!warning] `ifconfig` 在最小安裝的系統上根本不存在
+> [!warning] ★★ `ifconfig` 在最小安裝的系統上根本不存在
 > ```
 > bash: ifconfig: command not found
 > ```
 > Ubuntu Server 與 RHEL 最小安裝預設**不裝 `net-tools`**。
 > 與其去 `apt install net-tools`，不如直接學 `ip`——
-> 它一定存在，而且功能完整得多。
+> ★★ 它一定存在，而且功能完整得多。
 
 ---
 
 ## 基礎操作
 
-### `ip addr`：查看與設定 IP
+### `ip addr`：查看與設定 IP ★★★
 
 ```bash
 ip addr                    # 完整輸出（可簡寫 ip a）
-ip -br addr                # ✓ 簡潔格式，最實用
+ip -br addr                # ★★★ ✓ 簡潔格式，最實用
 ip -4 addr                 # 只看 IPv4
 ip -6 addr                 # 只看 IPv6
 ip addr show eth0          # 指定介面
@@ -120,16 +120,16 @@ ip addr show eth0
 
 | 欄位 | 意義 |
 | --- | --- |
-| `<...UP,LOWER_UP>` | **`UP`** = 管理上啟用；**`LOWER_UP`** = 實體層有訊號 |
-| `mtu 1500` | 最大封包大小 |
+| `<...UP,LOWER_UP>` | ★★★ **`UP`** = 管理上啟用；**`LOWER_UP`** = 實體層有訊號 |
+| `mtu 1500` | ★★ 最大封包大小 |
 | `state UP` | 目前狀態 |
 | `link/ether` | MAC 位址 |
 | `inet .../24` | IPv4 位址與遮罩 |
-| `dynamic` | **由 DHCP 取得**（沒這個字就是靜態） |
+| `dynamic` | ★★★ **由 DHCP 取得**（沒這個字就是靜態） |
 | `valid_lft` | DHCP 租約剩餘秒數 |
-| `scope global` | 可對外；`scope link` 只在本網段 |
+| `scope global` | ★★ 可對外；`scope link` 只在本網段 |
 
-> [!tip] `UP` 但沒有 `LOWER_UP` = 網路線沒插或對端沒開
+> [!tip] ★★★ `UP` 但沒有 `LOWER_UP` = 網路線沒插或對端沒開
 > ```
 > 2: eth0: <BROADCAST,MULTICAST,UP> mtu 1500 ... state DOWN
 > ```
@@ -146,33 +146,33 @@ ip addr show eth0
 >         Duplex: Full
 >         Link detected: yes
 > ```
-> **`Speed` 不是預期值**（例如接在 Gb 交換器上卻只有 100Mb/s）
+> ★★ **`Speed` 不是預期值**（例如接在 Gb 交換器上卻只有 100Mb/s）
 > 通常是線材品質或協商問題，見 [[040-02-08-guide-機房-結構化佈線與標籤規範]]。
 
 **臨時設定 IP**（重開機後消失，適合救援與測試）：
 
 ```bash
-sudo ip addr add 192.168.1.99/24 dev eth0
+sudo ip addr add 192.168.1.99/24 dev eth0    # ★★★ 臨時加 IP，救援時很好用
 sudo ip addr del 192.168.1.99/24 dev eth0
 sudo ip link set eth0 up
-sudo ip link set eth0 down
-sudo ip link set eth0 mtu 9000
+sudo ip link set eth0 down                   # ★★★★ 遠端下這行會立刻斷線
+sudo ip link set eth0 mtu 9000               # ★★ 兩端與交換器要一致
 ```
 
-> [!warning] `ip addr` 的設定不會持久化
+> [!warning] ★★★★ `ip addr` 的設定不會持久化
 > 重開機或 NetworkManager 重載就沒了。
 > **永久設定要寫進 netplan 或 nmcli**（見下方）。
 >
-> 但這正是它的價值——**救援時的臨時手段**：
+> ★★ 但這正是它的價值——**救援時的臨時手段**：
 > 設定檔寫錯導致沒有網路時，用 `ip addr add` 先恢復連線，
 > 再慢慢修設定檔。
 
-### `ip route`：路由表
+### `ip route`：路由表 ★★★
 
 ```bash
-ip route                          # 路由表（可簡寫 ip r）
+ip route                          # ★★ 路由表（可簡寫 ip r）
 ip -br route
-ip route get 8.8.8.8              # ✓ 查「連到這個 IP 會走哪條路」
+ip route get 8.8.8.8              # ★★★ ✓ 查「連到這個 IP 會走哪條路」
 ip route show table all           # 所有路由表（含策略路由）
 ```
 
@@ -186,9 +186,9 @@ default via 192.168.1.1 dev eth0 proto dhcp src 192.168.1.50 metric 100
 192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.50 metric 100
 ```
 
-- **`default via 192.168.1.1`** — 預設閘道，找不到其他路由就走這裡
+- **`default via 192.168.1.1`** — 預設閘道，找不到其他路由就走這裡 ★★★
 - `192.168.1.0/24 dev eth0` — 本網段直接送
-- `metric` — 多條路由時**數字小的優先**
+- `metric` — 多條路由時**數字小的優先** ★★
 
 ```bash
 ip route get 8.8.8.8
@@ -198,7 +198,7 @@ ip route get 8.8.8.8
 8.8.8.8 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 1000
 ```
 
-> [!tip] `ip route get` 是排查路由問題的最快指令
+> [!tip] ★★★ `ip route get` 是排查路由問題的最快指令
 > 它直接告訴你「這個目的地會走哪個介面、哪個閘道、用哪個來源 IP」。
 > 多網卡、VPN、Docker 環境下特別有用——
 > 一行就知道流量是不是走到了預期的路徑。
@@ -211,12 +211,12 @@ sudo ip route add 10.0.0.0/8 via 192.168.1.254 dev eth0
 sudo ip route del 10.0.0.0/8
 ```
 
-### 其他 `ip` 子指令
+### 其他 `ip` 子指令 ★★
 
 ```bash
 ip link                    # 介面清單（含未設 IP 的）
 ip -br link
-ip -s link show eth0       # 收發封包統計與錯誤計數
+ip -s link show eth0       # ★★★ 收發封包統計與錯誤計數
 ip neigh                   # ARP / NDP 表
 ip -br neigh
 ```
@@ -233,7 +233,7 @@ ip -s link show eth0
     412093822  982103   0       0       0       0
 ```
 
-> [!tip] `errors` 或 `dropped` 持續增加代表實體層有問題
+> [!tip] ★★★★ `errors` 或 `dropped` 持續增加代表實體層有問題
 > 正常情況這兩個數字應該接近 0 且不成長。
 > 持續增加的話檢查：網路線、光模組、交換器埠錯誤計數、MTU 不一致。
 >
@@ -242,13 +242,13 @@ ip -s link show eth0
 > watch -n 2 'ip -s link show eth0 | grep -A1 RX'
 > ```
 
-### `ss`：查看連線與監聽埠
+### `ss`：查看連線與監聽埠 ★★★
 
 ```bash
-ss -tlnp                   # ✓ 最常用：TCP、監聽中、數字、程序
+ss -tlnp                   # ★★★ ✓ 最常用：TCP、監聽中、數字、程序
 ss -ulnp                   # UDP
-ss -tulnp                  # 兩者都要
-ss -tn state established   # 已建立的 TCP 連線
+ss -tulnp                  # ★★ 兩者都要
+ss -tn state established   # ★★ 已建立的 TCP 連線
 ss -s                      # 統計摘要
 ss -tnp dst 203.0.113.5    # 連到特定對象的連線
 ss -tlnp 'sport = :443'    # 特定埠
@@ -266,36 +266,36 @@ LISTEN 0      70         127.0.0.1:33060      0.0.0.0:*     users:(("mysqld",pid
 LISTEN 0      151        127.0.0.1:3306       0.0.0.0:*     users:(("mysqld",pid=1533,fd=23))
 ```
 
-> [!danger] 注意 `0.0.0.0` 與 `127.0.0.1` 的差別
-> - **`0.0.0.0:80`** — 監聽**所有介面**，任何人都連得到（含公網）
-> - **`127.0.0.1:3306`** — 只監聽本機，外面連不到
+> [!danger] ★★★★★ 注意 `0.0.0.0` 與 `127.0.0.1` 的差別
+> - **`0.0.0.0:80`** — 監聽**所有介面**，任何人都連得到（含公網）★★★★
+> - **`127.0.0.1:3306`** — 只監聽本機，外面連不到 ★★★
 >
 > 上面的例子中 MySQL 只綁 `127.0.0.1`（正確），Nginx 綁全部（正常，它就是要對外）。
 >
-> **資料庫、快取、管理介面出現 `0.0.0.0` 就是資安問題**：
+> ★★★★★ **資料庫、快取、管理介面出現 `0.0.0.0` 就是資安問題**：
 > ```bash
 > sudo ss -tlnp | awk '$4 ~ /^(0\.0\.0\.0|\[::\]):/ {print}'
 > ```
 > 這一行列出所有對外監聽的服務，逐一確認是否應該對外。
 > 見 [[060-04-01-07-svc-MySQL-安全強化]]、[[000-04-ref-索引-連接埠速查]]。
 
-### `ping` 與 `traceroute`
+### `ping` 與 `traceroute` ★★
 
 ```bash
-ping -c 4 192.168.1.1              # 送 4 個封包就停
-ping -c 4 -W 1 8.8.8.8             # 每個封包等 1 秒逾時
-ping -I eth0 8.8.8.8               # 指定介面
-ping -s 1472 -M do 8.8.8.8         # 測試 MTU（不分片）
+ping -c 4 192.168.1.1              # ★★ 送 4 個封包就停
+ping -c 4 -W 1 8.8.8.8             # ★★ 每個封包等 1 秒逾時
+ping -I eth0 8.8.8.8               # ★ 指定介面
+ping -s 1472 -M do 8.8.8.8         # ★★★ 測試 MTU（不分片）
 ping6 -c 4 2001:4860:4860::8888
 ```
 
 ```bash
 traceroute 8.8.8.8
-mtr 8.8.8.8                        # ✓ 持續追蹤，比 traceroute 好用
+mtr 8.8.8.8                        # ★★★ ✓ 持續追蹤，比 traceroute 好用
 mtr -r -c 10 8.8.8.8               # 報表模式，跑 10 輪後輸出
 ```
 
-> [!warning] `ping` 不通不代表主機掛了
+> [!warning] ★★★ `ping` 不通不代表主機掛了
 > 很多防火牆會擋 ICMP。用 `nc` 測特定埠比較準：
 > ```bash
 > nc -zv example.com 443
@@ -308,8 +308,8 @@ mtr -r -c 10 8.8.8.8               # 報表模式，跑 10 輪後輸出
 > timeout 3 bash -c '</dev/tcp/example.com/443' && echo "通" || echo "不通"
 > ```
 
-> [!tip] 用 `ping -s -M do` 找出 MTU 問題
-> 症狀：小的請求正常，大的檔案傳輸卡住或很慢（常見於 VPN、PPPoE）。
+> [!tip] ★★★★ 用 `ping -s -M do` 找出 MTU 問題
+> ★★★ 症狀：小的請求正常，大的檔案傳輸卡住或很慢（常見於 VPN、PPPoE）。
 > ```bash
 > ping -c 2 -s 1472 -M do 8.8.8.8     # 1472 + 28 = 1500
 > ```
@@ -321,18 +321,18 @@ mtr -r -c 10 8.8.8.8               # 報表模式，跑 10 輪後輸出
 > sudo ip link set eth0 mtu 1420
 > ```
 
-### DNS 查詢
+### DNS 查詢 ★★
 
 ```bash
 dig example.com                    # 完整查詢
-dig +short example.com             # ✓ 只要答案
-dig example.com MX                 # 指定紀錄類型
-dig @8.8.8.8 example.com           # 指定 DNS 伺服器
-dig +trace example.com             # 從根伺服器開始追蹤
+dig +short example.com             # ★★★ ✓ 只要答案
+dig example.com MX                 # ★★ 指定紀錄類型
+dig @8.8.8.8 example.com           # ★★★ 指定 DNS 伺服器
+dig +trace example.com             # ★★ 從根伺服器開始追蹤
 dig -x 93.184.216.34               # 反解
 host example.com                   # 簡單查詢
 resolvectl query example.com       # systemd-resolved 的查詢（Ubuntu）
-resolvectl status                  # 目前用哪些 DNS
+resolvectl status                  # ★★★ 目前用哪些 DNS
 ```
 
 ```bash
@@ -343,17 +343,17 @@ dig +short example.com
 93.184.216.34
 ```
 
-> [!tip] 比較「本機解析」與「權威解析」找出快取問題
+> [!tip] ★★★ 比較「本機解析」與「權威解析」找出快取問題
 > ```bash
 > dig +short example.com              # 用你目前的 DNS
 > dig +short @8.8.8.8 example.com     # 用公共 DNS
 > dig +short @ns1.example.com example.com   # 直接問權威伺服器
 > ```
-> 三者不一致 = **有一層還在用快取**。
+> ★★★ 三者不一致 = **有一層還在用快取**。
 > 這是換 IP 後「有些人看得到新站有些人看到舊站」的原因。
 > 詳見 [[060-01-04-06-guide-dig-與DNS排查]]。
 
-### `/etc/hosts` 與解析順序
+### `/etc/hosts` 與解析順序 ★★
 
 ```bash
 cat /etc/hosts
@@ -373,9 +373,9 @@ cat /etc/nsswitch.conf | grep hosts
 hosts:          files mdns4_minimal [NOTFOUND=return] dns
 ```
 
-`files` 在 `dns` 之前 → **`/etc/hosts` 優先於 DNS**。
+★★★ `files` 在 `dns` 之前 → **`/etc/hosts` 優先於 DNS**。
 
-> [!tip] `/etc/hosts` 是測試新伺服器的好工具
+> [!tip] ★★ `/etc/hosts` 是測試新伺服器的好工具
 > 網站要搬家，想在改 DNS 前先測試新機器：
 > ```bash
 > # 在你自己的電腦加一行
@@ -383,10 +383,10 @@ hosts:          files mdns4_minimal [NOTFOUND=return] dns
 > ```
 > 這樣只有你會連到新機器，其他人還是舊的。測試完拿掉。
 >
-> **但要記得拿掉**——忘記移除會造成「只有我連不到正確的機器」，
+> ★★★ **但要記得拿掉**——忘記移除會造成「只有我連不到正確的機器」，
 > 而且很難想到原因。
 
-### `/etc/resolv.conf` 的陷阱
+### `/etc/resolv.conf` 的陷阱 ★★
 
 ```bash
 cat /etc/resolv.conf
@@ -399,7 +399,7 @@ options edns0 trust-ad
 search example.com
 ```
 
-> [!danger] 直接改 `/etc/resolv.conf` 通常無效
+> [!danger] ★★★★ 直接改 `/etc/resolv.conf` 通常無效
 > 現代 Ubuntu 上它是**指向 systemd-resolved 的符號連結**，
 > 你改了會被覆蓋，而且 `127.0.0.53` 只是本機的 stub 解析器。
 >
@@ -422,19 +422,19 @@ search example.com
 >        DNS Servers: 192.168.1.1 8.8.8.8
 > ```
 >
-> **要改 DNS 就改 netplan 或 nmcli**（見下方），不要改 `resolv.conf`。
+> ★★★ **要改 DNS 就改 netplan 或 nmcli**（見下方），不要改 `resolv.conf`。
 
 ---
 
 ## 網路設定：`netplan` 與 `nmcli`
 
-### 哪個系統用哪個
+### 哪個系統用哪個 ★★
 
 | 系統 | 主要工具 | 設定檔位置 |
 | --- | --- | --- |
-| **Ubuntu Server** | **`netplan`** | `/etc/netplan/*.yaml` |
+| **Ubuntu Server** | **`netplan`** | ★★★ `/etc/netplan/*.yaml` |
 | Ubuntu Desktop | netplan → NetworkManager | 同上，`renderer: NetworkManager` |
-| **RHEL / Rocky / Alma** | **`nmcli`**（NetworkManager） | `/etc/NetworkManager/system-connections/` |
+| **RHEL / Rocky / Alma** | **`nmcli`**（NetworkManager） | ★★★ `/etc/NetworkManager/system-connections/` |
 | Debian（傳統） | `/etc/network/interfaces` | 同左 |
 
 ```mermaid
@@ -449,14 +449,14 @@ flowchart TB
     end
 ```
 
-### `netplan`（Ubuntu Server）
+### `netplan`（Ubuntu Server）★★★
 
 ```bash
 ls /etc/netplan/
 sudo cat /etc/netplan/50-cloud-init.yaml
 ```
 
-**靜態 IP 設定範例**：
+★★★ **靜態 IP 設定範例**：
 
 ```bash
 sudo tee /etc/netplan/99-static.yaml > /dev/null <<'NETPLAN'
@@ -482,17 +482,17 @@ sudo chmod 600 /etc/netplan/99-static.yaml
 套用：
 
 ```bash
-sudo netplan generate         # 產生後端設定，檢查語法
-sudo netplan try              # ✓ 套用，120 秒內沒確認就自動還原
-sudo netplan apply            # 直接套用（有風險）
+sudo netplan generate         # ★★★ 產生後端設定，檢查語法
+sudo netplan try              # ★★★★ ✓ 套用，120 秒內沒確認就自動還原
+sudo netplan apply            # ★★★★ 直接套用（有風險）
 ```
 
-> [!danger] **遠端操作一定要用 `netplan try`，不要用 `apply`**
+> [!danger] ★★★★★ **遠端操作一定要用 `netplan try`，不要用 `apply`**
 > `netplan try` 套用新設定後會倒數 120 秒，
 > 你必須按 Enter 確認才會保留；**沒確認就自動還原**。
 >
 > 這樣即使設定錯誤導致連線中斷，兩分鐘後網路就會自己恢復。
-> 用 `apply` 設錯就直接失聯，只能去機房或用主控台。
+> ★★★★ 用 `apply` 設錯就直接失聯，只能去機房或用主控台。
 >
 > ```
 > Do you want to keep these settings?
@@ -500,15 +500,15 @@ sudo netplan apply            # 直接套用（有風險）
 > Changes will revert in 118 seconds
 > ```
 
-> [!warning] netplan 的 YAML 對縮排極度敏感
-> 必須用**空白**（不能用 Tab），縮排錯誤會導致設定完全不生效
+> [!warning] ★★★ netplan 的 YAML 對縮排極度敏感
+> ★★★★ 必須用**空白**（不能用 Tab），縮排錯誤會導致設定完全不生效
 > 而且不一定報錯。
 > ```bash
 > sudo netplan generate        # 先驗證語法
 > sudo netplan --debug apply   # 看它實際做了什麼
 > ```
 
-> [!warning] 檔案權限要 600
+> [!warning] ★★★ 檔案權限要 600
 > netplan 檔案可能含 WiFi 密碼。權限太寬會警告：
 > ```
 > Permissions for /etc/netplan/99-static.yaml are too open.
@@ -518,19 +518,19 @@ sudo netplan apply            # 直接套用（有風險）
 > ```
 
 **多個 netplan 檔案的合併規則**：依檔名數字順序讀取，
-**後面的覆蓋前面的**。所以自訂設定用 `99-` 開頭。
+**後面的覆蓋前面的**。所以自訂設定用 `99-` 開頭。★★
 
-### `nmcli`（RHEL 系與 Ubuntu 桌面）
+### `nmcli`（RHEL 系與 Ubuntu 桌面）★★★
 
-`nmcli` 是 NetworkManager 的指令列介面，**設定立即生效且自動持久化**。
+`nmcli` 是 NetworkManager 的指令列介面，**設定立即生效且自動持久化**。★★★
 
 **查看**：
 
 ```bash
 nmcli                             # 完整狀態總覽
-nmcli device status               # ✓ 介面與連線狀態
+nmcli device status               # ★★★ ✓ 介面與連線狀態
 nmcli device show eth0            # 某介面的詳細資訊
-nmcli connection show             # 所有連線設定檔
+nmcli connection show             # ★★ 所有連線設定檔
 nmcli connection show "有線連線 1" # 某個設定檔的完整內容
 nmcli general status
 nmcli -f IP4 device show eth0     # 只看 IPv4 相關欄位
@@ -555,7 +555,7 @@ NAME         UUID                                  TYPE      DEVICE
 System eth0  5fb06bd0-0bb0-7ffb-45f1-d6edd65f3e03  ethernet  eth0
 ```
 
-> [!tip] 「device」與「connection」是兩個不同概念
+> [!tip] ★★★ 「device」與「connection」是兩個不同概念
 > - **device**（裝置）= 實體或虛擬網卡，如 `eth0`
 > - **connection**（連線設定檔）= 一組設定，可以套用到裝置上
 >
@@ -575,7 +575,7 @@ sudo nmcli connection modify "$CON" \
     ipv4.dns-search "example.com" \
     connection.autoconnect yes
 
-# 套用（會短暫斷線）
+# ★★★ 套用（會短暫斷線）
 sudo nmcli connection up "$CON"
 ```
 
@@ -606,16 +606,16 @@ sudo nmcli connection up static-lan
 **其他常用操作**：
 
 ```bash
-sudo nmcli connection reload            # 重新讀取設定檔
-sudo nmcli device reapply eth0          # 套用變更但不斷線（可能）
-sudo nmcli device disconnect eth0
+sudo nmcli connection reload            # ★★ 重新讀取設定檔
+sudo nmcli device reapply eth0          # ★★★ 套用變更但不斷線（可能）
+sudo nmcli device disconnect eth0       # ★★★★ 遠端下這行會斷線
 sudo nmcli device connect eth0
 sudo nmcli connection delete static-lan
-sudo nmcli networking off / on          # 全部關閉/開啟
+sudo nmcli networking off / on          # ★★★ 全部關閉/開啟
 nmcli connection export "System eth0"   # 匯出設定
 ```
 
-> [!tip] `nmtui` 是文字介面版，遠端改設定較安全
+> [!tip] ★★ `nmtui` 是文字介面版，遠端改設定較安全
 > ```bash
 > sudo nmtui
 > ```
@@ -624,11 +624,11 @@ nmcli connection export "System eth0"   # 匯出設定
 > 更保險的做法是先設定 autoconnect 與一個「已知可用」的備援設定檔，
 > 設錯時可以透過主控台快速切回去。
 
-> [!danger] 遠端執行 `nmcli connection up` 會斷線
+> [!danger] ★★★★ 遠端執行 `nmcli connection up` 會斷線
 > 修改自己正在使用的連線並 `up` 之後，SSH 會斷。
 > 如果新設定有誤，你就連不回來了。
 >
-> **安全做法**：用 `at` 排一個「五分鐘後還原」的保險：
+> ★★★★ **安全做法**：用 `at` 排一個「五分鐘後還原」的保險：
 > ```bash
 > # 先安排保險（五分鐘後切回 DHCP）
 > echo 'nmcli con mod "System eth0" ipv4.method auto ipv4.addresses "" ipv4.gateway ""; nmcli con up "System eth0"' \
@@ -643,11 +643,11 @@ nmcli connection export "System eth0"   # 匯出設定
 > ```
 > 這是 `netplan try` 的手動版本。見 [[020-01-18-guide-Linux-排程工作]]。
 
-### `/etc/hosts` 與主機名稱
+### `/etc/hosts` 與主機名稱 ★★
 
 ```bash
 hostnamectl                                   # 查看
-sudo hostnamectl set-hostname web01           # 設定
+sudo hostnamectl set-hostname web01           # ★★ 設定
 sudo hostnamectl set-hostname "Web 伺服器 01" --pretty
 ```
 
@@ -655,39 +655,39 @@ sudo hostnamectl set-hostname "Web 伺服器 01" --pretty
 
 ## `curl` 與 `wget`
 
-### 該用哪一個
+### 該用哪一個 ★★
 
 | | `curl` | `wget` |
 | --- | --- | --- |
-| 定位 | **傳輸資料**（送與收） | **下載檔案** |
-| 預設輸出 | **stdout**（螢幕） | **檔案** |
+| ★★★ 定位 | **傳輸資料**（送與收） | **下載檔案** |
+| ★★★ 預設輸出 | **stdout**（螢幕） | **檔案** |
 | 遞迴下載整站 | ❌ | ✅ `-r` |
 | 續傳 | `-C -` | `-c` |
 | 支援協定 | 極多（HTTP/FTP/SFTP/SMTP/…） | HTTP/HTTPS/FTP |
-| 送 POST / 自訂標頭 | ✅ **強項** | 有限 |
+| ★★ 送 POST / 自訂標頭 | ✅ **強項** | 有限 |
 | 預設安裝 | 多數系統有 | 多數系統有 |
 
-> [!tip] 一句話原則
+> [!tip] ★★★ 一句話原則
 > **測試 API、除錯 HTTP → `curl`。單純把檔案抓下來 → `wget`。**
 
-### `curl` 常用
+### `curl` 常用 ★★★
 
 ```bash
 curl https://example.com                    # 輸出到螢幕
 curl -o page.html https://example.com       # 存成指定檔名
 curl -O https://example.com/file.tar.gz     # 用遠端檔名存檔
-curl -L https://example.com                 # ✓ 跟隨重導向
+curl -L https://example.com                 # ★★★ ✓ 跟隨重導向
 curl -s https://example.com                 # 安靜模式（腳本用）
-curl -sS https://example.com                # 安靜但仍顯示錯誤 ← 腳本建議
-curl -f https://example.com                 # HTTP 錯誤時回傳非 0 退出碼
+curl -sS https://example.com                # ★★★ 安靜但仍顯示錯誤 ← 腳本建議
+curl -f https://example.com                 # ★★★★ HTTP 錯誤時回傳非 0 退出碼
 curl -I https://example.com                 # 只要標頭（HEAD）
-curl -v https://example.com                 # ✓ 顯示完整請求與回應
-curl -k https://self-signed.local           # 略過憑證驗證（僅測試用！）
+curl -v https://example.com                 # ★★ ✓ 顯示完整請求與回應
+curl -k https://self-signed.local           # ★★★★ 略過憑證驗證（僅測試用！）
 curl --max-time 10 https://example.com      # 總逾時
 curl --connect-timeout 3 https://example.com # 連線逾時
 ```
 
-**腳本裡的標準組合**：
+★★★ **腳本裡的標準組合**：
 
 ```bash
 curl -fsSL https://example.com/api/status
@@ -695,12 +695,12 @@ curl -fsSL https://example.com/api/status
 
 | 選項 | 作用 |
 | --- | --- |
-| `-f` | HTTP 4xx/5xx 時**回傳失敗退出碼**（沒有它 curl 會回 0！） |
+| `-f` | ★★★★ HTTP 4xx/5xx 時**回傳失敗退出碼**（沒有它 curl 會回 0！） |
 | `-s` | 不顯示進度條 |
-| `-S` | 但仍顯示錯誤訊息 |
-| `-L` | 跟隨重導向 |
+| `-S` | ★★ 但仍顯示錯誤訊息 |
+| `-L` | ★★★ 跟隨重導向 |
 
-> [!danger] 沒有 `-f`，`curl` 收到 404 也會回傳成功
+> [!danger] ★★★★ 沒有 `-f`，`curl` 收到 404 也會回傳成功
 > ```bash
 > curl -s https://example.com/notfound > out.html
 > echo $?
@@ -716,12 +716,12 @@ curl -fsSL https://example.com/api/status
 > curl: (22) The requested URL returned error: 404
 > 22       ← ✓ 正確反映失敗
 > ```
-> **腳本裡下載東西一定要加 `-f`**，否則會把錯誤頁面當成正確檔案存下來。
+> ★★★ **腳本裡下載東西一定要加 `-f`**，否則會把錯誤頁面當成正確檔案存下來。
 
 **API 測試**：
 
 ```bash
-# POST JSON
+# ★★ POST JSON
 curl -sS -X POST https://api.example.com/users \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer $TOKEN" \
@@ -736,7 +736,7 @@ curl -sS -X POST https://api.example.com/users \
 curl -sS -X POST https://example.com/login \
      -d "user=admin" -d "pass=secret"
 
-# 上傳檔案
+# ★ 上傳檔案
 curl -sS -F "file=@report.pdf" -F "title=月報" https://example.com/upload
 
 # 保持 cookie
@@ -764,10 +764,10 @@ curl -v https://example.com 2>&1 | head -30
 < server: nginx
 ```
 
-`>` 是你送出的，`<` 是伺服器回的。
+★★ `>` 是你送出的，`<` 是伺服器回的。
 
 ```bash
-# 量測各階段耗時（找出瓶頸在 DNS、連線還是伺服器）
+# ★★★ 量測各階段耗時（找出瓶頸在 DNS、連線還是伺服器）
 curl -sS -o /dev/null -w '
 DNS 解析    : %{time_namelookup}s
 TCP 連線    : %{time_connect}s
@@ -789,22 +789,22 @@ HTTP 狀態   : 200
 下載大小    : 1256 bytes
 ```
 
-> [!tip] 這個量測是判斷「網站慢在哪」的利器
+> [!tip] ★★★ 這個量測是判斷「網站慢在哪」的利器
 > | 哪一段特別長 | 問題在 |
 > | --- | --- |
-> | `time_namelookup` | DNS 伺服器慢 |
-> | `time_connect` | 網路延遲或封包遺失 |
-> | `time_appconnect` | TLS 握手慢（憑證鏈太長、OCSP） |
-> | **`time_starttransfer`** | **後端處理慢**（PHP、資料庫） |
+> | `time_namelookup` | ★★ DNS 伺服器慢 |
+> | `time_connect` | ★★ 網路延遲或封包遺失 |
+> | `time_appconnect` | ★★ TLS 握手慢（憑證鏈太長、OCSP） |
+> | **`time_starttransfer`** | ★★★ **後端處理慢**（PHP、資料庫） |
 > | `time_total` 減 `time_starttransfer` | 內容傳輸慢（頻寬、檔案大） |
 >
 > 見 [[060-01-04-05-guide-curl-與HTTP除錯]] 與 [[060-01-03-04-guide-監控-效能瓶頸排查方法論]]。
 
 ```bash
-# 強制走特定 IP（測試新伺服器，不用改 /etc/hosts）
+# ★★★ 強制走特定 IP（測試新伺服器，不用改 /etc/hosts）
 curl -sS --resolve example.com:443:203.0.113.99 https://example.com
 
-# 檢視憑證
+# ★ 檢視憑證
 curl -vI https://example.com 2>&1 | grep -E 'subject|issuer|expire'
 
 # 指定 HTTP 版本
@@ -812,20 +812,20 @@ curl --http1.1 https://example.com
 curl --http3 https://example.com
 ```
 
-> [!tip] `--resolve` 比改 `/etc/hosts` 好
+> [!tip] ★★ `--resolve` 比改 `/etc/hosts` 好
 > 測試新伺服器時不用改系統設定、不會忘記還原、
 > 而且只影響這一次的請求。
 
-### `wget` 常用
+### `wget` 常用 ★★
 
 ```bash
 wget https://example.com/file.tar.gz             # 下載
 wget -O custom.tar.gz https://example.com/f.gz   # 指定檔名
-wget -c https://example.com/big.iso              # ✓ 續傳
+wget -c https://example.com/big.iso              # ★★★ ✓ 續傳
 wget -q https://example.com/f                    # 安靜
 wget -b https://example.com/big.iso              # 背景下載
-wget --limit-rate=1m https://example.com/big.iso # 限速
-wget -t 5 -T 30 https://example.com/f            # 重試 5 次、逾時 30 秒
+wget --limit-rate=1m https://example.com/big.iso # ★★ 限速
+wget -t 5 -T 30 https://example.com/f            # ★★ 重試 5 次、逾時 30 秒
 wget --spider https://example.com                # 只檢查存在，不下載
 wget -i urls.txt                                 # 從檔案讀取多個網址
 ```
@@ -839,16 +839,16 @@ wget -r -np -k -p -E https://docs.example.com/manual/
 | 選項 | 作用 |
 | --- | --- |
 | `-r` | 遞迴 |
-| `-np` | **不往上層目錄爬** |
+| `-np` | ★★★ **不往上層目錄爬** |
 | `-k` | 把連結改成本機路徑（可離線瀏覽） |
 | `-p` | 一併下載圖片、CSS 等頁面元素 |
 | `-E` | 動態頁面存成 `.html` |
 | `-l N` | 遞迴深度 |
-| `-w 1` | 每次請求間隔 1 秒（**禮貌，避免被擋**） |
+| `-w 1` | ★★★ 每次請求間隔 1 秒（**禮貌，避免被擋**） |
 
-> [!warning] 遞迴下載別人的網站要節制
+> [!warning] ★★★★ 遞迴下載別人的網站要節制
 > 沒有 `-w` 的話 `wget -r` 會用最快速度瘋狂請求，
-> 對方可能視為 DoS 攻擊而封鎖你的 IP。
+> ★★★ 對方可能視為 DoS 攻擊而封鎖你的 IP。
 > 至少加 `-w 1 --random-wait`，並遵守 `robots.txt`。
 
 **驗證下載完整性**：
@@ -863,8 +863,8 @@ sha256sum -c app.tar.gz.sha256
 app.tar.gz: OK
 ```
 
-> [!danger] 下載後一定要驗證
-> 網路傳輸可能不完整，映像站可能被入侵。
+> [!danger] ★★★★ 下載後一定要驗證
+> ★★★ 網路傳輸可能不完整，映像站可能被入侵。
 > 官方有提供 checksum 或 GPG 簽章就一定要驗：
 > ```bash
 > # GPG 簽章驗證（更強）
@@ -877,21 +877,21 @@ app.tar.gz: OK
 >
 > | 項目 | Debian / Ubuntu | RHEL 系 |
 > | --- | --- | --- |
-> | **網路設定工具** | **netplan**（`/etc/netplan/*.yaml`） | **nmcli**（NetworkManager） |
+> | **網路設定工具** | **netplan**（`/etc/netplan/*.yaml`） | ★★★ **nmcli**（NetworkManager） |
 > | 設定檔位置 | `/etc/netplan/` | `/etc/NetworkManager/system-connections/` |
-> | 安全套用 | `netplan try`（自動還原） | `nmcli`（需自己安排保險） |
-> | `dig` 套件 | `dnsutils` | **`bind-utils`** |
+> | 安全套用 | `netplan try`（自動還原） | ★★★★ `nmcli`（需自己安排保險） |
+> | `dig` 套件 | `dnsutils` | ★★ **`bind-utils`** |
 > | `ip` / `ss` 套件 | `iproute2` | **`iproute`** |
 > | `ifconfig` / `netstat` | `net-tools` | `net-tools` |
 > | `mtr` | `mtr-tiny` / `mtr` | `mtr` |
-> | DNS 解析器 | systemd-resolved（`127.0.0.53`） | 直接寫 `/etc/resolv.conf`（由 NM 管理） |
-> | 防火牆 | `ufw` | **`firewalld`** |
+> | DNS 解析器 | systemd-resolved（`127.0.0.53`） | ★★ 直接寫 `/etc/resolv.conf`（由 NM 管理） |
+> | 防火牆 | `ufw` | ★★★ **`firewalld`** |
 >
-> RHEL 系**沒有 netplan**。舊版的 `/etc/sysconfig/network-scripts/ifcfg-*`
+> ★★★ RHEL 系**沒有 netplan**。舊版的 `/etc/sysconfig/network-scripts/ifcfg-*`
 > 在 RHEL 9 已被移除，一律用 `nmcli` 或直接編輯
 > `/etc/NetworkManager/system-connections/*.nmconnection`（權限需 600）。
 >
-> 另外 RHEL 系預設啟用 firewalld，**服務起來了但連不到，先檢查防火牆**：
+> ★★★ 另外 RHEL 系預設啟用 firewalld，**服務起來了但連不到，先檢查防火牆**：
 > ```bash
 > sudo firewall-cmd --list-all
 > sudo firewall-cmd --add-service=http --permanent
@@ -906,7 +906,7 @@ app.tar.gz: OK
 ```bash
 #!/usr/bin/env bash
 # netcheck.sh — 分層排查網路連線問題
-set -uo pipefail
+set -uo pipefail    # ★★ 刻意不用 -e：七層要全部跑完才看得出斷在哪
 
 TARGET="${1:-example.com}"
 PORT="${2:-443}"
@@ -926,7 +926,7 @@ fi
 echo
 echo "════ 第 2 層：路由 ════"
 ip route
-GW=$(ip route | awk '/^default/ {print $3; exit}')
+GW=$(ip route | awk '/^default/ {print $3; exit}')   # ★★★ 沒有這行輸出就是沒預設路由
 if [ -n "$GW" ]; then pass "預設閘道：$GW"; else fail "沒有預設路由"; exit 1; fi
 
 echo
@@ -955,7 +955,7 @@ if [ -n "$IP" ]; then
     PUB=$(dig +short @1.1.1.1 "$TARGET" A | head -1)
     [ "$IP" = "$PUB" ] && pass "與公共 DNS 結果一致" \
                        || fail "與公共 DNS 不一致（$PUB）→ 可能有快取或本機覆寫"
-    grep -q "$TARGET" /etc/hosts 2>/dev/null && fail "⚠ /etc/hosts 有這個網域的覆寫！"
+    grep -q "$TARGET" /etc/hosts 2>/dev/null && fail "⚠ /etc/hosts 有這個網域的覆寫！"   # ★★★ 最常被漏掉的一條
 else
     fail "DNS 解析失敗 → 檢查 DNS 伺服器設定"
     exit 1
@@ -968,7 +968,7 @@ if timeout 5 bash -c "</dev/tcp/$TARGET/$PORT" 2>/dev/null; then
 else
     fail "$TARGET:$PORT 不通 → 檢查防火牆、服務是否啟動"
     echo "     本機監聽狀況："
-    sudo ss -tlnp 2>/dev/null | grep ":$PORT " || echo "     （本機沒有監聽 $PORT）"
+    sudo ss -tlnp 2>/dev/null | grep ":$PORT " || echo "     （本機沒有監聽 $PORT）"   # ★★ 分辨「沒開服務」與「被防火牆擋」
 fi
 
 echo
@@ -1011,7 +1011,7 @@ notBefore=Jul 15 00:00:00 2026 GMT
 notAfter=Oct 13 23:59:59 2026 GMT
 ```
 
-> [!tip] 把這個腳本放進 `/usr/local/bin`
+> [!tip] ★★ 把這個腳本放進 `/usr/local/bin`
 > 每次有人回報「連不上」，跑一次就知道問題在哪一層，
 > 不用從頭問「你 ping 得到嗎」。
 
@@ -1021,35 +1021,35 @@ notAfter=Oct 13 23:59:59 2026 GMT
 
 | 現象 | 原因 | 解法 |
 | --- | --- | --- |
-| `ifconfig: command not found` | 最小安裝沒有 net-tools | 改用 `ip addr`（更好）或 `apt install net-tools` |
-| `ip addr add` 設的 IP 重開機後消失 | `ip` 指令不持久化 | 寫進 netplan 或 nmcli |
-| 改了 `/etc/resolv.conf` 沒作用 | 它由 systemd-resolved 管理且會被覆寫 | 改 netplan 的 `nameservers` 或 `nmcli ipv4.dns` |
-| `netplan apply` 之後失聯 | 設定錯誤 | **一律用 `netplan try`**；已失聯只能用主控台 |
-| netplan 設定完全沒生效 | YAML 縮排錯誤（用了 Tab） | `netplan generate` 驗證；只用空白縮排 |
-| `nmcli con up` 之後 SSH 斷線 | 修改了正在使用的連線 | 事前用 `at` 排保險還原 |
-| `ping` 不通但服務其實正常 | 防火牆擋 ICMP | 用 `nc -zv host port` 測 |
-| DNS 有時對有時錯 | 多個 DNS 伺服器回答不一致 | `dig @每個伺服器` 逐一比對 |
-| 只有我連到舊 IP | `/etc/hosts` 有殘留覆寫 | `grep 網域 /etc/hosts` |
-| 小請求正常、大檔傳輸卡住 | MTU 不一致 | `ping -s 1472 -M do` 測；調整 `ip link set mtu` |
-| `curl` 下載到錯誤頁面卻回報成功 | 沒加 `-f` | 腳本一律用 `curl -fsSL` |
-| `curl` 重導向後沒拿到內容 | 沒加 `-L` | 加 `-L` |
-| `curl: (60) SSL certificate problem` | 憑證鏈不完整或系統 CA 過期 | 檢查伺服器憑證鏈；`update-ca-certificates`；**不要用 `-k` 打發** |
-| `ss` 顯示服務綁 `0.0.0.0` | 監聽所有介面 | 資料庫等內部服務應綁 `127.0.0.1` |
-| RHEL 上服務起來了卻連不到 | firewalld 沒開埠 | `firewall-cmd --add-service=http --permanent && --reload` |
-| `ip -s link` 的 errors 持續增加 | 實體層問題 | 檢查線材、光模組、交換器埠、MTU |
+| ★★ `ifconfig: command not found` | 最小安裝沒有 net-tools | 改用 `ip addr`（更好）或 `apt install net-tools` |
+| ★★★★ `ip addr add` 設的 IP 重開機後消失 | `ip` 指令不持久化 | 寫進 netplan 或 nmcli |
+| ★★★ 改了 `/etc/resolv.conf` 沒作用 | 它由 systemd-resolved 管理且會被覆寫 | 改 netplan 的 `nameservers` 或 `nmcli ipv4.dns` |
+| ★★★★★ `netplan apply` 之後失聯 | 設定錯誤 | **一律用 `netplan try`**；已失聯只能用主控台 |
+| ★★★ netplan 設定完全沒生效 | YAML 縮排錯誤（用了 Tab） | `netplan generate` 驗證；只用空白縮排 |
+| ★★★★ `nmcli con up` 之後 SSH 斷線 | 修改了正在使用的連線 | 事前用 `at` 排保險還原 |
+| ★★★ `ping` 不通但服務其實正常 | 防火牆擋 ICMP | 用 `nc -zv host port` 測 |
+| ★★★ DNS 有時對有時錯 | 多個 DNS 伺服器回答不一致 | `dig @每個伺服器` 逐一比對 |
+| ★★★ 只有我連到舊 IP | `/etc/hosts` 有殘留覆寫 | `grep 網域 /etc/hosts` |
+| ★★★★ 小請求正常、大檔傳輸卡住 | MTU 不一致 | `ping -s 1472 -M do` 測；調整 `ip link set mtu` |
+| ★★★★ `curl` 下載到錯誤頁面卻回報成功 | 沒加 `-f` | 腳本一律用 `curl -fsSL` |
+| ★★ `curl` 重導向後沒拿到內容 | 沒加 `-L` | 加 `-L` |
+| ★★★★ `curl: (60) SSL certificate problem` | 憑證鏈不完整或系統 CA 過期 | 檢查伺服器憑證鏈；`update-ca-certificates`；**不要用 `-k` 打發** |
+| ★★★★★ `ss` 顯示服務綁 `0.0.0.0` | 監聽所有介面 | 資料庫等內部服務應綁 `127.0.0.1` |
+| ★★★ RHEL 上服務起來了卻連不到 | firewalld 沒開埠 | `firewall-cmd --add-service=http --permanent && --reload` |
+| ★★★★ `ip -s link` 的 errors 持續增加 | 實體層問題 | 檢查線材、光模組、交換器埠、MTU |
 
 ---
 
 ## 安全性注意事項
 
-> [!danger] `curl -k` / `wget --no-check-certificate` 等於關閉 TLS 保護
+> [!danger] ★★★★ `curl -k` / `wget --no-check-certificate` 等於關閉 TLS 保護
 > ```bash
 > curl -k https://internal.example.com          # ✗
 > wget --no-check-certificate https://x         # ✗
 > ```
-> 這會讓中間人攻擊完全生效。
+> ★★★★ 這會讓中間人攻擊完全生效。
 >
-> **正確做法是把內部 CA 加入系統信任**：
+> ★★★★ **正確做法是把內部 CA 加入系統信任**：
 > ```bash
 > # Debian 系
 > sudo cp internal-ca.crt /usr/local/share/ca-certificates/
@@ -1061,7 +1061,7 @@ notAfter=Oct 13 23:59:59 2026 GMT
 > ```
 > 見 [[090-01-09-guide-PKI-根憑證派送與信任]]。
 
-> [!danger] 不要把密碼或 token 放在指令列
+> [!danger] ★★★★ 不要把密碼或 token 放在指令列
 > ```bash
 > curl -H "Authorization: Bearer eyJhbGc..." https://api.example.com   # ✗ ps 看得到
 > ```
@@ -1073,11 +1073,11 @@ notAfter=Oct 13 23:59:59 2026 GMT
 > ```
 > 見 [[020-01-10-cmd-Linux-程序管理與訊號]] 與 [[090-03-03-guide-應用安全-機密管理與金鑰保護]]。
 
-> [!warning] 定期稽核對外監聽的埠
+> [!warning] ★★★★ 定期稽核對外監聽的埠
 > ```bash
 > sudo ss -tlnp | awk 'NR==1 || $4 ~ /^(0\.0\.0\.0|\[::\]):/'
 > ```
-> 每一個綁在 `0.0.0.0` 的服務都是攻擊面。
+> ★★★★★ 每一個綁在 `0.0.0.0` 的服務都是攻擊面。
 > 問自己：**這個服務真的需要對外嗎？**
 >
 > 常見應該只綁 `127.0.0.1` 的服務：
@@ -1086,7 +1086,7 @@ notAfter=Oct 13 23:59:59 2026 GMT
 >
 > 見 [[000-04-ref-索引-連接埠速查]]、[[090-02-02-guide-防火牆-ufw基礎與實務]]。
 
-> [!warning] `curl | bash` 的風險
+> [!warning] ★★★★ `curl | bash` 的風險
 > ```bash
 > curl -fsSL https://get.example.com | sudo bash    # ✗
 > ```
@@ -1100,72 +1100,72 @@ notAfter=Oct 13 23:59:59 2026 GMT
 
 | 指令 | 說明 |
 | --- | --- |
-| **`ip -br -c addr`** | **IP 位址（簡潔彩色）** |
-| `ip addr show eth0` | 指定介面詳細資訊 |
-| **`ip route`** | **路由表** |
-| **`ip route get <IP>`** | **查會走哪條路** |
-| `ip -br link` | 介面清單 |
-| `ip -s link show eth0` | 收發統計與錯誤計數 |
-| `ip neigh` | ARP 表 |
-| **`ss -tlnp`** | **監聽中的埠與程序** |
-| `ss -tn state established` | 已建立連線 |
-| `ethtool eth0` | 實體連線速率與狀態 |
+| **`ip -br -c addr`** | ★★★ **IP 位址（簡潔彩色）** |
+| `ip addr show eth0` | ★★ 指定介面詳細資訊 |
+| **`ip route`** | ★★★ **路由表** |
+| **`ip route get <IP>`** | ★★★ **查會走哪條路** |
+| `ip -br link` | ★★ 介面清單 |
+| `ip -s link show eth0` | ★★ 收發統計與錯誤計數 |
+| `ip neigh` | ★★ ARP 表 |
+| **`ss -tlnp`** | ★★★ **監聽中的埠與程序** |
+| `ss -tn state established` | ★★ 已建立連線 |
+| `ethtool eth0` | ★ 實體連線速率與狀態 |
 
 ### 設定
 
 | 指令 | 說明 |
 | --- | --- |
-| `sudo ip addr add 1.2.3.4/24 dev eth0` | 臨時加 IP（**不持久**） |
-| `sudo ip link set eth0 up/down` | 啟用/停用 |
-| **`sudo netplan try`** | **Ubuntu：套用且自動還原** |
-| `sudo netplan generate` | 驗證 YAML 語法 |
-| `nmcli device status` | RHEL：裝置狀態 |
-| `nmcli connection show` | 連線設定檔清單 |
-| `sudo nmcli con mod <名稱> ipv4.method manual ipv4.addresses ...` | 設定靜態 IP |
-| `sudo nmcli con up <名稱>` | 套用（**會斷線**） |
-| `sudo nmtui` | 文字介面設定 |
-| `sudo hostnamectl set-hostname X` | 主機名稱 |
+| `sudo ip addr add 1.2.3.4/24 dev eth0` | ★★★ 臨時加 IP（**不持久**） |
+| `sudo ip link set eth0 up/down` | ★★★★ 啟用/停用 |
+| **`sudo netplan try`** | ★★★★ **Ubuntu：套用且自動還原** |
+| `sudo netplan generate` | ★★★ 驗證 YAML 語法 |
+| `nmcli device status` | ★★ RHEL：裝置狀態 |
+| `nmcli connection show` | ★★ 連線設定檔清單 |
+| `sudo nmcli con mod <名稱> ipv4.method manual ipv4.addresses ...` | ★★★ 設定靜態 IP |
+| `sudo nmcli con up <名稱>` | ★★★★ 套用（**會斷線**） |
+| `sudo nmtui` | ★★ 文字介面設定 |
+| `sudo hostnamectl set-hostname X` | ★★ 主機名稱 |
 
 ### 診斷
 
 | 指令 | 說明 |
 | --- | --- |
-| `ping -c 4 <目標>` | 連通性 |
-| `ping -s 1472 -M do <目標>` | **測 MTU** |
-| `mtr -r -c 10 <目標>` | 路徑追蹤報表 |
-| `dig +short <網域>` | DNS 查詢 |
-| `dig @8.8.8.8 <網域>` | 指定 DNS 伺服器 |
-| `resolvectl status` | 目前使用的 DNS |
-| `nc -zv <主機> <埠>` | 測試埠是否可連 |
-| `timeout 3 bash -c '</dev/tcp/host/port'` | 不用 nc 測埠 |
+| `ping -c 4 <目標>` | ★★ 連通性 |
+| `ping -s 1472 -M do <目標>` | ★★★ **測 MTU** |
+| `mtr -r -c 10 <目標>` | ★ 路徑追蹤報表 |
+| `dig +short <網域>` | ★★★ DNS 查詢 |
+| `dig @8.8.8.8 <網域>` | ★★ 指定 DNS 伺服器 |
+| `resolvectl status` | ★ 目前使用的 DNS |
+| `nc -zv <主機> <埠>` | ★★★ 測試埠是否可連 |
+| `timeout 3 bash -c '</dev/tcp/host/port'` | ★★ 不用 nc 測埠 |
 
 ### curl
 
 | 指令 | 說明 |
 | --- | --- |
-| **`curl -fsSL <網址>`** | **腳本標準組合** |
-| `curl -O <網址>` | 用遠端檔名存檔 |
-| `curl -I <網址>` | 只要標頭 |
-| `curl -v <網址>` | **完整請求與回應** |
-| `curl -X POST -H "..." -d '...'` | API 測試 |
-| `curl -w '%{time_total}'` | **量測各階段耗時** |
-| `curl --resolve host:443:IP` | **強制走特定 IP** |
+| **`curl -fsSL <網址>`** | ★★★★ **腳本標準組合** |
+| `curl -O <網址>` | ★★ 用遠端檔名存檔 |
+| `curl -I <網址>` | ★★ 只要標頭 |
+| `curl -v <網址>` | ★★ **完整請求與回應** |
+| `curl -X POST -H "..." -d '...'` | ★★ API 測試 |
+| `curl -w '%{time_total}'` | ★★★ **量測各階段耗時** |
+| `curl --resolve host:443:IP` | ★★ **強制走特定 IP** |
 
 ### wget
 
 | 指令 | 說明 |
 | --- | --- |
-| `wget <網址>` | 下載 |
-| `wget -c <網址>` | **續傳** |
-| `wget -r -np -k -p -w 1 <網址>` | 遞迴下載整站 |
-| `wget --spider <網址>` | 只檢查存在 |
-| `sha256sum -c file.sha256` | **驗證完整性** |
+| `wget <網址>` | ★★ 下載 |
+| `wget -c <網址>` | ★★ **續傳** |
+| `wget -r -np -k -p -w 1 <網址>` | ★★★ 遞迴下載整站 |
+| `wget --spider <網址>` | ★★ 只檢查存在 |
+| `sha256sum -c file.sha256` | ★★★★ **驗證完整性** |
 
 ---
 
 ## 練習題
 
-> [!question]- 練習 1：讀懂你機器的網路狀態
+> [!question]- ★★ 練習 1：讀懂你機器的網路狀態
 > 用 `ip` 指令回答：本機有幾個介面、各自的 IP、預設閘道是誰、
 > 連到 `8.8.8.8` 會走哪個介面。不要用 `ifconfig`。
 >
@@ -1191,10 +1191,10 @@ notAfter=Oct 13 23:59:59 2026 GMT
 > `eth0` 的 IP 由 DHCP 取得（路由標了 `proto dhcp`）；
 > 對外流量走 `eth0`，經閘道 `192.168.1.1`，來源 IP 是 `192.168.1.50`。
 >
-> `ip route get` 的價值在**多網卡或有 VPN 時**——
+> ★★ `ip route get` 的價值在**多網卡或有 VPN 時**——
 > 它直接告訴你流量的實際路徑，不用自己推算路由優先度。
 
-> [!question]- 練習 2：安全地把 DHCP 改成靜態 IP
+> [!question]- ★★★★ 練習 2：安全地把 DHCP 改成靜態 IP
 > 在遠端機器上把網路從 DHCP 改成靜態 IP，
 > 要求**設錯時能自動恢復**，不會把自己鎖在外面。
 >
@@ -1228,7 +1228,7 @@ notAfter=Oct 13 23:59:59 2026 GMT
 > # 4. 驗證語法
 > sudo netplan generate
 >
-> # 5. 用 try 套用（120 秒內沒確認就自動還原）
+> # ★★★★ 5. 用 try 套用（120 秒內沒確認就自動還原）
 > sudo netplan try
 > ```
 >
@@ -1236,7 +1236,7 @@ notAfter=Oct 13 23:59:59 2026 GMT
 > ```bash
 > CON="System eth0"
 >
-> # 先排一個 5 分鐘後還原成 DHCP 的保險
+> # ★★★ 先排一個 5 分鐘後還原成 DHCP 的保險
 > echo "nmcli con mod '$CON' ipv4.method auto ipv4.addresses '' ipv4.gateway ''; nmcli con up '$CON'" \
 >   | sudo at now + 5 minutes
 >
@@ -1249,11 +1249,11 @@ notAfter=Oct 13 23:59:59 2026 GMT
 > sudo atq && sudo atrm <編號>
 > ```
 >
-> **核心觀念**：任何會影響遠端存取的變更，
+> ★★★★ **核心觀念**：任何會影響遠端存取的變更，
 > 都要事先安排「失敗時自動回復」的機制。
 > 見 [[020-01-02-guide-Linux-實驗環境準備與初次登入]]。
 
-> [!question]- 練習 3：用 curl 找出網站慢在哪
+> [!question]- ★★★ 練習 3：用 curl 找出網站慢在哪
 > 對一個網站量測各階段耗時，判斷瓶頸在 DNS、網路、TLS 還是後端。
 >
 > **解答**
@@ -1281,7 +1281,7 @@ notAfter=Oct 13 23:59:59 2026 GMT
 > 總計          : 1.845s     ← 內容傳輸只花 33ms
 > ```
 >
-> **結論**：瓶頸在後端處理（PHP/資料庫），不是網路也不是 TLS。
+> ★★★ **結論**：瓶頸在後端處理（PHP/資料庫），不是網路也不是 TLS。
 > 下一步應該去看 [[060-02-02-07-guide-Nginx-日誌與除錯]] 的 `upstream_response_time`、
 > PHP-FPM 慢日誌、資料庫慢查詢，而不是去調網路參數。
 >
@@ -1308,16 +1308,16 @@ Q9. `curl -w` 的哪個時間特別長代表後端慢？
 Q10. `curl -k` 與 `wget --no-check-certificate` 的風險？正確做法？
 
 > [!question]- 測驗答案
-> **Q1.** 介面 IP→預設路由→ping 閘道→ping 外網 IP→DNS→埠→應用層；閘道通外網不通是路由或上游問題（見「連不上要分層排查」）。
-> **Q2.** net-tools 停止維護十多年且顯示不出多 IP/VLAN/namespace；`ip addr`、`ip route`、`ip neigh`、`ss`。
-> **Q3.** 實體層沒訊號——網路線鬆脫、交換器埠關閉、VM 網卡沒接網路。
-> **Q4.** 到這個目的地會走哪個介面、哪個閘道、用哪個來源 IP。
-> **Q5.** 前者監聽所有介面含公網，後者只有本機；資料庫、快取、管理介面出現 `0.0.0.0` 就是資安問題。
-> **Q6.** `try` 120 秒未確認自動還原，設錯不會失聯；RHEL 用 `at now + 5 minutes` 排一個還原 DHCP 的保險。
-> **Q7.** 它是 systemd-resolved 的符號連結會被覆寫，`127.0.0.53` 只是本機 stub；改 netplan `nameservers` 或 `nmcli ipv4.dns`，用 `resolvectl status` 看上游。
-> **Q8.** `0`——錯誤頁面被當正確內容存下；加 `-f`（`curl -fsSL`）。
-> **Q9.** `time_starttransfer` 減 `time_appconnect` 特別大——後端處理慢，不是網路或 TLS。
-> **Q10.** 關閉 TLS 驗證，中間人攻擊完全生效；把內部 CA 加入系統信任（`update-ca-certificates` / `update-ca-trust`）。
+> **Q1.** ★★★★ 介面 IP→預設路由→ping 閘道→ping 外網 IP→DNS→埠→應用層；閘道通外網不通是路由或上游問題（見「連不上要分層排查」）。
+> **Q2.** ★★ net-tools 停止維護十多年且顯示不出多 IP/VLAN/namespace；`ip addr`、`ip route`、`ip neigh`、`ss`。
+> **Q3.** ★★★ 實體層沒訊號——網路線鬆脫、交換器埠關閉、VM 網卡沒接網路。
+> **Q4.** ★★ 到這個目的地會走哪個介面、哪個閘道、用哪個來源 IP。
+> **Q5.** ★★★★★ 前者監聽所有介面含公網，後者只有本機；資料庫、快取、管理介面出現 `0.0.0.0` 就是資安問題。
+> **Q6.** ★★★★★ `try` 120 秒未確認自動還原，設錯不會失聯；RHEL 用 `at now + 5 minutes` 排一個還原 DHCP 的保險。
+> **Q7.** ★★★ 它是 systemd-resolved 的符號連結會被覆寫，`127.0.0.53` 只是本機 stub；改 netplan `nameservers` 或 `nmcli ipv4.dns`，用 `resolvectl status` 看上游。
+> **Q8.** ★★★★ `0`——錯誤頁面被當正確內容存下；加 `-f`（`curl -fsSL`）。
+> **Q9.** ★★★ `time_starttransfer` 減 `time_appconnect` 特別大——後端處理慢，不是網路或 TLS。
+> **Q10.** ★★★★ 關閉 TLS 驗證，中間人攻擊完全生效；把內部 CA 加入系統信任（`update-ca-certificates` / `update-ca-trust`）。
 
 ---
 
