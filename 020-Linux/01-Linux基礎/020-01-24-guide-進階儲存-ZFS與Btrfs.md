@@ -8,7 +8,7 @@ difficulty: 專家
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[020-01-15-cmd-Linux-磁碟分割與掛載]]"]
-updated: 2026-08-27
+updated: 2026-08-29
 ---
 
 # 進階儲存 ZFS 與 Btrfs
@@ -19,6 +19,11 @@ updated: 2026-08-27
 > - 用 `zfs send/recv` 做**增量、可驗證、可跨機的備份**——這是 ZFS 最有價值的功能
 > - 用 Btrfs 子卷佈局做「升級前快照、出事一分鐘回滾」
 > - 知道 ZFS 與 Btrfs **各自不該用在什麼場景**
+
+> [!warning] ★★★★★ 這一章有三個「建立後就改不掉」的決定
+> `ashift`（磁碟磁區大小）、**RAIDZ 的磁碟數**、**vdev 的冗餘型式** ——
+> 這三項一旦建立就只能整個 pool 重建才能改。
+> 動手前務必先讀完〈★★★★ RAIDZ 等級選擇〉與 Q3、Q4 兩題。
 
 ## 前置知識
 
@@ -48,7 +53,7 @@ flowchart LR
     CoW --> A["寫入是原子的<br/>斷電不會有半寫入狀態"]
 ```
 
-### ZFS 的三層模型
+### ★★★ ZFS 的三層模型
 
 **這是理解 ZFS 的關鍵，也是新手最常搞錯的地方。**
 
@@ -108,7 +113,7 @@ flowchart TB
 > sudo zpool create tank raidz1 /dev/sdb /dev/sdc /dev/sdd # RAIDZ1
 > ```
 
-### RAIDZ 等級選擇
+### ★★★★ RAIDZ 等級選擇
 
 | 型式 | 可容忍故障 | 容量效率 | 最少磁碟 | 重建風險 |
 | --- | --- | --- | --- | --- |
@@ -131,7 +136,7 @@ flowchart TB
 
 ## ZFS 操作
 
-### 安裝
+### ★★ 安裝
 
 ```bash
 # Ubuntu / Debian
@@ -155,7 +160,7 @@ modinfo zfs | head -3
 >
 > Ubuntu 用預編譯模組，這個問題輕微得多——**要跑 ZFS 建議選 Ubuntu**。
 
-### 建立 pool
+### ★★★ 建立 pool
 
 ```bash
 # ⚠ 用穩定的裝置識別，不要用 /dev/sdX
@@ -193,7 +198,7 @@ sudo zpool create -o ashift=12 -O compression=zstd -O atime=off \
 > sudo smartctl -a /dev/sdb | grep -i 'sector size'
 > ```
 
-### 檢視
+### ★★ 檢視
 
 ```bash
 zpool list                          # pool 概況
@@ -244,7 +249,7 @@ errors: No known data errors
 > ```
 > 「誰刪掉了那個快照」這種問題，一行就有答案。
 
-### Dataset 與屬性
+### ★★★ Dataset 與屬性
 
 ```bash
 sudo zfs create tank/data
@@ -311,7 +316,7 @@ tank/data  compressratio  2.41x  -
 > **`recordsize` 只影響設定之後新寫入的資料**，
 > 要對既有資料生效必須重寫（例如 dump & restore）。
 
-### 快照與回滾
+### ★★★ 快照與回滾
 
 ```bash
 sudo zfs snapshot tank/data@before-upgrade
@@ -350,7 +355,7 @@ cp /tank/data/.zfs/snapshot/daily-2026-08-20/important.conf /tank/data/
 >
 > **快照 + `zfs send` 到另一台機器**才是備份。見下方。
 
-### `zfs send/recv`：ZFS 最有價值的功能
+### ★★★★ `zfs send/recv`：ZFS 最有價值的功能
 
 ```bash
 # ── 完整備份到另一台機器 ──
@@ -454,7 +459,7 @@ echo "✅ 完成 ${TAG}"
 > syncoid tank/data backup-host:backup/data     # 一行完成增量同步
 > ```
 
-### 磁碟更換與維護
+### ★★★★ 磁碟更換與維護
 
 ```bash
 # ── 定期校驗（重要！）──
@@ -499,7 +504,7 @@ sudo zpool import -d /dev/disk/by-id tank        # 指定搜尋路徑
 >
 > 頻率建議：**企業級磁碟每月一次，消費級磁碟每兩週一次**。
 
-### ARC 記憶體調校
+### ★★★★ ARC 記憶體調校
 
 ```bash
 # 目前 ARC 使用量
@@ -527,7 +532,7 @@ sudo reboot
 
 ## Btrfs 深入
 
-### 推薦的子卷佈局
+### ★★★ 推薦的子卷佈局
 
 **不要直接把整個檔案系統當根目錄用**，先建子卷：
 
@@ -559,7 +564,7 @@ UUID=xxx /.snapshots btrfs subvol=@snapshots,noatime                  0 0
 >
 > 這個佈局是 openSUSE、Fedora 的標準做法。
 
-### 快照工作流
+### ★★★ 快照工作流
 
 ```bash
 # 升級前
@@ -591,7 +596,7 @@ sudo snapper -c root status 1..2          # 比較兩個快照的差異
 sudo snapper -c root undochange 1..2      # 復原指定變更
 ```
 
-### 維護：balance 與 scrub
+### ★★★★ 維護：balance 與 scrub
 
 ```bash
 sudo btrfs scrub start -B /data           # -B 前景執行，看得到結果
@@ -622,7 +627,7 @@ sudo btrfs filesystem defragment -r -czstd /data        # 重組並壓縮
 > **balance 是 I/O 密集操作**，在離峰時段做，並用 `-dusage` 限制範圍
 > （不要無條件 `balance start`，那會重寫整個檔案系統）。
 
-### Btrfs 的多裝置與降級掛載
+### ★★★★ Btrfs 的多裝置與降級掛載
 
 ```bash
 sudo btrfs filesystem show
@@ -778,27 +783,27 @@ echo "✅ 完成。每日健康檢查請加入每日維護作業。"
 
 | 現象 | 原因 | 解法 |
 | --- | --- | --- |
-| `zpool add` 說 mismatched replication level | 想加單磁碟到 raidz pool | 加完整的 vdev，或用 `-f`（**不建議**） |
-| RAIDZ 想加磁碟卻不行 | vdev 結構建立後固定 | 加新 vdev、換大磁碟、或重建 pool |
-| 一顆磁碟壞了整個 pool 沒了 | 建立時沒指定 mirror/raidz | 重建時務必寫明冗餘型式 |
-| 效能很差且無法改善 | `ashift` 設錯（512 vs 4K） | **只能重建 pool** |
-| 應用程式被 OOM 殺掉 | ARC 吃太多記憶體 | 設 `zfs_arc_max` |
-| 資料庫在 ZFS 上很慢 | `recordsize` 與應用 I/O 不符 | 資料庫 dataset 設 16K / 8K |
-| 重開機後 pool 不見 | 模組沒載入或 DKMS 編譯失敗 | `modprobe zfs`；RHEL 檢查核心與 OpenZFS 相容性 |
-| RHEL 更新核心後 ZFS 掛了 | DKMS 模組未重編 | 更新前先確認相容；`dkms status` |
-| `zpool import` 找不到 pool | 裝置路徑變了 | `zpool import -d /dev/disk/by-id` |
-| Btrfs 空間滿但 `df` 說有 | 區塊群組配置光了 | `btrfs balance start -dusage=50` |
-| Btrfs `df` 數字不可信 | CoW 與共用區塊 | 用 `btrfs filesystem usage` |
-| Btrfs 上資料庫效能崩潰 | CoW 造成碎片 | 目錄先 `chattr +C` 再放資料 |
-| Btrfs RAID5 資料遺失 | 已知缺陷 | **不要用**，改 raid1 或 ZFS |
-| 快照佔用大量空間 | 舊資料被快照保留住 | `zfs list -t snapshot -o name,used` 找出並清理 |
-| 刪了檔案空間沒釋放 | 被快照引用著 | 刪掉相關快照 |
+| ★★★★ `zpool add` 說 mismatched replication level | 想加單磁碟到 raidz pool | 加完整的 vdev，或用 `-f`（**不建議**） |
+| ★★★ RAIDZ 想加磁碟卻不行 | vdev 結構建立後固定 | 加新 vdev、換大磁碟、或重建 pool |
+| ★★★★★ 一顆磁碟壞了整個 pool 沒了 | 建立時沒指定 mirror/raidz | 重建時務必寫明冗餘型式 |
+| ★★★★ 效能很差且無法改善 | `ashift` 設錯（512 vs 4K） | **只能重建 pool** |
+| ★★★★ 應用程式被 OOM 殺掉 | ARC 吃太多記憶體 | 設 `zfs_arc_max` |
+| ★★★ 資料庫在 ZFS 上很慢 | `recordsize` 與應用 I/O 不符 | 資料庫 dataset 設 16K / 8K |
+| ★★★★ 重開機後 pool 不見 | 模組沒載入或 DKMS 編譯失敗 | `modprobe zfs`；RHEL 檢查核心與 OpenZFS 相容性 |
+| ★★★★★ RHEL 更新核心後 ZFS 掛了 | DKMS 模組未重編 | 更新前先確認相容；`dkms status` |
+| ★★★ `zpool import` 找不到 pool | 裝置路徑變了 | `zpool import -d /dev/disk/by-id` |
+| ★★★ Btrfs 空間滿但 `df` 說有 | 區塊群組配置光了 | `btrfs balance start -dusage=50` |
+| ★★ Btrfs `df` 數字不可信 | CoW 與共用區塊 | 用 `btrfs filesystem usage` |
+| ★★★ Btrfs 上資料庫效能崩潰 | CoW 造成碎片 | 目錄先 `chattr +C` 再放資料 |
+| ★★★★★ Btrfs RAID5 資料遺失 | 已知缺陷 | **不要用**，改 raid1 或 ZFS |
+| ★★★ 快照佔用大量空間 | 舊資料被快照保留住 | `zfs list -t snapshot -o name,used` 找出並清理 |
+| ★★★ 刪了檔案空間沒釋放 | 被快照引用著 | 刪掉相關快照 |
 
 ---
 
 ## 安全性注意事項
 
-> [!danger] `zpool destroy` 與 `zfs destroy -r` 沒有確認提示
+> [!danger] ★★★★★ `zpool destroy` 與 `zfs destroy -r` 沒有確認提示
 > ```bash
 > sudo zpool destroy tank          # 整個 pool 立刻消失
 > sudo zfs destroy -r tank/data    # 遞迴刪除，含所有快照
@@ -813,7 +818,7 @@ echo "✅ 完成。每日健康檢查請加入每日維護作業。"
 > would destroy tank/data
 > ```
 
-> [!tip] 用 `readonly` 與 hold 保護重要快照
+> [!tip] ★★★★ 用 `readonly` 與 hold 保護重要快照
 > ```bash
 > sudo zfs hold keep tank/data@monthly-2026-08      # 標記為不可刪除
 > sudo zfs holds tank/data@monthly-2026-08
@@ -822,7 +827,7 @@ echo "✅ 完成。每日健康檢查請加入每日維護作業。"
 > 被 hold 的快照即使下 `destroy` 也刪不掉，
 > 能防止自動清理腳本誤刪重要備份。
 
-> [!tip] ZFS 原生加密保護靜態資料
+> [!tip] ★★★ ZFS 原生加密保護靜態資料
 > ```bash
 > sudo zfs create -o encryption=aes-256-gcm -o keyformat=passphrase tank/secure
 > sudo zfs load-key tank/secure         # 開機後要載入金鑰才能掛載
@@ -832,7 +837,7 @@ echo "✅ 完成。每日健康檢查請加入每日維護作業。"
 > 備份主機看不到明文，這在異地備份時很有價值。
 > 見 [[090-03-03-guide-應用安全-機密管理與金鑰保護]]。
 
-> [!warning] 備份主機的快照要防止被來源端刪除
+> [!warning] ★★★★★ 備份主機的快照要防止被來源端刪除
 > 勒索軟體的典型手法是「加密資料 + 刪除備份」。
 > 如果備份主機讓來源端有完整權限，備份會一起被毀。
 >
@@ -849,32 +854,32 @@ echo "✅ 完成。每日健康檢查請加入每日維護作業。"
 
 | 指令 | 說明 |
 | --- | --- |
-| `zpool create -o ashift=12 tank mirror <d1> <d2>` | **建立 pool（ashift 不可改）** |
-| `zpool status` / `-v` | **健康狀態 / 含錯誤檔案** |
-| `zpool list` / `zpool iostat -v 2` | 容量 / I/O |
-| **`zpool history`** | **所有操作歷史** |
-| `zpool scrub tank` | **全盤校驗（必須排程）** |
-| `zpool replace tank <舊> <新>` | 更換磁碟 |
-| `zpool export` / `import` | 搬機器 |
-| `zfs create tank/data` | 建 dataset |
-| `zfs set compression=zstd tank/data` | 設屬性 |
-| `zfs get all tank/data` | 看所有屬性 |
-| `zfs snapshot tank/data@名稱` | 快照 |
-| `zfs rollback tank/data@名稱` | **一行回滾** |
+| ★★★★ `zpool create -o ashift=12 tank mirror <d1> <d2>` | **建立 pool（ashift 不可改）** |
+| ★★★★ `zpool status` / `-v` | **健康狀態 / 含錯誤檔案** |
+| ★★ `zpool list` / `zpool iostat -v 2` | 容量 / I/O |
+| ★★★ **`zpool history`** | **所有操作歷史** |
+| ★★★★ `zpool scrub tank` | **全盤校驗（必須排程）** |
+| ★★★★ `zpool replace tank <舊> <新>` | 更換磁碟 |
+| ★★★ `zpool export` / `import` | 搬機器 |
+| ★★ `zfs create tank/data` | 建 dataset |
+| ★★ `zfs set compression=zstd tank/data` | 設屬性 |
+| ★★ `zfs get all tank/data` | 看所有屬性 |
+| ★★★ `zfs snapshot tank/data@名稱` | 快照 |
+| ★★★★ `zfs rollback tank/data@名稱` | **一行回滾** |
 | **`zfs send -i s1 tank/d@s2 \| ssh h "zfs recv p/d"`** | **增量備份** |
-| `zfs destroy -nrv` | **先 dry-run 再刪** |
-| `zfs hold keep <快照>` | 保護不被刪 |
-| `arc_summary` | ARC 使用狀況 |
-| `zfs_arc_max` | **限制 ARC 記憶體** |
+| ★★★★★ `zfs destroy -nrv` | **先 dry-run 再刪** |
+| ★★★★ `zfs hold keep <快照>` | 保護不被刪 |
+| ★★ `arc_summary` | ARC 使用狀況 |
+| ★★★★ `zfs_arc_max` | **限制 ARC 記憶體** |
 
 ### Btrfs
 
 | 指令 | 說明 |
 | --- | --- |
-| `mkfs.btrfs -d raid1 -m raid1 <d1> <d2>` | 建立（**避免 raid5/6**） |
-| `btrfs subvolume create /path` | 建子卷 |
-| `btrfs subvolume snapshot [-r] <來源> <目標>` | 快照（`-r` 唯讀） |
-| `btrfs subvolume list /path` | 列出 |
+| ★★★★ `mkfs.btrfs -d raid1 -m raid1 <d1> <d2>` | 建立（**避免 raid5/6**） |
+| ★★ `btrfs subvolume create /path` | 建子卷 |
+| ★★★ `btrfs subvolume snapshot [-r] <來源> <目標>` | 快照（`-r` 唯讀） |
+| ★★ `btrfs subvolume list /path` | 列出 |
 | **`btrfs filesystem usage /path`** | **真實空間（`df` 不可信）** |
 | `btrfs filesystem show` | 所有 btrfs 檔案系統 |
 | **`btrfs scrub start -B /path`** | **全盤校驗** |
@@ -1043,16 +1048,16 @@ Q9. Btrfs 上 `df` 為什麼不可信？該用什麼？「配置光了但 Used �
 Q10. Btrfs 哪些 RAID profile 不該用於正式環境？需要 RAID5/6 等級該選什麼？
 
 > [!question]- 測驗答案
-> **Q1.** vdev 是磁碟的冗餘單位、pool 是 vdev 的集合、dataset 是 pool 內的檔案系統；任一 vdev 全毀整個 pool 資料全失（見「ZFS 的三層模型」）。
-> **Q2.** 兩個沒有冗餘的單磁碟 vdev（不是 RAID0 效能配置）；任一顆壞掉整個 pool 消失含另一顆的資料。
-> **Q3.** RAIDZ vdev 的磁碟數建立時固定；再加一整組 vdev、逐顆換大磁碟、或備份重建。要彈性擴充用 mirror。
-> **Q4.** 建立後無法更改；設成 512B 在 4K 磁碟上是永久效能損失，只能重建 pool。
-> **Q5.** 裝置名稱重開機可能變；by-id 讓 `zpool status` 直接顯示序號，壞了知道拔哪一顆。
-> **Q6.** 該磁碟資料校驗不符（靜默損毀），即使 SMART 仍 PASSED 也該準備換；傳統 RAID 只校驗中繼資料，會把壞資料原封不動交出。
-> **Q7.** 前者讓 ZFS 忽略 fsync，斷電遺失交易（要效能加 SLOG）；後者去重表每 TB 約 5GB RAM，不足時效能崩潰且關掉救不回。
-> **Q8.** 直接從中繼資料得知差異不用掃描目錄樹；rsync 掃幾小時 vs zfs 幾秒。
-> **Q9.** CoW 與快照共用區塊讓 `df` 失真；用 `btrfs filesystem usage`；`btrfs balance start -dusage=50` 合併半空區塊群組。
-> **Q10.** raid5/raid6（write hole 未解）；用 ZFS RAIDZ 或 mdadm。
+> **Q1. ★★★★** vdev 是磁碟的冗餘單位、pool 是 vdev 的集合、dataset 是 pool 內的檔案系統；任一 vdev 全毀整個 pool 資料全失（見「ZFS 的三層模型」）。
+> **Q2. ★★★★★** 兩個沒有冗餘的單磁碟 vdev（不是 RAID0 效能配置）；任一顆壞掉整個 pool 消失含另一顆的資料。
+> **Q3. ★★★★** RAIDZ vdev 的磁碟數建立時固定；再加一整組 vdev、逐顆換大磁碟、或備份重建。要彈性擴充用 mirror。
+> **Q4. ★★★★** 建立後無法更改；設成 512B 在 4K 磁碟上是永久效能損失，只能重建 pool。
+> **Q5. ★★★★** 裝置名稱重開機可能變；by-id 讓 `zpool status` 直接顯示序號，壞了知道拔哪一顆。
+> **Q6. ★★★★** 該磁碟資料校驗不符（靜默損毀），即使 SMART 仍 PASSED 也該準備換；傳統 RAID 只校驗中繼資料，會把壞資料原封不動交出。
+> **Q7. ★★★★** 前者讓 ZFS 忽略 fsync，斷電遺失交易（要效能加 SLOG）；後者去重表每 TB 約 5GB RAM，不足時效能崩潰且關掉救不回。
+> **Q8. ★★★** 直接從中繼資料得知差異不用掃描目錄樹；rsync 掃幾小時 vs zfs 幾秒。
+> **Q9. ★★★** CoW 與快照共用區塊讓 `df` 失真；用 `btrfs filesystem usage`；`btrfs balance start -dusage=50` 合併半空區塊群組。
+> **Q10. ★★★★★** raid5/raid6（write hole 未解）；用 ZFS RAIDZ 或 mdadm。
 
 ---
 
