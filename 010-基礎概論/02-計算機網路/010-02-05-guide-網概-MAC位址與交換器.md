@@ -8,7 +8,7 @@ difficulty: 入門
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[010-02-03-guide-網概-網路分層模型]]", "[[010-02-04-guide-網概-線材與實體層]]"]
-updated: 2026-08-27
+updated: 2026-08-29
 ---
 
 # MAC 位址與交換器
@@ -320,15 +320,41 @@ graph LR
 >
 > 這就是為什麼交換器叫「透明橋接（transparent bridging）」。
 
-```bash
-# 在 Cisco 交換器上看 MAC 表
-switch# show mac address-table
-Vlan    Mac Address       Type        Ports
-----    -----------       --------    -----
-   1    00aa.bbcc.ddee    DYNAMIC     Gi0/1
-   1    0011.2233.4455    DYNAMIC     Gi0/2
-   1    52:54:00:12:34:56 DYNAMIC     Gi0/24
+```junos
+# 在 Juniper 交換器上看 MAC 表（operational mode）
+user@switch> show ethernet-switching table
+
+MAC flags (S - static MAC, D - dynamic MAC, L - locally learned,
+           P - Persistent static, SE - statistics enabled)
+
+Ethernet switching table : 3 entries, 3 learned
+Routing instance : default-switch
+   Vlan     MAC                 MAC     Logical
+   name     address             flags   interface
+   v10      00:aa:bb:cc:dd:ee   D       ge-0/0/1.0
+   v10      00:11:22:33:44:55   D       ge-0/0/2.0
+   v10      52:54:00:12:34:56   D       ge-0/0/24.0
 ```
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> # 在 Cisco 交換器上看 MAC 表
+> switch# show mac address-table
+> Vlan    Mac Address       Type        Ports
+> ----    -----------       --------    -----
+>    1    00aa.bbcc.ddee    DYNAMIC     Gi0/1
+>    1    0011.2233.4455    DYNAMIC     Gi0/2
+>    1    52:54:00:12:34:56 DYNAMIC     Gi0/24
+> ```
+> **兩個一眼可見的差異**：
+> ① **MAC 的寫法** —— JunOS 用冒號分六段 `00:aa:bb:cc:dd:ee`，
+> IOS 用點分三段 `00aa.bbcc.ddee`。
+> ② **埠的命名** —— JunOS 是 `ge-0/0/1`（速率 - 槽/PIC/埠），
+> IOS 是 `GigabitEthernet0/1`（縮寫 `Gi0/1`）。
+> JunOS 輸出裡的 `.0` 是**邏輯介面（unit）**，第 2 層通常只會用到 unit 0。
 
 ---
 
@@ -523,18 +549,49 @@ $ ip neigh show 192.168.1.20
 192.168.1.20 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
 ```
 
-```cisco
-! 步驟 2：在交換器上查這個 MAC 在哪個埠
-switch# show mac address-table address aabb.ccdd.eeff
-Vlan    Mac Address       Type        Ports
-----    -----------       --------    -----
-  10    aabb.ccdd.eeff    DYNAMIC     Gi0/12
+```junos
+# 步驟 2：在交換器上查這個 MAC 在哪個埠
+user@switch> show ethernet-switching table address aa:bb:cc:dd:ee:ff
 
-! 步驟 3：看那個埠的描述（如果有好好寫的話）
-switch# show interface Gi0/12 description
-Interface  Status  Protocol  Description
-Gi0/12     up      up        3F-A12-會計室王小姐
+   Vlan     MAC                 MAC     Logical
+   name     address             flags   interface
+   v10      aa:bb:cc:dd:ee:ff   D       ge-0/0/12.0
+
+# 步驟 3：看那個埠的描述（如果有好好寫的話）
+user@switch> show interfaces descriptions | match ge-0/0/12
+Interface       Admin  Link  Description
+ge-0/0/12       up     up    3F-A12-會計室王小姐
 ```
+
+埠描述是在設定模式寫進去的，而 JunOS 改完**一定要 `commit` 才生效**：
+
+```junos
+user@switch> configure
+user@switch# set interfaces ge-0/0/12 description "3F-A12-會計室王小姐"
+user@switch# show | compare          # 送出前先看這次到底改了什麼
+user@switch# commit and-quit
+```
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 步驟 2：在交換器上查這個 MAC 在哪個埠
+> switch# show mac address-table address aabb.ccdd.eeff
+> Vlan    Mac Address       Type        Ports
+> ----    -----------       --------    -----
+>   10    aabb.ccdd.eeff    DYNAMIC     Gi0/12
+>
+> ! 步驟 3：看那個埠的描述（如果有好好寫的話）
+> switch# show interface Gi0/12 description
+> Interface  Status  Protocol  Description
+> Gi0/12     up      up        3F-A12-會計室王小姐
+> ```
+> **觀念差異**：IOS 在 `configure terminal` 裡打完指令**當下就生效**；
+> JunOS 改的是 candidate（候選）設定，**`commit` 之後才會套用**。
+> 這也是為什麼 JunOS 可以先 `show | compare` 檢查、
+> 事後還能用 `rollback 1` 退回上一版。
 
 > [!tip] 這就是為什麼「埠描述」要好好寫
 > 有寫描述：**30 秒找到那台機器在哪**。
@@ -552,12 +609,12 @@ Gi0/12     up      up        3F-A12-會計室王小姐
 | ARP 表裡的 MAC 是 `<incomplete>` | 對方沒回應（關機、不在同網段、被防火牆擋） | 確認對方在線；確認遮罩設定正確 |
 | 兩台機器 IP 相同 | **IP 衝突** | 系統會有警告；`arp -a` 會看到同 IP 對應多個 MAC |
 | MAC 表裡同一個 MAC 出現在多個埠 | **網路迴圈**或 MAC 偽造 | 檢查 STP；找出重複接線 |
-| 網路突然全部很慢、交換器燈狂閃 | **廣播風暴**（通常是迴圈造成） | 立刻找出迴圈；啟用 STP 與 BPDU Guard |
-| 新設備接上網路後全網癱瘓 | 有人把兩個網路孔用一條線接在一起 | 啟用 **BPDU Guard** 與 **Loop Guard** |
+| 網路突然全部很慢、交換器燈狂閃 | **廣播風暴**（通常是迴圈造成） | 立刻找出迴圈；啟用 STP 與 BPDU 保護（JunOS `bpdu-block-on-edge`／Cisco BPDU Guard） |
+| 新設備接上網路後全網癱瘓 | 有人把兩個網路孔用一條線接在一起 | 啟用 **BPDU 保護**與**迴圈保護**（JunOS）／**BPDU Guard** 與 **Loop Guard**（Cisco） |
 | 用 MAC 綁定 IP 但手機一直拿不到 | **手機的 MAC 隨機化** | 改用 802.1X；或請使用者關閉該裝置的隨機 MAC |
 | 大檔案傳不過去但小檔案可以 | **MTU 不一致**（Jumbo Frame 設定不全） | 路徑上所有設備都要設相同 MTU；用 `ping -M do -s 大小` 測試 |
-| tcpdump 抓不到別人的封包 | **交換器只把封包送給目標埠**（這是正常且好的） | 要抓別人的流量需設定 **Port Mirroring / SPAN** |
-| 交換器 MAC 表爆滿 | **MAC 洪泛攻擊**，或真的設備太多 | 啟用 Port Security 限制每埠 MAC 數 |
+| tcpdump 抓不到別人的封包 | **交換器只把封包送給目標埠**（這是正常且好的） | 要抓別人的流量需設定**埠鏡像**（JunOS: port mirroring／analyzer；Cisco: SPAN） |
+| 交換器 MAC 表爆滿 | **MAC 洪泛攻擊**，或真的設備太多 | 啟用 **MAC limiting**（Cisco 叫 Port Security）限制每埠 MAC 數 |
 
 > [!warning] 廣播風暴是網路的心臟病
 > 症狀：**整個網段瞬間癱瘓，所有交換器的燈同步狂閃**。
@@ -566,6 +623,34 @@ Gi0/12     up      up        3F-A12-會計室王小姐
 > 形成迴圈 —— 廣播封包會在迴圈裡無限循環並不斷倍增。
 >
 > **預防**：
+> ```junos
+> # 把所有使用者埠收成一個 interface-range，省掉逐埠重打
+> set interfaces interface-range access-ports member-range ge-0/0/1 to ge-0/0/24
+> set interfaces interface-range access-ports unit 0 family ethernet-switching interface-mode access
+> set interfaces interface-range access-ports unit 0 family ethernet-switching vlan members v10
+>
+> # 廣播／群播／未知單播超過 5% 埠頻寬就抑制
+> set forwarding-options storm-control-profiles sc-5 all bandwidth-percentage 5
+> set interfaces interface-range access-ports unit 0 family ethernet-switching storm-control sc-5
+>
+> # 使用者埠宣告為 edge（等同 PortFast），並讓 edge 埠一收到 BPDU 就關閉
+> set protocols rstp interface ge-0/0/1.0 edge
+> set protocols rstp bpdu-block-on-edge
+>
+> # 送出前先比對；10 分鐘內沒有再 commit 一次就自動回滾
+> show | compare
+> commit confirmed 10
+> ```
+> 被 BPDU 保護關掉的埠，排除問題後用
+> `clear ethernet-switching bpdu-error interface ge-0/0/1.0` 解除。
+>
+> 見 [[010-02-16-guide-網概-VLAN與網路分段]]、
+> [[040-01-08-guide-Juniper-埠設定與安全]] 與 [[040-01-13-guide-Cisco-埠設定與安全]]。
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本。
+
+> [!info]- Cisco IOS 對照
 > ```cisco
 > ! 在所有接使用者的埠啟用
 > interface range Gi0/1 - 24
@@ -573,7 +658,16 @@ Gi0/12     up      up        3F-A12-會計室王小姐
 >  spanning-tree bpduguard enable    ! 收到 BPDU 就關閉該埠
 >  storm-control broadcast level 5   ! 廣播超過 5% 頻寬就抑制
 > ```
-> 見 [[010-02-16-guide-網概-VLAN與網路分段]] 與 [[040-01-13-guide-Cisco-埠設定與安全]]。
+> **三個觀念差異**：
+> ① IOS 的 `spanning-tree portfast` 與 `bpduguard` 都是**逐埠**設定；
+> JunOS 的 `edge` 是逐埠，但 **`bpdu-block-on-edge` 是全域一行**，
+> 一次涵蓋所有 edge 埠。
+> ② IOS 的 `storm-control broadcast` **只管廣播**；
+> JunOS 的 storm-control profile 用 `all` 一次涵蓋
+> 廣播、群播與未知單播，再視需要排除個別類型。
+> ③ IOS 打完立即生效，JunOS 要 `commit`。
+> 遠端改交換器時強烈建議用 **`commit confirmed <分鐘>`** ——
+> 萬一設定把自己鎖在外面，時間到會自動回滾到上一版，這是保命符。
 
 ---
 
@@ -626,23 +720,54 @@ $ ip neigh show
 | --- | --- |
 | **交換器（最有效）** | **Dynamic ARP Inspection（DAI）** —— 驗證 ARP 封包的合法性 |
 | 交換器 | **DHCP Snooping** —— 建立「IP-MAC-埠」的可信綁定表 |
-| 交換器 | **Port Security** —— 限制每個埠允許的 MAC 數量 |
+| 交換器 | **MAC limiting（JunOS）／Port Security（Cisco）** —— 限制每個埠允許的 MAC 數量 |
 | 主機 | **靜態 ARP** 綁定閘道（管理成本高，只適合關鍵主機） |
 | 應用層 | **全面使用 HTTPS/TLS** —— 即使被攔截也看不到內容 |
 | 網路架構 | **VLAN 分段** —— 縮小攻擊者能影響的範圍 |
 
-```cisco
-! Cisco：啟用 DHCP Snooping 與 DAI
-ip dhcp snooping
-ip dhcp snooping vlan 10
-interface GigabitEthernet0/24
- description ** 連到路由器 **
- ip dhcp snooping trust        ! 只有這個埠可以發 DHCP 回應
+```junos
+# JunOS（ELS）：在 VLAN 上啟用 DAI，DHCP snooping 會自動一起開啟
+set vlans v10 vlan-id 10
+set vlans v10 forwarding-options dhcp-security arp-inspection
+set vlans v10 forwarding-options dhcp-security ip-source-guard
 
-ip arp inspection vlan 10
-interface GigabitEthernet0/24
- ip arp inspection trust
+# 接路由器／DHCP 伺服器的 trunk 埠「預設就是 trusted」，不必特別設定；
+# 只有當 DHCP 伺服器接在 access 埠時，才需要明確指定為 trusted
+set interfaces ge-0/0/23 description "** 連到 DHCP 伺服器 **"
+set vlans v10 forwarding-options dhcp-security group dhcp-srv interface ge-0/0/23.0
+set vlans v10 forwarding-options dhcp-security group dhcp-srv overrides trusted
+
+commit
 ```
+
+驗證綁定表（DAI 就是拿這張表來比對 ARP 封包的）：
+
+```junos
+user@switch> show dhcp-security binding
+```
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! Cisco：啟用 DHCP Snooping 與 DAI
+> ip dhcp snooping
+> ip dhcp snooping vlan 10
+> interface GigabitEthernet0/24
+>  description ** 連到路由器 **
+>  ip dhcp snooping trust        ! 只有這個埠可以發 DHCP 回應
+>
+> ip arp inspection vlan 10
+> interface GigabitEthernet0/24
+>  ip arp inspection trust
+> ```
+> **觀念差異**：IOS 要**分別**打開 DHCP Snooping 與 ARP Inspection，
+> 而且 trust 是**逐介面**宣告的。
+> JunOS 只要在 VLAN 上開 `arp-inspection`（或 `ip-source-guard`），
+> **DHCP snooping 會自動跟著啟用**；
+> 而且 **trunk 埠預設即為 trusted、access 埠預設 untrusted**，
+> 一般情況下連 trust 都不用設。
 
 > [!danger] MAC 洪泛攻擊（MAC Flooding）
 > 攻擊者送出**大量偽造來源 MAC 的 Frame**，
@@ -652,7 +777,22 @@ interface GigabitEthernet0/24
 > 只能對所有未知的目的 MAC 進行**洪泛（flooding）**——
 > **等於退化成 Hub，攻擊者就能監聽整個網段。**
 >
-> **防護**：**Port Security**
+> **防護**：**MAC limiting**（限制每個埠能學到的 MAC 數量）
+> ```junos
+> # 每個使用者埠最多只允許學到 2 個 MAC，超過就丟棄並記錄
+> set switch-options interface ge-0/0/1 interface-mac-limit 2
+> set switch-options interface ge-0/0/1 interface-mac-limit packet-action drop-and-log
+> commit
+> ```
+> `packet-action` 常用的動作有 `drop`（丟掉但不告警）與
+> `drop-and-log`（丟掉並記錄／發 SNMP trap）。
+> 要一次套用到很多埠，可以改用 `interface all` 再對個別埠覆寫，
+> 或用 JunOS 的設定群組（`groups` + `apply-groups`），避免逐埠重複。
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本。
+
+> [!info]- Cisco IOS 對照
 > ```cisco
 > interface range GigabitEthernet0/1 - 20
 >  switchport port-security
@@ -660,6 +800,12 @@ interface GigabitEthernet0/24
 >  switchport port-security violation restrict
 >  switchport port-security aging time 5
 > ```
+> **觀念差異**：
+> ① IOS 的 `violation restrict`（丟棄並記錄，但不關埠）
+> 大致對應 JunOS 的 `packet-action drop-and-log`。
+> ② IOS 的 `port-security aging time` **在 JunOS 沒有一對一的對應** ——
+> JunOS 的 MAC limiting 本身沒有獨立的老化計時器，
+> 學到的 MAC 是依交換器**全域的 MAC 表老化時間**自然過期。
 
 > [!warning] MAC 位址不是安全機制
 > **MAC 可以被軟體任意修改**：
@@ -734,7 +880,7 @@ interface GigabitEthernet0/24
 
 ### 常用指令
 
-| 目的 | Linux | Windows | Cisco |
+| 目的 | Linux | Windows | JunOS（主線） |
 | --- | --- | --- | --- |
 | 看自己的 MAC | `ip link show` | `ipconfig /all` | — |
 | 看 ARP 表 | `ip neigh show` | `arp -a` | `show arp` |
@@ -742,7 +888,26 @@ interface GigabitEthernet0/24
 | 抓 ARP 封包 | `sudo tcpdump -n arp` | Wireshark | — |
 | 看第 2 層標頭 | `sudo tcpdump -e` | Wireshark | — |
 | 掃描同網段 | `sudo arp-scan --localnet` | — | — |
-| 看 MAC 表 | — | — | `show mac address-table` |
+| 看 MAC 表 | — | — | `show ethernet-switching table` |
+| 查某個 MAC 在哪個埠 | — | — | `show ethernet-switching table address <MAC>` |
+| 看埠描述 | — | — | `show interfaces descriptions` |
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 看 ARP 表
+> switch# show arp
+> ! 清 ARP 快取
+> switch# clear arp
+> ! 看 MAC 表
+> switch# show mac address-table
+> ! 查某個 MAC 在哪個埠
+> switch# show mac address-table address aabb.ccdd.eeff
+> ! 看埠描述
+> switch# show interface Gi0/12 description
+> ```
+> `show arp` 與 `clear arp` 兩邊剛好同名；
+> MAC 表的指令則完全不同。
+> 另外別忘了 JunOS 改設定要 `commit`，IOS 不用。
 
 ---
 
@@ -871,8 +1036,12 @@ Q10. ARP 欺騙為什麼有效？攻擊者能做什麼？請說出至少三種�
 > 知道你連了哪些網站、竄改未加密內容、嘗試 SSL 剝離、直接阻斷連線
 > （中間人攻擊 MITM）。
 > **三種防護**：
-> ①交換器啟用 **Dynamic ARP Inspection（DAI）**與 **DHCP Snooping**；
-> ②啟用 **Port Security** 限制每埠的 MAC 數量；
+> ①交換器啟用 **Dynamic ARP Inspection（DAI）**與 **DHCP Snooping**
+> （JunOS：`set vlans <名稱> forwarding-options dhcp-security arp-inspection`，
+> 開了 DAI 就會自動啟用 DHCP snooping）；
+> ②啟用 **MAC limiting** 限制每埠的 MAC 數量
+> （JunOS：`set switch-options interface <埠> interface-mac-limit <數量>`；
+> Cisco 叫 Port Security）；
 > ③**全面使用 HTTPS/TLS**（即使被攔截也看不到內容）；
 > （另可加：關鍵主機用靜態 ARP 綁定閘道、用 VLAN 分段縮小攻擊範圍。）
 
@@ -885,5 +1054,6 @@ Q10. ARP 欺騙為什麼有效？攻擊者能做什麼？請說出至少三種�
 - [[010-02-07-guide-網概-路由與封包旅程]] — MAC 為什麼每一跳都會變
 - [[010-02-16-guide-網概-VLAN與網路分段]] — 切開廣播網域與 STP
 - [[010-02-18-guide-網概-網路安全基礎]] — 中間人攻擊與防護
-- [[040-01-13-guide-Cisco-埠設定與安全]] — Port Security 實作（進階）
+- [[040-01-08-guide-Juniper-埠設定與安全]] — MAC limiting 與 BPDU 保護實作（主線，進階）
+- [[040-01-13-guide-Cisco-埠設定與安全]] — Port Security 實作（Cisco 對照，進階）
 - [[090-05-13-guide-資安設備-網路存取控制NAC與802.1X]] — 真正的身分驗證（進階）

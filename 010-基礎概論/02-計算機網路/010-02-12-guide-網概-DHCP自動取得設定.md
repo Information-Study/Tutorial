@@ -8,7 +8,7 @@ difficulty: 入門
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[010-02-06-guide-網概-IP位址與子網路]]", "[[010-02-11-guide-網概-DNS網域名稱系統]]"]
-updated: 2026-08-27
+updated: 2026-08-29
 ---
 
 # DHCP 自動取得設定
@@ -270,22 +270,71 @@ graph LR
 > 就知道「這個請求來自 192.168.10.0/24 網段」，
 > **從對應的位址池發 IP**。
 
-**Cisco 設定範例**：
+**JunOS 設定範例**（Juniper EX，ELS 語法）：
 
-```cisco
-interface Vlan10
- ip address 192.168.10.1 255.255.255.0
- ip helper-address 192.168.20.5      ! DHCP 伺服器的位址
-!
-interface Vlan30
- ip address 192.168.30.1 255.255.255.0
- ip helper-address 192.168.20.5      ! 同一台 DHCP 服務多個 VLAN
+```junos
+# ① VLAN 與它的三層介面（irb）
+set vlans users vlan-id 10
+set vlans users l3-interface irb.10
+set interfaces irb unit 10 family inet address 192.168.10.1/24
+
+set vlans printers vlan-id 30
+set vlans printers l3-interface irb.30
+set interfaces irb unit 30 family inet address 192.168.30.1/24
+
+# ② 先定義「DHCP 伺服器群組」，再指定它為 active
+set forwarding-options dhcp-relay server-group DHCP-SRV 192.168.20.5
+set forwarding-options dhcp-relay active-server-group DHCP-SRV
+
+# ③ 把要做 Relay 的介面收進同一個 group
+#    （同一台 DHCP 服務多個 VLAN，就把多個 irb 都加進來）
+set forwarding-options dhcp-relay group CAMPUS interface irb.10
+set forwarding-options dhcp-relay group CAMPUS interface irb.30
 ```
 
-> [!tip] `ip helper-address` 是排錯的常見檢查點
+設定完**一定要送出才會生效**：
+
+```junos
+## 設定模式（configure）
+show | compare                 # 先看這次到底改了什麼
+commit confirmed 5             # 5 分鐘內沒有再 commit 就自動回滾
+commit                         # 確認一切正常，正式定案
+rollback 1                     # 若改壞了，退回上一版設定
+
+## 操作模式（在設定模式下要在前面加 run）
+show configuration forwarding-options dhcp-relay | display set
+show dhcp relay statistics
+show dhcp relay binding
+```
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> interface Vlan10
+>  ip address 192.168.10.1 255.255.255.0
+>  ip helper-address 192.168.20.5      ! DHCP 伺服器的位址
+> !
+> interface Vlan30
+>  ip address 192.168.30.1 255.255.255.0
+>  ip helper-address 192.168.20.5      ! 同一台 DHCP 服務多個 VLAN
+> ```
+> **觀念差異**：
+> - Cisco 把 Relay 位址**寫在每個 SVI 介面上**（`ip helper-address` 一行一台伺服器）；
+>   JunOS 是**先定義伺服器群組、再把介面收進 group**，
+>   日後 DHCP 伺服器換位址時只要改 `server-group` 一處。
+> - Cisco 打完指令**立刻生效**；JunOS 要 `commit` 才套用，
+>   而且可以用 `commit confirmed`，改遠端設備時是保命符。
+> - 三層介面命名也不同：Cisco 是 `Vlan10`，
+>   JunOS（ELS）是 `irb.10`（舊版 EX 寫作 `vlan.10`）。
+
+> [!tip] DHCP Relay 是排錯的常見檢查點
 > **症狀**：某個 VLAN 的電腦拿不到 IP，其他 VLAN 正常。
 >
-> **檢查**：那個 VLAN 的介面有沒有設 `ip helper-address`？
+> **檢查**：那個 VLAN 的 `irb` 介面有沒有被加進
+> `forwarding-options dhcp-relay group`？
+> （Cisco 則是看該 SVI 有沒有 `ip helper-address`。）
 > 這是新增 VLAN 時最常忘記的一步。
 
 ---
@@ -470,7 +519,7 @@ sudo dhclient -v "$IFACE" 2>&1 | tail -10
 > | **接到錯誤的 VLAN**（沒有 DHCP 的那個） | 檢查交換器埠的 VLAN 設定 |
 > | **DHCP 伺服器掛了** | 在伺服器上 `systemctl status` |
 > | **位址池用完了** | 看伺服器日誌 `no free leases` |
-> | **跨網段但沒設 Relay** | 檢查 `ip helper-address` |
+> | **跨網段但沒設 Relay** | `show configuration forwarding-options dhcp-relay`（Cisco：`ip helper-address`） |
 
 ---
 
@@ -481,8 +530,8 @@ sudo dhclient -v "$IFACE" 2>&1 | tail -10
 | **拿到 `169.254.x.x`** | DHCP 完全沒回應 | 依上表五個原因逐一排查 |
 | 訪客 Wi-Fi 常常連不上 | **位址池耗盡**（租約太長） | 縮短租約至 1～2 小時；擴大位址池 |
 | **IP 衝突** | 手動設的 IP 落在 DHCP 池內 | DHCP 池要**排除**靜態 IP 範圍 |
-| 某個 VLAN 拿不到 IP，其他正常 | **忘了設 `ip helper-address`** | 在該 VLAN 介面加上 DHCP Relay |
-| 拿到 IP 但網段不對 | 交換器埠設到錯誤的 VLAN | 檢查 `switchport access vlan` |
+| 某個 VLAN 拿不到 IP，其他正常 | **忘了把該 VLAN 的 `irb` 介面加進 Relay group** | 補上 `set forwarding-options dhcp-relay group <名稱> interface irb.N`（Cisco：`ip helper-address`） |
+| 拿到 IP 但網段不對 | 交換器埠設到錯誤的 VLAN | 檢查埠的 `interface-mode access` 與 `vlan members`（Cisco：`switchport access vlan`） |
 | 拿到 IP 但上不了網 | **閘道（option 3）或 DNS（option 6）設錯** | 檢查 DHCP 設定；`ip route` 與 `resolv.conf` |
 | 手機每次連 Wi-Fi 都拿到不同 IP | **MAC 隨機化** | 改用 802.1X 驗證；或請使用者關閉該裝置的隨機 MAC |
 | DHCP 保留設了卻沒生效 | MAC 打錯、或該設備有多張網卡 | 用 `arp -a` 確認實際的 MAC |
@@ -535,29 +584,83 @@ sudo dhclient -v "$IFACE" 2>&1 | tail -10
 
 **防護：DHCP Snooping**
 
-```cisco
-! 全域啟用
-ip dhcp snooping
-ip dhcp snooping vlan 10,20,30
+```junos
+# ① 在 VLAN 上啟用 DHCP 安全（設了 dhcp-security，snooping 就跟著啟用）
+set vlans users forwarding-options dhcp-security
 
-! 只有連到「合法 DHCP 伺服器」的埠設為 trust
-interface GigabitEthernet0/24
- description ** 連到核心/DHCP伺服器 **
- ip dhcp snooping trust
+# ② 預設值：access 埠 untrust、trunk 埠 trust
+#    若 DHCP 伺服器是接在「access 埠」上，要手動把它改成 trusted
+set vlans users forwarding-options dhcp-security group DHCP-SERVER interface ge-0/0/23.0
+set vlans users forwarding-options dhcp-security group DHCP-SERVER overrides trusted
 
-! 其他所有埠預設是 untrust
-! → 從這些埠來的 DHCP OFFER/ACK 會被直接丟棄
+# ③ 其他埠維持 untrust
+#    → 從這些埠來的 DHCP OFFER/ACK 會被直接丟棄
 
-! 限制每個埠每秒的 DHCP 請求數（防 DHCP 耗盡攻擊）
-interface range GigabitEthernet0/1 - 20
- ip dhcp snooping limit rate 10
+# ④ 以 Snooping 綁定表為基礎，再開兩個防護
+set vlans users forwarding-options dhcp-security arp-inspection    # 防 ARP 欺騙
+set vlans users forwarding-options dhcp-security ip-source-guard   # 防 IP 偽造
+
+commit confirmed 5
+commit
 ```
+
+查看綁定表：
+
+```junos
+show dhcp-security binding
+show dhcp-security binding detail
+```
+
+> [!note] JunOS 沒有「每埠 DHCP 請求限速」這個指令
+> Cisco 的 `ip dhcp snooping limit rate 10` 在 JunOS **沒有一對一的對應指令**。
+> 要擋 DHCP 耗盡攻擊（見下方），JunOS 的做法是**限制每個埠能學到的 MAC 數量**：
+>
+> ```junos
+> set switch-options interface ge-0/0/1 interface-mac-limit 5 packet-action drop
+> ```
+>
+> 這就是 Cisco `switchport port-security maximum` 的角色。
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本
+> （`dhcp-security` 是 ELS 語法；較舊的非 ELS EX 是
+> `ethernet-switching-options secure-access-port`，兩者不通用）。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 全域啟用
+> ip dhcp snooping
+> ip dhcp snooping vlan 10,20,30
+>
+> ! 只有連到「合法 DHCP 伺服器」的埠設為 trust
+> interface GigabitEthernet0/24
+>  description ** 連到核心/DHCP伺服器 **
+>  ip dhcp snooping trust
+>
+> ! 其他所有埠預設是 untrust
+> ! → 從這些埠來的 DHCP OFFER/ACK 會被直接丟棄
+>
+> ! 限制每個埠每秒的 DHCP 請求數（防 DHCP 耗盡攻擊）
+> interface range GigabitEthernet0/1 - 20
+>  ip dhcp snooping limit rate 10
+> ```
+> **觀念差異**：
+> - Cisco 是**全域開 + 逐 VLAN 開 + 逐埠標 trust**（三層設定）；
+>   JunOS 把整組功能掛在 **VLAN 底下**（`vlans <名稱> forwarding-options dhcp-security`），
+>   trust 也是先開 group、把介面放進去，再 `overrides trusted`。
+> - 兩邊的**預設信任方向一致**：access 埠不信任、上行 trunk 信任。
+> - Cisco 用 `interface range` 一次設一批埠；
+>   JunOS 是把要套用同一組設定的介面**都放進同一個 group**
+>   （或先用 `set interfaces interface-range <名稱> member-range ...` 定義一批介面）。
+> - 查綁定表：Cisco 是 `show ip dhcp snooping binding`，
+>   JunOS（ELS）是 `show dhcp-security binding`
+>   （較舊版本為 `show dhcp snooping binding`）。
 
 > [!tip] DHCP Snooping 的額外好處
 > 它會建立一張 **DHCP Snooping Binding Table**：
 > ```
-> MAC 位址          IP 位址        租約   VLAN  介面
-> 00:1a:2b:3c:4d:5e 192.168.10.57  28800  10    Gi0/5
+> MAC 位址          IP 位址        租約   VLAN   介面
+> 00:1a:2b:3c:4d:5e 192.168.10.57  28800  users  ge-0/0/5.0
 > ```
 >
 > 這張表是其他資安功能的基礎：
@@ -567,7 +670,8 @@ interface range GigabitEthernet0/1 - 20
 > | **IP Source Guard** | 驗證封包的來源 IP 是否與綁定表相符，**防止 IP 偽造** |
 >
 > 所以 **DHCP Snooping 是第 2 層資安的基石**。
-> 見 [[010-02-05-guide-網概-MAC位址與交換器]] 與 [[040-01-13-guide-Cisco-埠設定與安全]]。
+> 見 [[010-02-05-guide-網概-MAC位址與交換器]]、
+> [[040-01-08-guide-Juniper-埠設定與安全]] 與 [[040-01-13-guide-Cisco-埠設定與安全]]。
 
 > [!danger] DHCP 耗盡攻擊（DHCP Starvation）
 > 攻擊者用**大量偽造的 MAC 位址**不斷請求 IP，
@@ -580,7 +684,8 @@ interface range GigabitEthernet0/1 - 20
 >
 > **防護**：
 > - **Port Security**（限制每埠的 MAC 數量）
-> - **DHCP Snooping rate limit**
+>   JunOS：`set switch-options interface ge-0/0/1 interface-mac-limit 5 packet-action drop`
+> - **DHCP Snooping**（Cisco 另有 `ip dhcp snooping limit rate` 可限速；JunOS 無對應指令）
 > - 監控 DHCP 位址池使用率並告警
 
 > [!warning] MAC 不是身分證明，DHCP 保留不是安全機制
@@ -679,14 +784,46 @@ interface range GigabitEthernet0/1 - 20
 | 檢查設定檔 | `sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf` | — |
 | 看發出的租約 | `cat /var/lib/dhcp/dhcpd.leases` | DHCP 主控台 |
 
-### Cisco DHCP 相關
+### JunOS DHCP 相關
 
-```cisco
-ip helper-address 192.168.20.5      ! DHCP Relay
-ip dhcp snooping                    ! 啟用 Snooping
-ip dhcp snooping trust              ! 標記合法 DHCP 的埠
-ip dhcp snooping limit rate 10      ! 限速
+```junos
+# DHCP Relay
+set forwarding-options dhcp-relay server-group DHCP-SRV 192.168.20.5
+set forwarding-options dhcp-relay active-server-group DHCP-SRV
+set forwarding-options dhcp-relay group CAMPUS interface irb.10
+
+# DHCP Snooping 與延伸防護（掛在 VLAN 底下）
+set vlans users forwarding-options dhcp-security
+set vlans users forwarding-options dhcp-security group DHCP-SERVER interface ge-0/0/23.0
+set vlans users forwarding-options dhcp-security group DHCP-SERVER overrides trusted
+set vlans users forwarding-options dhcp-security arp-inspection
+set vlans users forwarding-options dhcp-security ip-source-guard
+
+# 每埠 MAC 數量上限（DHCP 耗盡攻擊的防線）
+set switch-options interface ge-0/0/1 interface-mac-limit 5 packet-action drop
+
+# 送出（設定模式）
+commit confirmed 5
+commit
+
+# 檢查（操作模式）
+show dhcp relay statistics
+show dhcp-security binding
 ```
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依官方文件撰寫，未在實機驗證。實作前請對照你手上設備的 Junos 版本。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ip helper-address 192.168.20.5      ! DHCP Relay
+> ip dhcp snooping                    ! 啟用 Snooping
+> ip dhcp snooping trust              ! 標記合法 DHCP 的埠
+> ip dhcp snooping limit rate 10      ! 限速
+> ```
+> Cisco 是**逐介面／逐 VLAN 各設一行且立即生效**，
+> JunOS 是**先定群組再套介面，且必須 `commit`**；
+> 最後那條「限速」JunOS 沒有對應指令，改用 `interface-mac-limit`。
 
 ---
 
@@ -812,7 +949,9 @@ Q10. 「假 DHCP 伺服器」為什麼危險？最常見的情況是什麼？該
 > 路由器在轉發時會**填入自己在該網段的介面 IP**（欄位叫 **giaddr**），
 > DHCP 伺服器看到 `giaddr = 192.168.10.1` 就知道
 > 「這個請求來自 192.168.10.0/24」，從對應的位址池發 IP。
-> Cisco 上用 `ip helper-address` 設定。
+> **JunOS** 上用 `forwarding-options dhcp-relay` 設定
+> （`server-group` 指定伺服器、`active-server-group` 啟用、`group ... interface irb.N` 指定介面，
+> 改完要 `commit`）；**Cisco** 則是在該 SVI 上加 `ip helper-address`。
 >
 > **Q9.** 代表 **APIPA** —— DHCP 完全沒有回應，電腦自己隨便挑了一個。
 > **五個可能原因**：
@@ -820,7 +959,8 @@ Q10. 「假 DHCP 伺服器」為什麼危險？最常見的情況是什麼？該
 > ②**接到了錯誤的 VLAN**（那個 VLAN 沒有 DHCP）；
 > ③**DHCP 伺服器掛了**；
 > ④**位址池用完了**（日誌會有 `no free leases`）；
-> ⑤**跨網段但沒設 DHCP Relay**（`ip helper-address`）。
+> ⑤**跨網段但沒設 DHCP Relay**
+> （JunOS：`forwarding-options dhcp-relay`；Cisco：`ip helper-address`）。
 >
 > **Q10.** 危險是因為 **DHCP 協定完全沒有身分驗證**，
 > 客戶端會**接受第一個回應的 OFFER**。
@@ -829,12 +969,16 @@ Q10. 「假 DHCP 伺服器」為什麼危險？最常見的情況是什麼？該
 > **最常見的情況其實不是惡意的** ——
 > 而是**有同仁把自己的家用無線分享器接到辦公室網路**，
 > 那台分享器預設就會發 DHCP。
-> **防護用 DHCP Snooping**：只把連到合法 DHCP 伺服器的埠設為 `trust`，
+> **防護用 DHCP Snooping**：只把連到合法 DHCP 伺服器的埠設為信任，
 > 其他埠來的 OFFER/ACK 一律丟棄。
+> JunOS 是 `set vlans <VLAN> forwarding-options dhcp-security`，
+> 再用 `group <名稱> overrides trusted` 標出合法伺服器所在的埠
+> （Cisco 對應 `ip dhcp snooping` 與介面上的 `ip dhcp snooping trust`）。
 > **額外價值**：它建立的 **Snooping Binding Table**（MAC-IP-埠對應）
 > 是 **Dynamic ARP Inspection（防 ARP 欺騙）**
 > 與 **IP Source Guard（防 IP 偽造）**的基礎，
-> 是第 2 層資安的基石。
+> 是第 2 層資安的基石
+> （JunOS 只要在同一個 VLAN 底下加 `arp-inspection` 與 `ip-source-guard` 兩行）。
 
 ---
 
@@ -845,5 +989,7 @@ Q10. 「假 DHCP 伺服器」為什麼危險？最常見的情況是什麼？該
 - [[010-02-11-guide-網概-DNS網域名稱系統]] — DHCP 也負責發 DNS 設定
 - [[010-02-16-guide-網概-VLAN與網路分段]] — 跨 VLAN 的 DHCP Relay
 - [[010-02-17-guide-網概-網路排錯入門]] — 拿不到 IP 的排錯
-- [[040-01-13-guide-Cisco-埠設定與安全]] — DHCP Snooping 實作（進階）
+- [[040-01-08-guide-Juniper-埠設定與安全]] — DHCP Snooping 實作，JunOS 主線（進階）
+- [[040-01-13-guide-Cisco-埠設定與安全]] — 同上的 Cisco IOS 版本（進階）
+- [[040-01-15-cmd-網路設備-Juniper與Cisco指令對照]] — 兩家語法逐條對照
 - [[090-05-13-guide-資安設備-網路存取控制NAC與802.1X]] — 真正的存取控制（進階）

@@ -8,7 +8,7 @@ difficulty: 入門
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[010-02-05-guide-網概-MAC位址與交換器]]", "[[010-02-06-guide-網概-IP位址與子網路]]"]
-updated: 2026-08-27
+updated: 2026-08-29
 ---
 
 # VLAN 與網路分段
@@ -118,16 +118,74 @@ graph TD
 | 封包有標籤嗎 | **沒有**（終端設備不懂 VLAN） | **有 802.1Q 標籤** |
 | 比喻 | **辦公室的門**（你只能進自己那間） | **走廊**（所有部門的人都在上面走，但身上掛著識別證） |
 
+### 先講三件 JunOS 與 IOS 不一樣的地方
+
+本手冊的交換器主線是 **Juniper JunOS**，Cisco IOS 放在摺疊的對照區塊裡。
+後面所有設定範例都建立在這三點上：
+
+| | **Juniper JunOS** | **Cisco IOS** |
+| --- | --- | --- |
+| 介面命名 | `ge-0/0/5`（**槽/PIC/埠**，**從 0 開始數**） | `GigabitEthernet0/5`（從 1 開始數） |
+| 設定何時生效 | **打完還沒生效，要 `commit`** | **打完就生效** |
+| VLAN 怎麼指定 | 先定義**名稱**（`vlans USERS vlan-id 10`），介面引用**名稱** | 介面直接寫**號碼** |
+
+> [!warning] 未實機驗證
+> 本篇的 JunOS 設定依 Juniper 官方文件撰寫，未在實機驗證。
+> 實作前請對照你手上設備的 Junos 版本 —— 特別注意
+> **ELS（Enhanced Layer 2 Software）與非 ELS 的語法不同**，
+> 本篇一律使用 ELS 語法（現行 EX 系列）。
+
+> [!tip] `commit confirmed` 是改遠端設備的保命符
+> ```junos
+> user@switch# commit confirmed 5
+> ```
+> 設定**先套用**，但**如果 5 分鐘內沒有再打一次 `commit`，設備會自動回滾**。
+> 萬一你改壞了 Trunk 把自己鎖在門外，等 5 分鐘設備就自己救自己。
+>
+> 其他每天都會用到的：
+> ```junos
+> user@switch# show | compare      # 這次改了什麼（還沒生效，先看過再 commit）
+> user@switch# show | display set  # 把設定樹轉成 set 指令，方便複製與比對
+> user@switch# rollback 0          # 丟掉還沒 commit 的修改
+> user@switch# rollback 1          # 退回上一版已 commit 的設定（再 commit 才生效）
+> ```
+> **IOS 沒有這個機制** —— 打錯一行 ACL 就當場斷線，
+> 只能靠 `reload in 5` 這種土法煉鋼的做法先排好定時重開機。
+
 ### Access 埠：終端設備接的地方
 
-```cisco
-interface GigabitEthernet0/5
- description ** 3F-A12-會計室王小姐 **
- switchport mode access
- switchport access vlan 10        ! 這個埠屬於 VLAN 10
- spanning-tree portfast           ! 快速啟用（終端設備用）
- spanning-tree bpduguard enable   ! 防止有人接交換器進來
+```junos
+# 先建立 VLAN（JunOS 的 VLAN 用「名稱」，vlan-id 只是它的號碼）
+set vlans USERS vlan-id 10
+
+# 再設定介面
+set interfaces ge-0/0/5 description "3F-A12-會計室王小姐"
+set interfaces ge-0/0/5 unit 0 family ethernet-switching interface-mode access
+set interfaces ge-0/0/5 unit 0 family ethernet-switching vlan members USERS
+
+# 終端設備的埠：設成 STP 邊緣埠，並開啟 BPDU 保護
+set protocols rstp interface ge-0/0/5 edge
+set protocols rstp bpdu-block-on-edge
 ```
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> interface GigabitEthernet0/5
+>  description ** 3F-A12-會計室王小姐 **
+>  switchport mode access
+>  switchport access vlan 10        ! 這個埠屬於 VLAN 10
+>  spanning-tree portfast           ! 快速啟用（終端設備用）
+>  spanning-tree bpduguard enable   ! 防止有人接交換器進來
+> ```
+> **三個觀念差異**：
+> 1. IOS 的 `spanning-tree portfast` 對應 JunOS 的 `edge`；
+>    `spanning-tree bpduguard enable` 對應 `bpdu-block-on-edge` ——
+>    但 **JunOS 的 `bpdu-block-on-edge` 是全域設定**，一次涵蓋所有 edge 埠，
+>    IOS 則是逐埠設（或用 `spanning-tree portfast bpduguard default` 設全域）。
+> 2. IOS 直接寫 `switchport access vlan 10`；
+>    JunOS 必須先 `set vlans USERS vlan-id 10`，介面再引用名稱 `USERS`。
+>    **VLAN 沒先建，介面那行 commit 會直接報錯** —— 這是 JunOS 新手最常撞的牆。
+> 3. 這段 JunOS 設定**打完還沒生效**，要 `commit`。
 
 > [!tip] 終端設備完全不知道 VLAN 的存在
 > 你的電腦送出一個普通的乙太網路 Frame（**沒有 VLAN 標籤**），
@@ -166,13 +224,38 @@ interface GigabitEthernet0/5
 | **PCP / CoS** | 3 位元，**服務品質優先序**（0～7，語音通常用 5） |
 | TPID | 標示「這是 802.1Q 標籤」（`0x8100`） |
 
-```cisco
-interface GigabitEthernet0/24
- description ** Trunk to Core Switch **
- switchport mode trunk
- switchport trunk allowed vlan 10,20,30,99     ! 只允許這些 VLAN 通過
- switchport trunk native vlan 999              ! 見下方警告
+```junos
+# Trunk 上要通過的 VLAN，每一個都要先定義
+set vlans USERS vlan-id 10
+set vlans SERVERS vlan-id 20
+set vlans PRINTERS vlan-id 30
+set vlans GUEST vlan-id 99
+set vlans BLACKHOLE vlan-id 999
+
+# ge-0/0/23 是這台交換器的「第 24 埠」（JunOS 從 0 開始數）
+set interfaces ge-0/0/23 description "Trunk to Core Switch"
+set interfaces ge-0/0/23 unit 0 family ethernet-switching interface-mode trunk
+set interfaces ge-0/0/23 unit 0 family ethernet-switching vlan members [ USERS SERVERS PRINTERS GUEST BLACKHOLE ]
+set interfaces ge-0/0/23 native-vlan-id 999
 ```
+
+> [!warning] JunOS 的 native VLAN 必須也列在 `vlan members` 裡
+> `native-vlan-id 999` 只是說「untagged 的封包算 999」，
+> **如果 `BLACKHOLE`（999）沒有出現在 `vlan members` 清單中，untagged 封包會被丟掉**。
+> 這一點與 IOS 不同，是 JunOS Trunk 設定最常見的坑。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> interface GigabitEthernet0/24
+>  description ** Trunk to Core Switch **
+>  switchport mode trunk
+>  switchport trunk allowed vlan 10,20,30,99     ! 只允許這些 VLAN 通過
+>  switchport trunk native vlan 999              ! 見下方警告
+> ```
+> **兩個觀念差異**：
+> 1. **埠號差一**：IOS 的 `Gi0/24` 是第 24 埠，JunOS 要寫 `ge-0/0/23` 才是第 24 埠。
+> 2. IOS 的 native VLAN **不必**出現在 `switchport trunk allowed vlan` 清單裡也能運作；
+>    JunOS 的 `native-vlan-id` **一定要**在 `vlan members` 裡。
 
 > [!warning] Native VLAN：Trunk 上唯一「不打標籤」的 VLAN
 > 802.1Q 規定 Trunk 上有一個 **Native VLAN**，
@@ -186,32 +269,66 @@ interface GigabitEthernet0/24
 > 交換器會把他的封包當成 Trunk 流量，
 > **讓他跳到另一個 VLAN**。
 >
-> **防護（三個都要做）**：
-> ```cisco
-> ! 1. Native VLAN 改成一個沒有任何設備的閒置 VLAN
-> switchport trunk native vlan 999
+> **防護**：
+> ```junos
+> # 1. Native VLAN 改成一個沒有任何設備的閒置 VLAN（記得它也要在 members 裡）
+> set interfaces ge-0/0/23 native-vlan-id 999
+> set interfaces ge-0/0/23 unit 0 family ethernet-switching vlan members BLACKHOLE
 >
-> ! 2. 明確限制 Trunk 允許的 VLAN
-> switchport trunk allowed vlan 10,20,30
+> # 2. 明確限制 Trunk 能通過的 VLAN（沒列到的就過不去）
+> set interfaces ge-0/0/23 unit 0 family ethernet-switching vlan members [ USERS SERVERS PRINTERS ]
 >
-> ! 3. 所有 Access 埠明確設為 access 模式，關閉自動協商
-> interface range Gi0/1 - 20
->  switchport mode access
->  switchport nonegotiate          ! 關閉 DTP，防止被誘導成 Trunk
+> # 3. 所有 Access 埠明確設為 access 模式，不要留白讓平台預設決定
+> set interfaces interface-range USER-PORTS member-range ge-0/0/0 to ge-0/0/19
+> set interfaces interface-range USER-PORTS unit 0 family ethernet-switching interface-mode access
+> set interfaces interface-range USER-PORTS unit 0 family ethernet-switching vlan members USERS
 > ```
+> **JunOS 沒有 DTP**，介面不會自己協商變成 Trunk，
+> 所以沒有「關閉自動協商」這個步驟 —— 少一個要防的洞。
+>
+> > [!info]- Cisco IOS 對照
+> > ```cisco
+> > ! 1. Native VLAN 改成一個沒有任何設備的閒置 VLAN
+> > switchport trunk native vlan 999
+> >
+> > ! 2. 明確限制 Trunk 允許的 VLAN
+> > switchport trunk allowed vlan 10,20,30
+> >
+> > ! 3. 所有 Access 埠明確設為 access 模式，關閉自動協商
+> > interface range Gi0/1 - 20
+> >  switchport mode access
+> >  switchport nonegotiate          ! 關閉 DTP，防止被誘導成 Trunk
+> > ```
+> > IOS 多了第 3 步的 `switchport nonegotiate`，因為 IOS 的埠預設會跑 DTP。
+> > JunOS 的 `interface-range` 則對應 IOS 的 `interface range`，
+> > 差別是 JunOS 的介面範圍要**先取名字**，之後所有共通設定都掛在那個名字底下。
 
-> [!danger] 一定要關閉 DTP（動態 Trunk 協定）
+> [!danger] DTP：JunOS 沒有這個東西，但你的網路裡很可能有 Cisco
+> **JunOS 不支援 DTP（動態 Trunk 協定）** ——
+> Juniper 的介面不會自己協商成 Trunk，你沒寫 `interface-mode trunk` 它就不是 Trunk。
+> 這一點 JunOS 天生就比較安全。
+>
+> **但只要網路裡混有一台 Cisco，這個風險就存在**：
 > Cisco 的埠預設是 `dynamic auto` 或 `dynamic desirable`，
 > **會自動協商要不要變成 Trunk**。
->
 > 攻擊者只要送出 DTP 封包，
 > **就能讓自己接的那個埠變成 Trunk，看到所有 VLAN 的流量**。
 >
-> **所有接終端設備的埠都應該明確設定**：
-> ```cisco
-> switchport mode access
-> switchport nonegotiate
+> **JunOS 這邊該做的**：所有接終端設備的埠都明確寫出模式與所屬 VLAN，
+> 不要空著讓平台預設決定。
+> ```junos
+> set interfaces ge-0/0/5 unit 0 family ethernet-switching interface-mode access
+> set interfaces ge-0/0/5 unit 0 family ethernet-switching vlan members USERS
 > ```
+>
+> > [!info]- Cisco IOS 對照
+> > ```cisco
+> > switchport mode access
+> > switchport nonegotiate
+> > ```
+> > `switchport nonegotiate` 就是**關掉 DTP**。
+> > JunOS 沒有對應指令，因為它根本不跑 DTP —— 這是少數
+> > 「不用設定就比較安全」的地方。
 
 ---
 
@@ -232,23 +349,43 @@ interface GigabitEthernet0/24
 
 ```mermaid
 graph LR
-    R["路由器<br/>eth0.10 = 192.168.10.1<br/>eth0.20 = 192.168.20.1<br/>eth0.99 = 192.168.99.1"]
+    R["路由器<br/>ge-0/0/0.10 = 192.168.10.1<br/>ge-0/0/0.20 = 192.168.20.1<br/>ge-0/0/0.99 = 192.168.99.1"]
     R ---|"一條 Trunk"| SW["交換器"]
     SW --- V10["VLAN 10 設備"]
     SW --- V20["VLAN 20 設備"]
     SW --- V99["VLAN 99 設備"]
 ```
 
-```cisco
-! 路由器上
-interface GigabitEthernet0/0.10
- encapsulation dot1Q 10
- ip address 192.168.10.1 255.255.255.0
-!
-interface GigabitEthernet0/0.20
- encapsulation dot1Q 20
- ip address 192.168.20.1 255.255.255.0
+```junos
+# 路由器（MX / SRX）上：實體介面先開啟 VLAN 標籤功能
+set interfaces ge-0/0/0 vlan-tagging
+
+# 每個 VLAN 一個邏輯單元（unit），unit 編號習慣寫得跟 VLAN ID 一樣
+set interfaces ge-0/0/0 unit 10 vlan-id 10
+set interfaces ge-0/0/0 unit 10 family inet address 192.168.10.1/24
+
+set interfaces ge-0/0/0 unit 20 vlan-id 20
+set interfaces ge-0/0/0 unit 20 family inet address 192.168.20.1/24
 ```
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 路由器上
+> interface GigabitEthernet0/0.10
+>  encapsulation dot1Q 10
+>  ip address 192.168.10.1 255.255.255.0
+> !
+> interface GigabitEthernet0/0.20
+>  encapsulation dot1Q 20
+>  ip address 192.168.20.1 255.255.255.0
+> ```
+> **三個觀念差異**：
+> 1. IOS 建的是**子介面**（`Gi0/0.10`）並在上面寫 `encapsulation dot1Q 10`；
+>    JunOS 建的是**邏輯單元 unit**，而且要**先在實體介面開 `vlan-tagging`**，
+>    否則那些 unit 不會生效。
+> 2. **unit 編號與 vlan-id 是兩件不同的事**，只是慣例寫成一樣。
+>    真正決定標籤的是 `vlan-id 10` 那一行，不是 `unit 10`。
+> 3. 遮罩寫法：JunOS 一律用 `/24`，IOS 用 `255.255.255.0`。
 
 | 優點 | 缺點 |
 | --- | --- |
@@ -256,21 +393,51 @@ interface GigabitEthernet0/0.20
 | 設定簡單 | 那條線容易成為瓶頸 |
 | 適合小型網路 | 路由器的轉送速度較慢（軟體） |
 
-### 方案二：三層交換器（SVI）
+### 方案二：三層交換器（JunOS 叫 IRB，Cisco 叫 SVI）
 
-在交換器上直接建立 **SVI**（Switched Virtual Interface，VLAN 介面），
-由交換器**用硬體 ASIC 做路由**。
+在交換器上直接建立一個「VLAN 的三層介面」，由交換器**用硬體 ASIC 做路由**。
 
-```cisco
-! 三層交換器上
-ip routing                          ! 啟用路由功能（很多人忘記這行！）
-!
-interface Vlan10
- ip address 192.168.10.1 255.255.255.0
-!
-interface Vlan20
- ip address 192.168.20.1 255.255.255.0
+- **JunOS**：**IRB**（Integrated Routing and Bridging，整合路由與橋接），介面叫 `irb.10`
+- **Cisco**：**SVI**（Switched Virtual Interface），介面叫 `Vlan10`
+
+名字不同，做的事完全一樣。
+
+```junos
+# 三層交換器上：建 VLAN → 綁 irb 介面 → 給 irb 介面 IP
+set vlans USERS vlan-id 10
+set vlans USERS l3-interface irb.10
+set interfaces irb unit 10 family inet address 192.168.10.1/24
+
+set vlans SERVERS vlan-id 20
+set vlans SERVERS l3-interface irb.20
+set interfaces irb unit 20 family inet address 192.168.20.1/24
 ```
+
+> [!tip] JunOS 不需要「啟用路由」這一行
+> IOS 上最常被漏掉的 `ip routing`，**JunOS 沒有對應指令** ——
+> 兩個 irb 介面之間預設就會互相路由，設好 IP 就通了。
+>
+> 但 JunOS 有另一個要注意的：
+> **`irb.10` 要等 VLAN 10 裡至少有一個成員埠 up，它才會 up**。
+> 全新設定好卻 ping 不到閘道時，先看那個 VLAN 有沒有活著的埠。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 三層交換器上
+> ip routing                          ! 啟用路由功能（很多人忘記這行！）
+> !
+> interface Vlan10
+>  ip address 192.168.10.1 255.255.255.0
+> !
+> interface Vlan20
+>  ip address 192.168.20.1 255.255.255.0
+> ```
+> **兩個觀念差異**：
+> 1. **`ip routing` 是 IOS 特有的開關**，不打這行 SVI 之間不會路由 ——
+>    這是 IOS 上最經典的疏漏。JunOS 沒有這個開關。
+> 2. IOS 的 `interface Vlan10` 一寫下去就自動對應 VLAN 10；
+>    JunOS 要**明確用 `set vlans USERS l3-interface irb.10` 把兩者綁起來**，
+>    `irb` 的 unit 編號和 VLAN ID 並沒有自動關係（只是慣例對齊）。
 
 | 優點 | 缺點 |
 | --- | --- |
@@ -372,34 +539,84 @@ graph LR
 | STP | 802.1D | **30～50 秒** | 原始版本，太慢 |
 | **RSTP** | **802.1w** | **1～6 秒** | **快速生成樹，現代標準** |
 | MSTP | 802.1s | 快 | 多個 VLAN 共用一棵樹，節省資源 |
+| **VSTP** | **Juniper** | 快 | **每個 VLAN 一棵樹**，與 Cisco PVST+ 相容 |
 | PVST+ / Rapid-PVST+ | Cisco | 快 | **每個 VLAN 一棵樹**，可做流量負載分擔 |
 
 > [!warning] 傳統 STP 的 30～50 秒收斂太慢
 > 主線斷掉後，要等 30～50 秒 STP 才會啟用備用路徑 ——
 > 這段時間網路是**完全不通**的。
 >
-> **現代網路應該使用 RSTP（802.1w）或 Rapid-PVST+**。
+> **現代網路應該使用 RSTP（802.1w）** ——
+> Juniper EX 系列**出廠預設就是 RSTP**，
+> Cisco 則要明確下 `spanning-tree mode rapid-pvst` 才會用快的。
 
 ### 必做的 STP 保護設定
 
-```cisco
-! 1. 使用快速版本
-spanning-tree mode rapid-pvst
+```junos
+# 1. 使用快速版本（EX 系列預設就跑 RSTP，這裡明確寫出來）
+set protocols rstp
 
-! 2. 明確指定 Root Bridge（不要讓它隨機選）
-spanning-tree vlan 10,20,30 root primary      ! 在核心交換器上
+# 2. 明確指定 Root Bridge（不要讓它隨機選）
+#    數字越小越優先，必須是 4096 的倍數
+set protocols rstp bridge-priority 4096
 
-! 3. 接使用者的埠：PortFast + BPDU Guard
-interface range GigabitEthernet0/1 - 20
- switchport mode access
- spanning-tree portfast
- spanning-tree bpduguard enable       ! 收到 BPDU 就關閉該埠
+# 3. 接使用者的埠：邊緣埠 + BPDU 保護
+set interfaces interface-range USER-PORTS member-range ge-0/0/0 to ge-0/0/19
+set interfaces interface-range USER-PORTS unit 0 family ethernet-switching interface-mode access
+set protocols rstp interface ge-0/0/0 edge
+set protocols rstp interface ge-0/0/1 edge
+# （其餘使用者埠比照辦理，逐埠列出）
+set protocols rstp bpdu-block-on-edge        # 邊緣埠收到 BPDU 就把它關掉
 
-! 4. 廣播風暴抑制
-interface range GigabitEthernet0/1 - 20
- storm-control broadcast level 5.00   ! 廣播超過 5% 頻寬就抑制
- storm-control action shutdown        ! 或直接關埠
+# 4. 廣播風暴抑制
+set forwarding-options storm-control-profiles SC-5 all bandwidth-percentage 5
+set forwarding-options storm-control-profiles SC-5 action-shutdown   # 不加這行就只丟封包
+set interfaces interface-range USER-PORTS unit 0 family ethernet-switching storm-control SC-5
 ```
+
+> [!warning] 未實機驗證
+> 本段 JunOS 設定依 Juniper 官方文件撰寫，未在實機驗證。
+> 另外，**`interface-range` 的名稱能不能直接用在 `protocols rstp interface` 底下，
+> 各版本行為不一致** —— 保險起見，`edge` 這類 STP 設定請逐埠列出。
+
+> [!tip] 被 BPDU Guard 關掉的埠怎麼救回來
+> ```junos
+> user@switch> clear ethernet-switching bpdu-error interface ge-0/0/5
+> ```
+> 或事先設定自動恢復：
+> ```junos
+> set protocols rstp bpdu-block-on-edge disable-timeout 300
+> ```
+> 300 秒後自動重新啟用該埠 —— 這樣不必為了每次誤觸都跑一趟現場。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 1. 使用快速版本
+> spanning-tree mode rapid-pvst
+>
+> ! 2. 明確指定 Root Bridge（不要讓它隨機選）
+> spanning-tree vlan 10,20,30 root primary      ! 在核心交換器上
+>
+> ! 3. 接使用者的埠：PortFast + BPDU Guard
+> interface range GigabitEthernet0/1 - 20
+>  switchport mode access
+>  spanning-tree portfast
+>  spanning-tree bpduguard enable       ! 收到 BPDU 就關閉該埠
+>
+> ! 4. 廣播風暴抑制
+> interface range GigabitEthernet0/1 - 20
+>  storm-control broadcast level 5.00   ! 廣播超過 5% 頻寬就抑制
+>  storm-control action shutdown        ! 或直接關埠
+> ```
+> **三個觀念差異**：
+> 1. **每 VLAN 一棵樹 vs 整台一棵樹**：IOS 的 `rapid-pvst` 是每個 VLAN 各跑一棵樹；
+>    JunOS 的 `rstp` 是**整台只有一棵樹**。
+>    要做到「每 VLAN 一棵樹」，JunOS 要改用 **VSTP**
+>    （`set protocols vstp vlan USERS bridge-priority 4096`），它與 Cisco PVST+ 相容。
+> 2. IOS 的 `root primary` 會**自動幫你算出一個夠小的優先序**；
+>    JunOS 要自己填 `bridge-priority`（4096 的倍數）。
+> 3. IOS 的 BPDU Guard 是**逐埠**設定；
+>    JunOS 的 `bpdu-block-on-edge` 是**全域一次涵蓋所有 edge 埠**。
 
 > [!tip] BPDU Guard 是防止「有人接錯線」的關鍵
 > **PortFast** 讓終端設備的埠跳過 STP 的等待，插上就能用（省 30 秒）。
@@ -476,16 +693,36 @@ interface range GigabitEthernet0/1 - 20
 >
 > **真正的分段 = VLAN + 明確的存取控制規則**。
 >
-> ```cisco
-> ! 範例：訪客 VLAN 只能上網，不能碰內部
-> ip access-list extended GUEST-OUT
->  deny   ip 192.168.99.0 0.0.0.255 10.0.0.0 0.255.255.255
->  deny   ip 192.168.99.0 0.0.0.255 192.168.0.0 0.0.255.255
->  permit ip 192.168.99.0 0.0.0.255 any
-> !
-> interface Vlan99
->  ip access-group GUEST-OUT in
+> ```junos
+> # 範例：訪客 VLAN 只能上網，不能碰內部
+> set firewall family inet filter GUEST-OUT term BLOCK-INTERNAL from source-address 192.168.99.0/24
+> set firewall family inet filter GUEST-OUT term BLOCK-INTERNAL from destination-address 10.0.0.0/8
+> set firewall family inet filter GUEST-OUT term BLOCK-INTERNAL from destination-address 192.168.0.0/16
+> set firewall family inet filter GUEST-OUT term BLOCK-INTERNAL then discard
+> set firewall family inet filter GUEST-OUT term ALLOW-REST then accept
+>
+> # 套在訪客 VLAN 的 irb 介面上，方向 input（從訪客進來的方向）
+> set interfaces irb unit 99 family inet filter input GUEST-OUT
 > ```
+> **JunOS 的 filter 是「由上往下，第一個命中的 term 就結束」**，順序決定一切；
+> 而且**沒被任何 term 命中的封包會被隱含丟棄**，
+> 所以最後一定要補一個 `then accept` 的 term，否則訪客連網際網路都上不了。
+>
+> > [!info]- Cisco IOS 對照
+> > ```cisco
+> > ! 範例：訪客 VLAN 只能上網，不能碰內部
+> > ip access-list extended GUEST-OUT
+> >  deny   ip 192.168.99.0 0.0.0.255 10.0.0.0 0.255.255.255
+> >  deny   ip 192.168.99.0 0.0.0.255 192.168.0.0 0.0.255.255
+> >  permit ip 192.168.99.0 0.0.0.255 any
+> > !
+> > interface Vlan99
+> >  ip access-group GUEST-OUT in
+> > ```
+> > **兩個觀念差異**：
+> > 1. IOS 用**反遮罩（wildcard mask）** `0.0.0.255`；JunOS 直接寫 `/24`。
+> > 2. IOS 一條 ACE 就是一列；JunOS 一個 term 可以有多個 `from` 條件，
+> >    **同類型的條件（多個 destination-address）是「或」，不同類型之間是「且」**。
 
 ---
 
@@ -569,119 +806,289 @@ $ sudo tcpdump -i eth0 -n vlan 20
 > - `switchport trunk allowed vlan` 設得太窄
 > - 或那個埠根本不是 Trunk
 
-### Cisco 上的完整設定範例
+### 交換器上的完整設定範例
 
-```cisco
-! ===== 建立 VLAN =====
-vlan 10
- name USERS
-vlan 20
- name SERVERS
-vlan 99
- name GUEST
-vlan 999
- name BLACKHOLE
+```junos
+# ===== 建立 VLAN =====
+set vlans USERS vlan-id 10
+set vlans SERVERS vlan-id 20
+set vlans GUEST vlan-id 99
+set vlans BLACKHOLE vlan-id 999
 
-! ===== 使用者埠（Access）=====
-interface range GigabitEthernet0/1 - 20
- description ** User Access Ports **
- switchport mode access
- switchport access vlan 10
- switchport nonegotiate                  ! 關閉 DTP
- spanning-tree portfast
- spanning-tree bpduguard enable
- storm-control broadcast level 5.00
- switchport port-security
- switchport port-security maximum 2
- switchport port-security violation restrict
+# ===== 使用者埠（Access，ge-0/0/0 ～ ge-0/0/19）=====
+set interfaces interface-range USER-PORTS member-range ge-0/0/0 to ge-0/0/19
+set interfaces interface-range USER-PORTS description "User Access Ports"
+set interfaces interface-range USER-PORTS unit 0 family ethernet-switching interface-mode access
+set interfaces interface-range USER-PORTS unit 0 family ethernet-switching vlan members USERS
+set interfaces interface-range USER-PORTS unit 0 family ethernet-switching storm-control SC-5
 
-! ===== 未使用的埠 =====
-interface range GigabitEthernet0/21 - 22
- description ** UNUSED **
- switchport access vlan 999
- shutdown
+# 廣播風暴抑制：超過 5% 頻寬就丟
+set forwarding-options storm-control-profiles SC-5 all bandwidth-percentage 5
 
-! ===== Trunk 埠 =====
-interface GigabitEthernet0/24
- description ** Trunk to Core **
- switchport mode trunk
- switchport trunk allowed vlan 10,20,99
- switchport trunk native vlan 999        ! 不要用預設的 VLAN 1
- switchport nonegotiate
+# STP 邊緣埠 + BPDU 保護（逐埠列出，此處只示範前兩埠）
+set protocols rstp interface ge-0/0/0 edge
+set protocols rstp interface ge-0/0/1 edge
+set protocols rstp bpdu-block-on-edge
 
-! ===== STP =====
-spanning-tree mode rapid-pvst
-spanning-tree vlan 10,20,99 priority 4096   ! 若這是核心交換器
+# 埠上最多學 2 個 MAC，超過就丟（相當於 IOS 的 port-security）
+set switch-options interface ge-0/0/0 interface-mac-limit 2 packet-action drop
+set switch-options interface ge-0/0/1 interface-mac-limit 2 packet-action drop
+
+# ===== 未使用的埠 =====
+set interfaces interface-range UNUSED member-range ge-0/0/20 to ge-0/0/22
+set interfaces interface-range UNUSED description "UNUSED"
+set interfaces interface-range UNUSED unit 0 family ethernet-switching interface-mode access
+set interfaces interface-range UNUSED unit 0 family ethernet-switching vlan members BLACKHOLE
+set interfaces ge-0/0/20 disable
+set interfaces ge-0/0/21 disable
+set interfaces ge-0/0/22 disable
+
+# ===== Trunk 埠（ge-0/0/23 就是第 24 埠）=====
+set interfaces ge-0/0/23 description "Trunk to Core"
+set interfaces ge-0/0/23 unit 0 family ethernet-switching interface-mode trunk
+set interfaces ge-0/0/23 unit 0 family ethernet-switching vlan members [ USERS SERVERS GUEST BLACKHOLE ]
+set interfaces ge-0/0/23 native-vlan-id 999
+
+# ===== STP =====
+set protocols rstp bridge-priority 4096
 ```
+
+**存檔（一定要做，而且遠端作業請先用 `commit confirmed`）**：
+
+```junos
+user@switch# show | compare        # 先看清楚這次改了什麼
+user@switch# commit confirmed 5    # 先套用，5 分鐘內沒再 commit 就自動回滾
+# ...確認自己還連得上、網路正常...
+user@switch# commit                # 確認保留
+```
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! ===== 建立 VLAN =====
+> vlan 10
+>  name USERS
+> vlan 20
+>  name SERVERS
+> vlan 99
+>  name GUEST
+> vlan 999
+>  name BLACKHOLE
+>
+> ! ===== 使用者埠（Access）=====
+> interface range GigabitEthernet0/1 - 20
+>  description ** User Access Ports **
+>  switchport mode access
+>  switchport access vlan 10
+>  switchport nonegotiate                  ! 關閉 DTP
+>  spanning-tree portfast
+>  spanning-tree bpduguard enable
+>  storm-control broadcast level 5.00
+>  switchport port-security
+>  switchport port-security maximum 2
+>  switchport port-security violation restrict
+>
+> ! ===== 未使用的埠 =====
+> interface range GigabitEthernet0/21 - 22
+>  description ** UNUSED **
+>  switchport access vlan 999
+>  shutdown
+>
+> ! ===== Trunk 埠 =====
+> interface GigabitEthernet0/24
+>  description ** Trunk to Core **
+>  switchport mode trunk
+>  switchport trunk allowed vlan 10,20,99
+>  switchport trunk native vlan 999        ! 不要用預設的 VLAN 1
+>  switchport nonegotiate
+>
+> ! ===== STP =====
+> spanning-tree mode rapid-pvst
+> spanning-tree vlan 10,20,99 priority 4096   ! 若這是核心交換器
+> ```
+> **對照重點**：
+> - `switchport port-security maximum 2` → `interface-mac-limit 2 packet-action drop`
+> - `storm-control broadcast level 5.00` → `storm-control-profiles ... bandwidth-percentage 5`
+> - `spanning-tree vlan ... priority 4096` → `protocols rstp bridge-priority 4096`
+>   （要做到每 VLAN 一棵樹才需要換成 `protocols vstp`）
+> - IOS 打完就生效，**沒有 commit 這一步**，也沒有 `commit confirmed` 的自動回滾。
 
 ### 驗證指令
 
-```cisco
-! 看 VLAN 與埠的對應
-switch# show vlan brief
-VLAN Name       Status    Ports
----- ---------- --------- -------------------------------
-10   USERS      active    Gi0/1, Gi0/2, Gi0/3, ...
-20   SERVERS    active    Gi0/11, Gi0/12
-99   GUEST      active    Gi0/18
-999  BLACKHOLE  active    Gi0/21, Gi0/22
+> [!warning] 未實機驗證
+> 以下指令依 Juniper 官方文件整理，**輸出為示意格式**，未在實機驗證。
+> 欄位寬度與細部欄位會隨 Junos 版本與機型不同。
 
-! 看 Trunk 狀態
-switch# show interfaces trunk
-Port      Mode  Encapsulation  Status    Native vlan
-Gi0/24    on    802.1q         trunking  999
-Port      Vlans allowed on trunk
-Gi0/24    10,20,99
+```junos
+# 看 VLAN 與埠的對應（星號代表該介面目前是 up）
+user@switch> show vlans
+Routing instance     VLAN name     Tag     Interfaces
+default-switch       USERS         10
+                                           ge-0/0/0.0*
+                                           ge-0/0/1.0*
+default-switch       SERVERS       20
+                                           ge-0/0/10.0*
+default-switch       GUEST         99
+                                           ge-0/0/17.0
+default-switch       BLACKHOLE     999
+                                           ge-0/0/23.0*
 
-! 看 STP 狀態
-switch# show spanning-tree vlan 10
-VLAN0010
-  Root ID    Priority 4106
-             Address  0011.2233.4455
-             This bridge is the root          ← 我是 Root
-Interface     Role Sts Cost  Prio.Nbr Type
-Gi0/24        Desg FWD 4     128.24   P2p
-Gi0/23        Altn BLK 4     128.23   P2p    ← 被阻斷（防迴圈）
-                   ^^^
+# 看每個埠是 access 還是 trunk、屬於哪些 VLAN、有沒有被 STP 擋住
+user@switch> show ethernet-switching interfaces
+Interface    State    VLAN members    Tag    Tagging    Blocking
+ge-0/0/5.0   up       USERS           10     untagged   unblocked
+ge-0/0/23.0  up       USERS           10     tagged     unblocked
+                      SERVERS         20     tagged     unblocked
+                      BLACKHOLE       999    untagged   unblocked
 
-! 看某個埠的詳細設定
-switch# show interfaces GigabitEthernet0/5 switchport
+# 看 Trunk 的詳細狀態（含 native VLAN）
+user@switch> show interfaces ge-0/0/23 extensive
+
+# 看 STP：誰是 Root、我到 Root 的成本
+user@switch> show spanning-tree bridge
+
+# 看每個埠的 STP 角色與狀態（FWD 轉送 / BLK 阻斷）
+user@switch> show spanning-tree interface
+
+# 看 MAC 表（相當於 IOS 的 show mac address-table）
+user@switch> show ethernet-switching table
+
+# 看三層介面（irb）
+user@switch> show interfaces terse | match irb
+
+# 把某個埠的設定用 set 格式印出來，最好複製也最好比對
+user@switch> show configuration interfaces ge-0/0/5 | display set
 ```
+
+> [!tip] `| display set` 是 JunOS 最實用的一招
+> Junos 預設用階層式的大括號顯示設定，看得懂但不好複製。
+> 加上 `| display set` 就會攤平成一行一行的 `set` 指令 ——
+> **貼到另一台設備上就能直接跑**，也方便用 diff 比對兩台設備的差異。
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 看 VLAN 與埠的對應
+> switch# show vlan brief
+> VLAN Name       Status    Ports
+> ---- ---------- --------- -------------------------------
+> 10   USERS      active    Gi0/1, Gi0/2, Gi0/3, ...
+> 20   SERVERS    active    Gi0/11, Gi0/12
+> 99   GUEST      active    Gi0/18
+> 999  BLACKHOLE  active    Gi0/21, Gi0/22
+>
+> ! 看 Trunk 狀態
+> switch# show interfaces trunk
+> Port      Mode  Encapsulation  Status    Native vlan
+> Gi0/24    on    802.1q         trunking  999
+> Port      Vlans allowed on trunk
+> Gi0/24    10,20,99
+>
+> ! 看 STP 狀態
+> switch# show spanning-tree vlan 10
+> VLAN0010
+>   Root ID    Priority 4106
+>              Address  0011.2233.4455
+>              This bridge is the root          ← 我是 Root
+> Interface     Role Sts Cost  Prio.Nbr Type
+> Gi0/24        Desg FWD 4     128.24   P2p
+> Gi0/23        Altn BLK 4     128.23   P2p    ← 被阻斷（防迴圈）
+>                    ^^^
+>
+> ! 看某個埠的詳細設定
+> switch# show interfaces GigabitEthernet0/5 switchport
+> ```
+> **一個觀念差異**：IOS 的 `show` 指令在特權模式（`switch#`）下打；
+> JunOS 的 `show` 指令在**操作模式**（`user@switch>`）下打，
+> **設定模式（`user@switch#`）裡的 `show` 是看設定，不是看狀態** ——
+> 在設定模式下要看狀態，要在指令前加 `run`，例如 `run show vlans`。
 
 ---
 
 ## 常見錯誤與排錯
 
-| 現象 | 原因 | 解法 |
+| 現象 | 原因 | 解法（JunOS） |
 | --- | --- | --- |
-| 電腦拿不到 IP（`169.254.x.x`） | **接到錯誤的 VLAN**（沒有 DHCP） | `show interfaces Gi0/x switchport` 檢查 VLAN |
-| 同 VLAN 內通，跨 VLAN 不通 | **沒有第 3 層設備**做路由 | 設定 SVI 或單臂路由；**檢查 `ip routing` 有沒有開** |
-| 三層交換器設了 SVI 但還是不通 | **忘了 `ip routing`** | `ip routing`（這是最常見的疏漏） |
-| 某個 VLAN 跨不到另一台交換器 | **Trunk 沒有允許那個 VLAN** | `switchport trunk allowed vlan add 30` |
-| Trunk 兩端 Native VLAN 不一致 | 設定不對稱 | 兩端都設相同的 Native VLAN；CDP 會告警 |
-| **整層樓網路癱瘓、燈狂閃** | **廣播風暴（迴圈）** | 立刻找出重複接線；啟用 STP + BPDU Guard |
-| 主線斷了要等 30 秒才恢復 | 用了傳統 STP | 改用 **rapid-pvst** 或 MSTP |
-| 插上電腦要等 30 秒才能用 | 沒設 PortFast | `spanning-tree portfast` |
-| 有人接了分享器造成迴圈 | 沒有 BPDU Guard | `spanning-tree bpduguard enable` |
-| 訪客可以存取內部伺服器 | **只切 VLAN 沒設 ACL** | 在 SVI 上套用 ACL |
-| 攻擊者跳到別的 VLAN | **VLAN Hopping**（Native VLAN 或 DTP） | 改 Native VLAN、`switchport nonegotiate` |
+| 電腦拿不到 IP（`169.254.x.x`） | **接到錯誤的 VLAN**（沒有 DHCP） | `show ethernet-switching interfaces` 檢查該埠的 VLAN |
+| **設定打完了卻完全沒作用** | **忘了 `commit`** | `commit`（JunOS 的頭號新手陷阱） |
+| 介面那行 commit 直接報錯 | **引用了還沒建立的 VLAN 名稱** | 先 `set vlans <名稱> vlan-id <號碼>` |
+| 同 VLAN 內通，跨 VLAN 不通 | **沒有第 3 層設備**做路由 | 建 `irb` 介面，並用 `set vlans X l3-interface irb.N` 綁定 |
+| 建了 `irb` 介面但它是 down | **那個 VLAN 裡沒有任何 up 的成員埠** | 先讓該 VLAN 至少有一個埠接上並 up |
+| 某個 VLAN 跨不到另一台交換器 | **Trunk 沒有帶那個 VLAN** | `set interfaces ge-0/0/23 unit 0 family ethernet-switching vlan members PRINTERS` |
+| Trunk 上的 untagged 封包全部消失 | **`native-vlan-id` 沒列進 `vlan members`** | 把 native VLAN 也加進 `vlan members` |
+| Trunk 兩端 Native VLAN 不一致 | 設定不對稱 | 兩端都設相同的 native VLAN；用 `show lldp neighbors` 對照（**JunOS 用 LLDP，不是 CDP**） |
+| **整層樓網路癱瘓、燈狂閃** | **廣播風暴（迴圈）** | 立刻找出重複接線；啟用 RSTP + `bpdu-block-on-edge` |
+| 主線斷了要等 30 秒才恢復 | 用了傳統 STP | 改用 **RSTP**（EX 預設）或 MSTP |
+| 插上電腦要等 30 秒才能用 | 沒設邊緣埠 | `set protocols rstp interface ge-0/0/x edge` |
+| 有人接了分享器造成迴圈 | 沒有 BPDU 保護 | `set protocols rstp bpdu-block-on-edge` |
+| 埠被 BPDU 保護關掉後起不來 | 需要手動清除 | `clear ethernet-switching bpdu-error interface ge-0/0/x` |
+| 訪客可以存取內部伺服器 | **只切 VLAN 沒設過濾規則** | 在 `irb` 介面上套 `firewall filter` |
+| 攻擊者跳到別的 VLAN | **VLAN Hopping**（Native VLAN） | native VLAN 改成閒置 VLAN；明確設 `interface-mode access` |
 | VM 拿不到正確 VLAN 的 IP | 虛擬交換器的 VLAN 設定錯 | 檢查 hypervisor 的 port group VLAN ID |
+
+> [!info]- Cisco IOS 對照
+> ```cisco
+> ! 對應的 IOS 解法（指令形式）
+> show interfaces Gi0/x switchport      ! 檢查該埠的 VLAN 與模式
+> ip routing                            ! 三層交換器沒開這個，SVI 之間不會路由
+> switchport trunk allowed vlan add 30  ! 讓 Trunk 多帶一個 VLAN
+> spanning-tree mode rapid-pvst         ! 換成快速收斂的版本
+> spanning-tree portfast                ! 插上就能用
+> spanning-tree bpduguard enable        ! 防止有人接交換器造成迴圈
+> switchport nonegotiate                ! 關閉 DTP，防 VLAN Hopping
+> ```
+>
+> | 現象 | 原因 | 解法（Cisco IOS） |
+> | --- | --- | --- |
+> | 電腦拿不到 IP（`169.254.x.x`） | **接到錯誤的 VLAN**（沒有 DHCP） | `show interfaces Gi0/x switchport` 檢查 VLAN |
+> | 同 VLAN 內通，跨 VLAN 不通 | **沒有第 3 層設備**做路由 | 設定 SVI 或單臂路由；**檢查 `ip routing` 有沒有開** |
+> | 三層交換器設了 SVI 但還是不通 | **忘了 `ip routing`** | `ip routing`（這是最常見的疏漏） |
+> | 某個 VLAN 跨不到另一台交換器 | **Trunk 沒有允許那個 VLAN** | `switchport trunk allowed vlan add 30` |
+> | Trunk 兩端 Native VLAN 不一致 | 設定不對稱 | 兩端都設相同的 Native VLAN；CDP 會告警 |
+> | **整層樓網路癱瘓、燈狂閃** | **廣播風暴（迴圈）** | 立刻找出重複接線；啟用 STP + BPDU Guard |
+> | 主線斷了要等 30 秒才恢復 | 用了傳統 STP | 改用 **rapid-pvst** 或 MSTP |
+> | 插上電腦要等 30 秒才能用 | 沒設 PortFast | `spanning-tree portfast` |
+> | 有人接了分享器造成迴圈 | 沒有 BPDU Guard | `spanning-tree bpduguard enable` |
+> | 訪客可以存取內部伺服器 | **只切 VLAN 沒設 ACL** | 在 SVI 上套用 ACL |
+> | 攻擊者跳到別的 VLAN | **VLAN Hopping**（Native VLAN 或 DTP） | 改 Native VLAN、`switchport nonegotiate` |
+> | VM 拿不到正確 VLAN 的 IP | 虛擬交換器的 VLAN 設定錯 | 檢查 hypervisor 的 port group VLAN ID |
+>
+> **IOS 沒有 `commit` 這一步**，所以也沒有「忘記 commit」這個現象；
+> 代價是打錯就當場生效，沒有 `commit confirmed` 的自動回滾可以救。
 
 > [!tip] VLAN 排錯的四步驟
 > ```
-> 1. 這個埠是 Access 還是 Trunk？屬於哪個 VLAN？
->    → show interfaces Gi0/x switchport
+> 0. （JunOS 專屬）我到底 commit 了沒？
+>    → show | compare        ← 在設定模式下，有輸出就代表還沒生效
 >
-> 2. 這個 VLAN 存在嗎？狀態是 active 嗎？
->    → show vlan brief
+> 1. 這個埠是 access 還是 trunk？屬於哪個 VLAN？
+>    → show ethernet-switching interfaces
 >
-> 3. Trunk 有允許這個 VLAN 通過嗎？
->    → show interfaces trunk
+> 2. 這個 VLAN 存在嗎？有哪些埠是 up 的（帶星號）？
+>    → show vlans
 >
-> 4. 有第 3 層介面（SVI）嗎？ip routing 開了嗎？
->    → show ip interface brief | include Vlan
->    → show running-config | include ip routing
+> 3. Trunk 有帶這個 VLAN 嗎？native-vlan-id 也在 members 裡嗎？
+>    → show configuration interfaces ge-0/0/23 | display set
+>
+> 4. 有第 3 層介面（irb）嗎？它 up 了嗎？
+>    → show interfaces terse | match irb
 > ```
+>
+> > [!info]- Cisco IOS 對照
+> > ```cisco
+> > ! 1. 這個埠是 Access 還是 Trunk？屬於哪個 VLAN？
+> > show interfaces Gi0/x switchport
+> >
+> > ! 2. 這個 VLAN 存在嗎？狀態是 active 嗎？
+> > show vlan brief
+> >
+> > ! 3. Trunk 有允許這個 VLAN 通過嗎？
+> > show interfaces trunk
+> >
+> > ! 4. 有第 3 層介面（SVI）嗎？ip routing 開了嗎？
+> > show ip interface brief | include Vlan
+> > show running-config | include ip routing
+> > ```
+> > IOS 沒有第 0 步（打完就生效）；
+> > 但多了一個 JunOS 沒有的檢查點：**`ip routing` 到底開了沒**。
 
 ---
 
@@ -706,12 +1113,30 @@ switch# show interfaces GigabitEthernet0/5 switchport
 > **防護**：Native VLAN 改成**沒有任何設備的閒置 VLAN**（如 999）
 
 > [!warning] 未使用的埠一定要處理
-> ```cisco
-> interface range GigabitEthernet0/21 - 24
->  description ** UNUSED - DISABLED **
->  switchport access vlan 999      ! 丟到黑洞 VLAN
->  shutdown                         ! 並且關閉
+> ```junos
+> set interfaces interface-range UNUSED member-range ge-0/0/20 to ge-0/0/22
+> set interfaces interface-range UNUSED description "UNUSED - DISABLED"
+> set interfaces interface-range UNUSED unit 0 family ethernet-switching interface-mode access
+> set interfaces interface-range UNUSED unit 0 family ethernet-switching vlan members BLACKHOLE
+>
+> # 逐埠關閉（disable 寫在實體介面上最保險）
+> set interfaces ge-0/0/20 disable
+> set interfaces ge-0/0/21 disable
+> set interfaces ge-0/0/22 disable
 > ```
+> **兩件事都要做**：丟到黑洞 VLAN（`BLACKHOLE` = 999）**而且** `disable`。
+> 只做其中一件都不夠 —— 只 disable 沒歸黑洞，日後有人開起來就直接進辦公 VLAN。
+>
+> > [!info]- Cisco IOS 對照
+> > ```cisco
+> > interface range GigabitEthernet0/21 - 24
+> >  description ** UNUSED - DISABLED **
+> >  switchport access vlan 999      ! 丟到黑洞 VLAN
+> >  shutdown                         ! 並且關閉
+> > ```
+> > IOS 的 `shutdown` 對應 JunOS 的 `disable`；
+> > 要重新啟用時，IOS 是 `no shutdown`，JunOS 是 `delete interfaces ge-0/0/20 disable`
+> > （**JunOS 用 `delete` 取消一項設定，不是 `no`**）。
 >
 > 沒有做這件事的話，**任何人走進會議室插上網路線，
 > 就直接進了你的辦公 VLAN**。
@@ -742,13 +1167,36 @@ switch# show interfaces GigabitEthernet0/5 switchport
 > ```
 > 話機內建一個小型交換器，同一條線同時傳語音（VLAN 60）與資料（VLAN 10）。
 >
-> ```cisco
-> interface GigabitEthernet0/5
->  switchport mode access
->  switchport access vlan 10        ! 電腦的資料 VLAN（不打標籤）
->  switchport voice vlan 60         ! 話機的語音 VLAN（打標籤）
->  spanning-tree portfast
+> ```junos
+> set vlans VOICE vlan-id 60
+>
+> # 埠本身是 access，帶資料 VLAN（不打標籤，給電腦用）
+> set interfaces ge-0/0/5 unit 0 family ethernet-switching interface-mode access
+> set interfaces ge-0/0/5 unit 0 family ethernet-switching vlan members USERS
+>
+> # 再宣告這個埠是 VoIP 埠，語音走 VOICE VLAN（打標籤，給話機用）
+> set switch-options voip interface ge-0/0/5.0 vlan VOICE
+> set switch-options voip interface ge-0/0/5.0 forwarding-class assured-forwarding
+>
+> # 話機靠 LLDP-MED 才知道要用哪個語音 VLAN
+> set protocols lldp-med interface ge-0/0/5
+> set protocols rstp interface ge-0/0/5 edge
 > ```
+> **一個觀念差異**：IOS 的 `switchport voice vlan 60` 一行就完事；
+> JunOS 要在 `switch-options voip` 底下宣告，而且**通常要搭配 LLDP-MED**
+> 讓話機自己學到語音 VLAN。`forwarding-class assured-forwarding` 則是
+> 順手把語音流量放進較有保障的服務類別。
+>
+> > [!info]- Cisco IOS 對照
+> > ```cisco
+> > interface GigabitEthernet0/5
+> >  switchport mode access
+> >  switchport access vlan 10        ! 電腦的資料 VLAN（不打標籤）
+> >  switchport voice vlan 60         ! 話機的語音 VLAN（打標籤）
+> >  spanning-tree portfast
+> > ```
+> > IOS 的話機同樣是靠 CDP 或 LLDP-MED 學到語音 VLAN，
+> > 只是 Cisco 話機配 Cisco 交換器時走 CDP，**JunOS 環境一律走 LLDP-MED**。
 >
 > **資安考量**：這個埠實際上同時屬於兩個 VLAN，
 > 攻擊者若拔掉話機直接接電腦，
@@ -780,10 +1228,12 @@ switch# show interfaces GigabitEthernet0/5 switchport
 
 | 方案 | 說明 | 適合 |
 | --- | --- | --- |
-| **單臂路由** | 一台路由器 + Trunk + 子介面 | 小型網路 |
-| **三層交換器（SVI）** | 交換器硬體路由 | **企業標準** |
+| **單臂路由** | 一台路由器 + Trunk + 邏輯單元／子介面 | 小型網路 |
+| **三層交換器** | 交換器硬體路由（JunOS 叫 **IRB**，Cisco 叫 **SVI**） | **企業標準** |
 
-**別忘了 `ip routing`！**
+**JunOS：`set vlans X l3-interface irb.N` 這行綁定不能漏，
+而且 irb 要等 VLAN 裡有 up 的成員埠才會起來。**
+（Cisco 那邊對應的坑是**別忘了 `ip routing`**。）
 
 ### STP 版本
 
@@ -796,41 +1246,88 @@ switch# show interfaces GigabitEthernet0/5 switchport
 ### 必做的埠設定
 
 **使用者埠（Access）**：
-```cisco
-switchport mode access
-switchport access vlan 10
-switchport nonegotiate            ! 防 VLAN Hopping
-spanning-tree portfast
-spanning-tree bpduguard enable    ! 防迴圈
-storm-control broadcast level 5
-switchport port-security
+```junos
+set interfaces ge-0/0/5 unit 0 family ethernet-switching interface-mode access
+set interfaces ge-0/0/5 unit 0 family ethernet-switching vlan members USERS
+set interfaces ge-0/0/5 unit 0 family ethernet-switching storm-control SC-5
+set protocols rstp interface ge-0/0/5 edge
+set protocols rstp bpdu-block-on-edge
+set switch-options interface ge-0/0/5 interface-mac-limit 2 packet-action drop
 ```
 
 **Trunk 埠**：
-```cisco
-switchport mode trunk
-switchport trunk allowed vlan 10,20,99    ! 明確限制
-switchport trunk native vlan 999          ! 不用 VLAN 1
-switchport nonegotiate
+```junos
+set interfaces ge-0/0/23 unit 0 family ethernet-switching interface-mode trunk
+set interfaces ge-0/0/23 unit 0 family ethernet-switching vlan members [ USERS SERVERS GUEST BLACKHOLE ]
+set interfaces ge-0/0/23 native-vlan-id 999
 ```
 
 **未使用的埠**：
-```cisco
-switchport access vlan 999
-shutdown
+```junos
+set interfaces ge-0/0/22 unit 0 family ethernet-switching interface-mode access
+set interfaces ge-0/0/22 unit 0 family ethernet-switching vlan members BLACKHOLE
+set interfaces ge-0/0/22 disable
 ```
+
+**最後別忘了**：`commit`（遠端作業先 `commit confirmed 5`）。
+
+> [!info]- Cisco IOS 對照
+> **使用者埠（Access）**：
+> ```cisco
+> switchport mode access
+> switchport access vlan 10
+> switchport nonegotiate            ! 防 VLAN Hopping
+> spanning-tree portfast
+> spanning-tree bpduguard enable    ! 防迴圈
+> storm-control broadcast level 5
+> switchport port-security
+> ```
+>
+> **Trunk 埠**：
+> ```cisco
+> switchport mode trunk
+> switchport trunk allowed vlan 10,20,99    ! 明確限制
+> switchport trunk native vlan 999          ! 不用 VLAN 1
+> switchport nonegotiate
+> ```
+>
+> **未使用的埠**：
+> ```cisco
+> switchport access vlan 999
+> shutdown
+> ```
+>
+> IOS 這三段打完就生效；JunOS 那三段要 `commit` 才算數。
 
 ### 驗證指令
 
-| 目的 | 指令 |
+| 目的 | 指令（JunOS） |
 | --- | --- |
-| VLAN 與埠對應 | `show vlan brief` |
-| Trunk 狀態 | `show interfaces trunk` |
-| 單一埠設定 | `show interfaces Gi0/x switchport` |
-| STP 狀態 | `show spanning-tree vlan 10` |
-| SVI 介面 | `show ip interface brief \| include Vlan` |
+| VLAN 與埠對應 | `show vlans` |
+| 每個埠的模式與 VLAN | `show ethernet-switching interfaces` |
+| Trunk 細節 | `show interfaces ge-0/0/23 extensive` |
+| 單一埠設定（set 格式） | `show configuration interfaces ge-0/0/5 \| display set` |
+| STP 狀態 | `show spanning-tree bridge`、`show spanning-tree interface` |
+| MAC 表 | `show ethernet-switching table` |
+| 三層介面（irb） | `show interfaces terse \| match irb` |
+| 這次改了什麼（設定模式） | `show \| compare` |
+| 鄰居設備 | `show lldp neighbors` |
 | Linux 建 VLAN | `ip link add link eth0 name eth0.10 type vlan id 10` |
 | 抓 VLAN 封包 | `sudo tcpdump -e -n vlan` |
+
+> [!info]- Cisco IOS 對照
+> | 目的 | 指令（Cisco IOS） |
+> | --- | --- |
+> | VLAN 與埠對應 | `show vlan brief` |
+> | Trunk 狀態 | `show interfaces trunk` |
+> | 單一埠設定 | `show interfaces Gi0/x switchport` |
+> | STP 狀態 | `show spanning-tree vlan 10` |
+> | SVI 介面 | `show ip interface brief \| include Vlan` |
+> | MAC 表 | `show mac address-table` |
+> | 鄰居設備 | `show cdp neighbors`（或 `show lldp neighbors`） |
+>
+> **JunOS 的 `show` 要在操作模式（`>`）下打**；
+> 在設定模式（`#`）裡要看狀態，前面加 `run`，例如 `run show vlans`。
 
 ---
 
@@ -868,19 +1365,36 @@ shutdown
 >
 > 寫出你的排查步驟（至少五步）。
 >
-> 參考答案：
+> 參考答案（JunOS）：
 > ```
 > 1. 實體層：ethtool 看有沒有 Link（線、埠）
-> 2. 找出他接在交換器的哪個埠（MAC → show mac address-table，
->    或看埠描述）
-> 3. show interfaces Gi0/x switchport
->    → 這個埠是 access 嗎？屬於哪個 VLAN？是不是被設錯了？
-> 4. show vlan brief → 那個 VLAN 存在且 active 嗎？
+> 2. 找出他接在交換器的哪個埠
+>    → show ethernet-switching table（用 MAC 反查），或看埠的 description
+> 3. show ethernet-switching interfaces
+>    → 這個埠是 access 嗎？VLAN members 是哪個？是不是被設錯了？
+> 4. show vlans → 那個 VLAN 存在嗎？這個埠在清單裡而且帶星號（up）嗎？
 > 5. 那個 VLAN 有 DHCP 嗎？
->    → SVI 上有沒有 ip helper-address？
-> 6. 檢查 port-security 有沒有把埠 err-disabled
->    → show interfaces status err-disabled
+>    → irb 介面上有沒有設 DHCP relay？
+>      show configuration forwarding-options dhcp-relay | display set
+> 6. 檢查是不是被 MAC limit 或 BPDU 保護擋掉了
+>    → show ethernet-switching interfaces（看 Blocking 欄位）
+>    → 若是 BPDU 保護：clear ethernet-switching bpdu-error interface ge-0/0/x
 > ```
+>
+> > [!info]- Cisco IOS 對照
+> > ```cisco
+> > ! 1. 實體層：看有沒有 Link
+> > ! 2. 找出他接在交換器的哪個埠
+> > show mac address-table
+> > ! 3. 這個埠是 access 嗎？屬於哪個 VLAN？
+> > show interfaces Gi0/x switchport
+> > ! 4. 那個 VLAN 存在且 active 嗎？
+> > show vlan brief
+> > ! 5. 那個 VLAN 有 DHCP 嗎？SVI 上有沒有 ip helper-address？
+> > show running-config interface Vlan10
+> > ! 6. 檢查 port-security 有沒有把埠 err-disabled
+> > show interfaces status err-disabled
+> > ```
 
 ---
 
@@ -931,20 +1445,31 @@ Q10. 「切了 VLAN 就有資安」這句話錯在哪裡？管理 VLAN 為什麼
 > 攻擊者送出帶兩層標籤的封包，第一台交換器剝掉外層（Native，不打標籤），
 > 第二台看到內層標籤就把它送進目標 VLAN。
 > 應改成**沒有任何設備的閒置 VLAN**（如 999）。
+> **JunOS 額外要注意**：`native-vlan-id` 指定的那個 VLAN
+> **必須同時列在該 Trunk 的 `vlan members` 裡**，否則 untagged 封包會被直接丟掉。
 >
 > **Q5.** ①**Switch Spoofing（利用 DTP）** ——
 > 攻擊者送 DTP 封包誘導交換器把他的埠變成 Trunk，
 > 就能看到所有 VLAN 的流量。
-> **防護**：所有 Access 埠明確設 `switchport mode access` + `switchport nonegotiate`。
+> **防護**：**JunOS 不支援 DTP，介面不會自動協商成 Trunk**，天生沒有這個洞；
+> 但仍要把每個 Access 埠明確寫成
+> `set interfaces ge-0/0/x unit 0 family ethernet-switching interface-mode access`，
+> 不要留白讓平台預設決定。
+> （Cisco IOS 則必須加 `switchport mode access` + `switchport nonegotiate` 關掉 DTP。）
 > ②**Double Tagging（利用 Native VLAN）** —— 見 Q4。
-> **防護**：Native VLAN 改成閒置的 VLAN（如 999）。
+> **防護**：native VLAN 改成閒置的 VLAN（如 999），
+> 並記得在 JunOS 上把它一併列進 Trunk 的 `vlan members`。
 >
 > **Q6.** VLAN 之間要通訊必須經過**第 3 層設備**（路由器或三層交換器）。
-> **單臂路由**：一台路由器 + 一條 Trunk + 多個子介面 ——
-> **便宜、設定簡單**，但**所有 VLAN 間流量都擠在同一條線上**，容易成為瓶頸；
-> **三層交換器（SVI）**：交換器用**硬體 ASIC 做路由** ——
+> **單臂路由**：一台路由器 + 一條 Trunk + 多個邏輯單元（JunOS 的 `unit`，
+> 對應 IOS 的子介面）—— **便宜、設定簡單**，
+> 但**所有 VLAN 間流量都擠在同一條線上**，容易成為瓶頸；
+> **三層交換器**：交換器用**硬體 ASIC 做路由**，
+> JunOS 叫 **IRB**（`irb.10`），Cisco 叫 **SVI**（`interface Vlan10`）——
 > **極快、埠多，是企業標準做法**，但較貴且進階功能（NAT、VPN）較少。
-> **別忘了在三層交換器上啟用 `ip routing`。**
+> **JunOS 要記得 `set vlans USERS l3-interface irb.10` 這行綁定**，
+> 而且 `irb` 介面要等該 VLAN 裡有 up 的成員埠才會起來；
+> **JunOS 沒有「啟用路由」的開關**（Cisco 那邊則是最常漏掉的 `ip routing`）。
 >
 > **Q7.** 因為**第 2 層的 Frame 沒有 TTL** ——
 > 不像 IP 封包會遞減後死掉，**Frame 會永遠循環下去**。
