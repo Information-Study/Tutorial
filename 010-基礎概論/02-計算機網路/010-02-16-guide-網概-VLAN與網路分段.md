@@ -726,7 +726,7 @@ set interfaces interface-range USER-PORTS unit 0 family ethernet-switching storm
 
 ---
 
-## ★★ 完整實戰範例
+## 完整實戰範例
 
 ### ★★ 在 Linux 上使用 VLAN
 
@@ -1003,7 +1003,7 @@ user@switch> show configuration interfaces ge-0/0/5 | display set
 
 ---
 
-## ★★★ 常見錯誤與排錯
+## 常見錯誤與排錯
 
 | 現象 | 原因 | 解法（JunOS） |
 | --- | --- | --- |
@@ -1092,7 +1092,7 @@ user@switch> show configuration interfaces ge-0/0/5 | display set
 
 ---
 
-## ★★★★ 安全性注意事項
+## 安全性注意事項
 
 > [!danger] ★★★★ VLAN Hopping 的兩種手法
 > ★★★ **一、Switch Spoofing（利用 DTP）**
@@ -1205,7 +1205,7 @@ user@switch> show configuration interfaces ge-0/0/5 | display set
 
 ---
 
-## ★★★ 速查表
+## 速查表
 
 ### ★★ Access vs Trunk
 
@@ -1331,7 +1331,7 @@ set interfaces ge-0/0/22 disable
 
 ---
 
-## ★★ 練習題
+## 練習題
 
 > [!question]- ★★ 練習 1：在 Linux 上實作 VLAN
 > ```bash
@@ -1398,7 +1398,7 @@ set interfaces ge-0/0/22 disable
 
 ---
 
-## ★★ 小測驗
+## 小測驗
 
 Q1. 用「辦公大樓隔間」的比喻說明 VLAN。它帶來哪三個效果？
 
