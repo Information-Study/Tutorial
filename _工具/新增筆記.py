@@ -60,12 +60,24 @@ def topic_prefix(directory: Path) -> str:
 
 
 def next_number(directory: Path) -> str:
+    """取下一個可用序號。
+
+    ★ 00（索引）、98（常見故障排除手冊）、99（總結小考）是保留號，
+    不參與連號計算 —— 否則資料夾裡一旦有了 99，下一篇就會被編成 100。
+    """
     nums = []
     for p in directory.glob("*.md"):
         m = NAME_RE.match(p.name)
-        if m and m.group(2) != "idx":
-            nums.append(int(m.group(1).split("-")[-1]))
-    return f"{max(nums, default=0) + 1:02d}"
+        if not m or m.group(2) == "idx":
+            continue
+        n = int(m.group(1).split("-")[-1])
+        if n >= 98:          # 保留號，跳過
+            continue
+        nums.append(n)
+    nxt = max(nums, default=0) + 1
+    if nxt >= 98:
+        raise SystemExit(f"序號已達保留區（98/99），{directory} 需要改用子章節結構")
+    return f"{nxt:02d}"
 
 
 def main() -> None:

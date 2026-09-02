@@ -1,12 +1,12 @@
 ---
-title: "Ollama"
-desc: "本地大型語言模型的執行引擎"
+title: "模型服務與推論引擎"
+desc: "地端大型語言模型的推論引擎：Ollama 主線，以及 vLLM 與 llama.cpp 的選型時機"
 aliases: []
-tags: [群組/AI人工智慧, 索引, 服務/ollama]
-category: AI服務
+tags: [群組/AI人工智慧, 索引, 主題/模型服務]
+category: 模型服務與推論引擎
 type: MOC
 status: 完成
-updated: 2026-08-27
+updated: 2026-09-02
 ---
 
 # Ollama
@@ -24,6 +24,7 @@ updated: 2026-08-27
 | 110 | [[110-02-02-guide-Ollama-模型管理與Modelfile]] | 進階 | 拉取模型、量化版本選擇、Modelfile 客製與系統提示 |
 | 110 | [[110-02-03-guide-Ollama-API使用]] | 進階 | generate / chat / embeddings 端點與串流回應處理 |
 | 110 | [[110-02-04-guide-Ollama-systemd與遠端存取]] | 進階 | 環境變數設定、監聽位址、模型保留時間與遠端存取的安全作法 |
+| 110 | [[110-02-05-guide-模型服務-推論引擎與模型選型]] | 進階 | Ollama 之外還有什麼、VRAM 與參數量怎麼換算、量化格式怎麼選，以及幾人使用該換 vLLM |
 
 ## 建議閱讀順序
 
