@@ -8,7 +8,7 @@ difficulty: 進階
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[090-01-07-guide-PKI-自建中繼CA與憑證鏈]]", "[[090-01-02-guide-PKI-CSR產生與req設定檔]]"]
-updated: 2026-08-28
+updated: 2026-09-03
 ---
 
 # 用自建 CA 簽發伺服器憑證
@@ -901,8 +901,8 @@ $ sudo grep "$SERIAL" /root/ca/issuing-ca/index.txt
 > ★★ 若已經自動化續期（腳本 + 排程），可以縮到 90 天
 >    → 這是 Let's Encrypt 的思路：短效期 + 全自動
 >
-> ★ 注意：內部憑證【不受 398 天的公信 CA 限制】
->   （那是 CA/B Forum 對公信 CA 的規定）
+> ★ 注意：內部憑證【不受公信 CA 的效期上限限制】
+>   （那是 CA/B Forum 對公信 CA 的規定，且該上限正在分階段縮短中）
 >   但 Apple 平台對【某些內部憑證】也有 825 天的上限
 > ```
 

@@ -8,7 +8,7 @@ difficulty: 入門
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[090-01-02-guide-PKI-CSR產生與req設定檔]]"]
-updated: 2026-08-28
+updated: 2026-09-03
 ---
 
 # 自簽憑證快速產生
@@ -753,7 +753,8 @@ OpenSSL 3.0.13 30 Jan 2024
 > $ openssl req -x509 ... -days 90        # ★ 短一點，逼你重新產生
 > ```
 >
-> **而且 Safari / Chrome 對「公開 CA 簽發」的憑證有 398 天限制** ——
+> **而且 Safari / Chrome 對「公開 CA 簽發」的憑證有效期上限只有約一年，
+> 而且【還在分階段縮短】（以 CA/B Forum 現行 BR 為準）** ——
 > 自簽憑證雖然不受此限，但養成好習慣比較安全。
 
 > [!warning] 不要把測試憑證提交到 git

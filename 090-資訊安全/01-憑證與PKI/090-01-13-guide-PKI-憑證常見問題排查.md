@@ -8,7 +8,7 @@ difficulty: 進階
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[090-01-10-guide-PKI-憑證部署到各服務]]"]
-updated: 2026-08-28
+updated: 2026-09-03
 ---
 
 # 憑證常見問題排查
@@ -145,7 +145,7 @@ $ man 1 verify | grep -A200 'DIAGNOSTICS'
 | **`ERR_CERT_SYMANTEC_LEGACY`** | — | 已不信任的 CA | 換 CA |
 | `ERR_SSL_PROTOCOL_ERROR` | `SSL_ERROR_RX_RECORD_TOO_LONG` | **HTTP 服務在 HTTPS 埠** | 檢查 `listen 443 ssl` |
 | **`ERR_CERT_INVALID`** | `SEC_ERROR_BAD_DER` | 憑證格式錯誤 | 檢查檔案 |
-| `NET::ERR_CERT_VALIDITY_TOO_LONG` | — | **有效期超過 398 天** | 縮短有效期 |
+| `NET::ERR_CERT_VALIDITY_TOO_LONG` | — | **有效期超過現行上限**（上限分階段縮短中） | 縮短有效期，並改用自動續期 |
 | `ERR_CERT_NAME_CONSTRAINT_VIOLATION` | — | 違反 CA 的名稱限制 | 檢查 CA 的 nameConstraints |
 | **`ERR_CERT_TRANSPARENCY_REQUIRED`** ★ | — | **缺 CT log**（公信 CA） | 換有 CT 的憑證 |
 
@@ -469,8 +469,11 @@ else
     else echo " ✓"; fi
 
     # 有效期長度
+    # ★★ 公開信任憑證的效期上限【分階段縮短中】
+    #    這個值要跟著 CA/Browser Forum 現行 BR 調整（本文撰寫日：2026-09）
+    MAX_DAYS=${CERT_MAX_DAYS:-366}
     VD=$(( ($(date -d "$E" +%s) - $(date -d "$S" +%s)) / 86400 ))
-    [ "$VD" -gt 398 ] && ISSUES+=("★ 有效期 $VD 天 > 398，Safari/Chrome 可能拒絕")
+    [ "$VD" -gt "$MAX_DAYS" ] && ISSUES+=("★ 有效期 $VD 天 > $MAX_DAYS，Safari/Chrome 可能拒絕")
 
     # 基本限制
     openssl x509 -in "$TMP" -noout -ext basicConstraints 2>/dev/null | grep -q 'CA:TRUE' && {

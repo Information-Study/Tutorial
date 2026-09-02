@@ -8,7 +8,7 @@ difficulty: 進階
 status: 完成
 distro: [ubuntu, rhel]
 prerequisites: ["[[090-01-02-guide-PKI-CSR產生與req設定檔]]"]
-updated: 2026-08-28
+updated: 2026-09-03
 ---
 
 # CN 與 SAN 設定與瀏覽器相容性
@@ -290,7 +290,7 @@ SAN: DNS:example.gov.tw, DNS:*.example.gov.tw
 | --- | --- | --- | --- | --- |
 | **Chrome / Edge** | ✅ | ✅ | ✅ | **★ 要求 CT（公開 CA）** |
 | **Firefox** | ✅ | ✅ | ✅ | **★ 自己的信任清單** |
-| **Safari / iOS** | ✅ | ✅ | ✅ | **★ 憑證效期上限 398 天** |
+| **Safari / iOS** | ✅ | ✅ | ✅ | **★ 帶頭限制憑證效期（上限分階段縮短中）** |
 | **Android** | ✅ | ✅ | ✅ | ★ 使用者安裝的 CA 有限制（見下方） |
 | **curl / wget** | ✅ | ✅ | ✅ | — |
 | **Java** | ✅ | ✅ | ✅ | **★★ 自己的 `cacerts`** |
@@ -322,17 +322,28 @@ SAN: DNS:example.gov.tw, DNS:*.example.gov.tw
 > $ curl -sI https://example.gov.tw/ | head -1      # ★ curl 會完整驗證
 > ```
 
-### Safari / iOS 的 398 天限制
+### 公開信任憑證的效期上限（分階段縮短中）★★
+
+> [!warning] 不要把天數記死
+> 憑證效期上限【正在分階段縮短】，方向只會往更短走。
+> **實際上限以 CA/Browser Forum 現行 Baseline Requirements
+> 與各 CA、各瀏覽器的公告為準**（本文撰寫日：2026-09）。
 
 ```
-2020 年 9 月起，Apple 要求：
-  ★★ 憑證的有效期不得超過 【398 天】
-    → 超過的憑證【直接被拒絕】（不是警告）
+2020 年 9 月起，Apple 帶頭限制公開信任憑證的有效期
+  → Chrome 與 Firefox 隨後跟進
+  → ★ 當時的上限是【約一年】
+  → 超過上限的憑證【直接被拒絕】（不是警告）
 
-  Chrome 與 Firefox 隨後跟進
+★★ 但一年不是終點：CA/Browser Forum 已決議【分階段再縮短】
+   → 具體天數與生效日會隨階段改變，【以官方公告為準】
+   → 【不要把固定天數寫進 SOP 與檢查腳本的硬編碼】
 
-★ 影響：以前買 2-3 年的憑證已經不可行
-★ 這也是為什麼「自動化續期」變成必要能力
+★ 影響：
+  · 以前買 2-3 年的憑證早就不可行
+  · ★★★ 連「一年人工換一次」也已經擐不住
+    → 【自動化續期（ACME）從「方便」變成「必要能力」】
+      見 [[090-01-12-guide-PKI-憑證生命週期管理]]
 ```
 
 ```bash
@@ -345,7 +356,7 @@ $ START=$(date -d "$(openssl x509 -in cert.pem -noout -startdate | cut -d= -f2)"
 $ END=$(date -d "$(openssl x509 -in cert.pem -noout -enddate | cut -d= -f2)" +%s)
 $ echo "有效期：$(( (END - START) / 86400 )) 天"
 有效期：90 天
-# ★ 超過 398 天的話 Safari/Chrome/Firefox 會拒絕
+# ★ 超過現行效期上限的話 Safari/Chrome/Firefox 會拒絕（上限持續縮短中）
 ```
 
 ### Android 的使用者 CA 限制
@@ -548,15 +559,18 @@ else
     echo "    （沒有 IP SAN）"
 fi
 
-# ── ⑥ 有效期（★ Safari 的 398 天限制）──
-echo -e "\n【6】★ 有效期長度（Safari/Chrome 上限 398 天）"
+# ── ⑥ 有效期（★ 公開信任憑證的效期上限，分階段縮短中）──
+# ★★ MAX_DAYS 請依 CA/Browser Forum 現行 Baseline Requirements 調整
+#    上限只會越來越短，這個值要跟著改（本文撰寫日：2026-09）
+MAX_DAYS=${CERT_MAX_DAYS:-366}
+echo -e "\n【6】★ 有效期長度（公開信任憑證上限 ${MAX_DAYS} 天，持續縮短中）"
 S=$(date -d "$(openssl x509 -in "$TMP" -noout -startdate | cut -d= -f2)" +%s)
 E=$(date -d "$(openssl x509 -in "$TMP" -noout -enddate | cut -d= -f2)" +%s)
 LEN=$(( (E - S) / 86400 ))
 REMAIN=$(( (E - $(date +%s)) / 86400 ))
 echo "    總長度：$LEN 天    剩餘：$REMAIN 天"
-[ "$LEN" -gt 398 ] && fail "★★ 有效期 $LEN 天超過 398 天【Safari/Chrome/Firefox 會拒絕】" \
-                   || pass "有效期符合 398 天限制"
+[ "$LEN" -gt "$MAX_DAYS" ] && fail "★★ 有效期 $LEN 天超過 $MAX_DAYS 天【Safari/Chrome/Firefox 會拒絕】" \
+                   || pass "有效期未超過 $MAX_DAYS 天"
 [ "$REMAIN" -lt 30 ] && warn "剩餘 $REMAIN 天【該續期了】"
 
 # ── ⑦ 演算法 ──
@@ -602,7 +616,7 @@ fi
 echo -e "\n【10】各平台相容性提醒"
 cat <<'EOF'
     · Chrome/Edge  ★ 公開 CA 的憑證需要 CT（Certificate Transparency）
-    · Safari/iOS   ★ 有效期不得超過 398 天
+    · Safari/iOS   ★ 有效期上限分階段縮短中（以現行 CA/B Forum BR 為準）
     · Android 7+   ★ App 預設不信任「使用者安裝」的 CA
     · Java         ★ 有自己的 cacerts（keytool -importcert -cacerts）
     · Node.js      ★ NODE_EXTRA_CA_CERTS=/path/ca.crt
@@ -670,7 +684,7 @@ IP.3  = 10.0.5.100
 | **萬用憑證連根網域失敗** ★★ | **`*.example.gov.tw` 不涵蓋 `example.gov.tw`** | **SAN 中兩個都要列** |
 | **兩層子網域失敗** | 萬用只涵蓋一層 | 加 `*.api.example.gov.tw` |
 | **用 IP 存取憑證錯誤** | IP 寫成 `DNS.n` | **改用 `IP.n`** |
-| **Safari 拒絕但 Chrome 正常** | 有效期超過 398 天 | 重新申請較短效期的 |
+| **Safari 拒絕但 Chrome 正常** | 有效期超過現行上限（上限持續縮短） | 重新申請較短效期的，並改用自動續期 |
 | **Java 應用說憑證無效** ★ | **Java 有自己的 cacerts** | `keytool -importcert -cacerts` |
 | **Node.js 說憑證無效** | Node 內建清單 | `NODE_EXTRA_CA_CERTS=/path/ca.crt` |
 | Python requests 憑證錯誤 | certifi 的清單 | `REQUESTS_CA_BUNDLE` |
@@ -826,7 +840,7 @@ email.1 = admin@example.gov.tw    # S/MIME
 
 | 平台 | 注意事項 |
 | --- | --- |
-| **Safari / iOS** | **★ 有效期上限 398 天** |
+| **Safari / iOS** | **★ 有效期上限分階段縮短中（以現行 BR 為準）** |
 | **Chrome** | ★ 公開 CA 需要 CT |
 | **Android 7+** | **★ App 預設不信任「使用者安裝」的 CA** |
 | **Java** | **★★ 自己的 `cacerts`**（`keytool -importcert -cacerts`） |
@@ -843,12 +857,12 @@ echo | openssl s_client -connect D:443 -servername D -verify_hostname D 2>&1 | \
 curl -sI https://D/ | head -1
 ```
 
-### 有效期檢查（398 天限制）
+### 有效期檢查（上限分階段縮短中）
 
 ```bash
 S=$(date -d "$(openssl x509 -in c.pem -noout -startdate | cut -d= -f2)" +%s)
 E=$(date -d "$(openssl x509 -in c.pem -noout -enddate   | cut -d= -f2)" +%s)
-echo "有效期 $(( (E-S)/86400 )) 天"        # ★ 超過 398 → Safari/Chrome 拒絕
+echo "有效期 $(( (E-S)/86400 )) 天"        # ★ 超過現行上限 → Safari/Chrome 拒絕
 ```
 
 ### 常見錯誤
@@ -858,7 +872,7 @@ echo "有效期 $(( (E-S)/86400 )) 天"        # ★ 超過 398 → Safari/Chrom
 | **`ERR_CERT_COMMON_NAME_INVALID`** | **沒有 SAN，或 SAN 不含該網域** |
 | 萬用憑證連根網域失敗 | **`*.d.tw` 不涵蓋 `d.tw`** |
 | 用 IP 存取失敗 | **IP 寫成 `DNS.n`** |
-| Safari 拒絕但 Chrome 正常 | 有效期 > 398 天 |
+| Safari 拒絕但 Chrome 正常 | 有效期超過現行上限 |
 | Java / Node / Python 說無效 | **各自有獨立的信任清單** |
 | Android App 拒絕但瀏覽器正常 | **App 不信任使用者安裝的 CA** |
 | `s_client` OK 但瀏覽器拒絕 | **s_client 預設不驗證主機名** |
@@ -949,7 +963,7 @@ Q4. **IP 位址的 SAN 為什麼必須用 `IP.n` 而不是 `DNS.n`**？
 
 Q5. **`openssl s_client` 的預設行為有什麼陷阱？怎麼正確測試**？
 
-Q6. **Safari 的 398 天限制是什麼？對憑證管理有什麼影響**？
+Q6. **公開信任憑證的效期上限現在是什麼狀況？對憑證管理有什麼影響**？
 
 Q7. **Android 7+ 對「使用者安裝的 CA」有什麼限制？三種解法是什麼**？
 
@@ -1022,14 +1036,17 @@ Q10. **SAN 中的網域會洩漏什麼？三個處理原則是什麼**？
 > curl -sI https://D/ | head -1        # ★ curl 會完整驗證（含主機名）
 > ```
 >
-> **Q6.** **Apple 從 2020 年 9 月起要求「憑證的有效期不得超過 398 天」**，
-> 超過的憑證**直接被 Safari 拒絕（不是警告）**；
-> Chrome 與 Firefox 隨後跟進。
+> **Q6.** **Apple 從 2020 年 9 月起帶頭把公開信任憑證的有效期壓到約一年**，
+> 超過的憑證**直接被 Safari 拒絕（不是警告）**；Chrome 與 Firefox 隨後跟進。
+> **★★ 重點是這個上限並沒有停在一年** ——
+> CA/Browser Forum 已決議**分階段再縮短**，方向只會往更短走；
+> 具體天數與生效日**以現行 Baseline Requirements 與各 CA 公告為準**
+> （本文撰寫日：2026-09），**不要把天數寫死**。
 > **對憑證管理的影響**：
 > ①**以前可以買 2-3 年的憑證，現在不可行**；
-> ②**續期的頻率至少一年一次**，而 Let's Encrypt 是 90 天；
-> ③**★★ 「自動化續期」從「方便」變成「必要能力」** ——
-> 手動更新憑證的時代已經結束。
+> ②**連「一年手動換一次」的作業方式也已經擐不住**；
+> ③**★★★ 「自動化續期（ACME）」從「方便」變成「必要能力」** ——
+> 手動更新憑證的時代已經結束（見 [[090-01-12-guide-PKI-憑證生命週期管理]]）。
 > 業界的趨勢還在持續縮短（規劃中的 200 天 → 100 天 → 47 天）。
 >
 > **Q7.** **Android 7（API 24）起，App 預設「只信任系統的 CA」，
