@@ -20,7 +20,7 @@ updated: 2026-09-02
 
 | # | 篇章 | 難度 | 說明 |
 | --- | --- | --- | --- |
-| 050 | [[050-01-02-01-svc-Workstation-安裝與授權]] | 入門 | 版本差異、安裝步驟、授權與 Player 的取捨 |
+| 050 | [[050-01-02-01-svc-Workstation-安裝與授權]] | 入門 | Windows 與 Linux 兩邊的 Workstation 安裝步驟、Hyper-V／WSL2 共存衝突的解法、Player 與 Pro 的差別 |
 | 050 | [[050-01-02-02-guide-Workstation-建立虛擬機與作業系統安裝]] | 入門 | 硬體配置、開機順序、ISO 掛載與首次開機設定 |
 | 050 | [[050-01-02-03-guide-Workstation-快照與複製]] | 進階 | 快照鏈的原理與代價、連結複製與完整複製、快照不是備份 |
 | 050 | [[050-01-02-04-guide-Workstation-網路模式]] | 進階 | NAT／Bridged／Host-only／自訂網段的差別與實驗環境選法 |
