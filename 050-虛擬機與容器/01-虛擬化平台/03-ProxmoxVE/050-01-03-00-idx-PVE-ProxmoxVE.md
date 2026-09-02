@@ -22,10 +22,10 @@ updated: 2026-09-02
 | --- | --- | --- | --- |
 | 050 | [[050-01-03-01-svc-PVE-安裝與初始設定]] | 入門 | 從硬體規劃、ISO 寫入、安裝精靈的 ext4/ZFS 分水嶺，到 no-subscription 套件庫切換、時區 NTP 與安裝後檢查清單的完整流程 |
 | 050 | [[050-01-03-02-guide-PVE-儲存設定]] | 進階 | PVE 各種儲存類型的差異與能放什麼內容、Thin Provisioning 超賣的風險、加掛 NFS/iSCSI/ZFS 的完整步驟，以及空間規劃與爆滿時的處理 |
-| 050 | [[050-01-03-03-guide-PVE-虛擬機管理]] | 入門 | 建立 VM、VirtIO 驅動、cloud-init 與範本複製 |
+| 050 | [[050-01-03-03-guide-PVE-虛擬機管理]] | 入門 | 建立 VM 的每一個選項該怎麼選、VirtIO 驅動與 Windows guest、CPU type 與遷移的關係、磁碟快取模式，以及做出一個複製即用的 cloud-init 範本 |
 | 050 | [[050-01-03-04-guide-PVE-LXC容器管理]] | 進階 | LXC 與 VM 的取捨、特權與非特權容器的安全差異、範本下載、資源限制、bind mount 的 UID 對應、在 LXC 裡跑 Docker 的注意事項與備份遷移 |
-| 050 | [[050-01-03-05-guide-PVE-網路設定]] | 進階 | Linux Bridge、VLAN aware、Bond 與交換器 Trunk 對接 |
-| 050 | [[050-01-03-06-svc-PVE-備份與還原]] | 進階 | vzdump、備份排程與保留策略、PBS 概覽 |
+| 050 | [[050-01-03-05-guide-PVE-網路設定]] | 進階 | Linux Bridge 與 /etc/network/interfaces、VLAN aware bridge 對接交換器 Trunk、Bond（LACP／active-backup）與交換器端對應設定、多網段規劃、三層防火牆與 SDN 概覽 |
+| 050 | [[050-01-03-06-svc-PVE-備份與還原]] | 進階 | vzdump 三種模式的一致性差異、GFS 世代保留與排程、壓縮與加密、備份到 NFS 與 PBS、還原到新 VMID 與單檔還原的完整演練 |
 | 050 | [[050-01-03-07-svc-PVE-叢集與高可用]] | 專家 | Cluster、Quorum、HA 群組與線上遷移 |
 | 050 | [[050-01-03-08-guide-PVE-使用者權限與API]] | 進階 | Realm、角色權限、API Token 與 AD/LDAP 整合 |
 | 050 | [[050-01-03-09-svc-PVE-監控與資源調校]] | 專家 | 資源超配、balloon、CPU type 與磁碟快取模式 |

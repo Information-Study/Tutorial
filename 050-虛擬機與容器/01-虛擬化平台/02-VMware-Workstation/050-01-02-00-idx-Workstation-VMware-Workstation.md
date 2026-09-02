@@ -26,6 +26,8 @@ updated: 2026-09-02
 | 050 | [[050-01-02-04-guide-Workstation-網路模式]] | 進階 | NAT／Bridged／Host-only／自訂 VMnet 與 LAN Segment 的封包路徑、可達性矩陣、虛擬網路編輯器操作、NAT 埠轉發與固定 IP 設定，並指出本手冊各章實驗該用哪一種模式 |
 | 050 | [[050-01-02-05-guide-Workstation-共享資料夾與VMwareTools]] | 入門 | VMware Tools 與 open-vm-tools 的差異、Windows／Linux 兩邊的安裝、共享資料夾與 /mnt/hgfs 自動掛載、剪貼簿拖放，以及時間同步的坑 |
 | 050 | [[050-01-02-06-guide-Workstation-效能調校與疑難排解]] | 進階 | CPU 與記憶體配置準則、虛擬磁碟型式與壓縮、關閉不需要的虛擬裝置、巢狀虛擬化的開啟與驗證，以及完整的常見錯誤排錯表 |
+| 050 | [[050-01-02-98-trouble-Workstation-常見故障排除]] | 進階 | 依症狀查的 Workstation 排錯索引：裝不起來、開不了機、沒有 IP、空間爆掉、變慢、巢狀虛擬化與檔案救援，附一頁式急救卡與症狀對照表 |
+| 050 | [[050-01-02-99-exam-Workstation-總結小考]] | 進階 | 涵蓋 VMware Workstation 全章六篇的 100 題總複習：是非 50 題、選擇 50 題，附詳解與原文連結 |
 
 ## 建議閱讀順序
 
