@@ -1068,7 +1068,7 @@ Q10. Btrfs 哪些 RAID profile 不該用於正式環境？需要 RAID5/6 等級�
 - [[020-01-10-cmd-Linux-程序管理與訊號]] — OOM Killer 與 ARC 的記憶體競爭
 - [[020-01-18-guide-Linux-排程工作]] — 用 systemd timer 排定 scrub 與備份
 - [[090-03-03-guide-應用安全-機密管理與金鑰保護]] — ZFS 原生加密
-- [[050-01-03-guide-PVE-儲存設定]] — Proxmox VE 上的 ZFS 實務
+- [[050-01-03-02-guide-PVE-儲存設定]] — Proxmox VE 上的 ZFS 實務
 - [[090-03-04-guide-應用安全-備份災難復原與入侵應變]] — 防止備份被勒索軟體刪除
 - OpenZFS 文件：<https://openzfs.github.io/openzfs-docs/>
 - Btrfs wiki 的狀態頁（RAID5/6 現況）：<https://btrfs.readthedocs.io/en/latest/Status.html>

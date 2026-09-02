@@ -25,3 +25,7 @@ desktop.ini
 .env
 .env.*
 !.env.example
+
+# Python 快取（_工具/表單定義.py 被 import 時產生）
+__pycache__/
+*.pyc

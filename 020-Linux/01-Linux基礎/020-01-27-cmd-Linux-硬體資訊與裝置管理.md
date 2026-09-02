@@ -83,7 +83,7 @@ hostnamectl | grep -E 'Chassis|Virtualization|Hardware'
 > systemd-detect-virt            # ★★★★ kvm / vmware / microsoft / none
 > ```
 > VM 上 `dmidecode`、`sensors`、`smartctl` 的結果大多是模擬或空的，
-> 硬體問題要到宿主機（PVE）上查。見 [[050-01-10-svc-PVE-監控與資源調校]]。
+> 硬體問題要到宿主機（PVE）上查。見 [[050-01-03-09-svc-PVE-監控與資源調校]]。
 
 ### ★★★ CPU
 
@@ -730,7 +730,7 @@ $ sudo ipmitool sel list | tail -20
 > ```
 > ★★★★ VM 上 `system.serial` 常是 `Not Specified` 或宿主機產生的 UUID，`memory_slots` 可能是單一虛擬插槽，
 > `disks` 的 serial 是虛擬磁碟的識別（如 `drive-scsi0`）。這些欄位在 VM 上要以宿主機（PVE）的資料為準，
-> 見 [[050-01-04-guide-PVE-虛擬機管理]]。實體機上這四項就是盤點清冊的核心欄位。
+> 見 [[050-01-03-03-guide-PVE-虛擬機管理]]。實體機上這四項就是盤點清冊的核心欄位。
 
 > [!question]- 練習 2：用 udev 固定一個 USB 裝置的名稱
 > 插一個 USB 隨身碟，寫規則讓它永遠出現為 `/dev/mystick`，驗證後移除規則。

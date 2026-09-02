@@ -794,5 +794,5 @@ Q10. `mismatch_cnt` 非 0 代表什麼？mdadm 為什麼不知道哪份是對的
 - [[090-06-05-guide-TWGCB-Linux網域導入]] — 集中帳號解決 UID 問題
 - [[060-01-06-03-guide-傳輸-備份策略與還原演練]] — RAID 之外的保護
 - [[100-01-03-guide-日誌-系統監控與告警]] — 把 mdstat 接進監控
-- [[050-01-03-guide-PVE-儲存設定]] — PVE 上的 NFS/iSCSI 儲存
+- [[050-01-03-02-guide-PVE-儲存設定]] — PVE 上的 NFS/iSCSI 儲存
 - `man 5 nfs` / `man 5 exports` / `man 8 mount.cifs` / `man 8 mdadm` / `man 5 autofs`

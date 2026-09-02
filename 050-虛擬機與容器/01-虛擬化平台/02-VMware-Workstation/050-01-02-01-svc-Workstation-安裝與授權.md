@@ -1,26 +1,24 @@
 ---
-title: "PVE LXC 容器管理"
-desc: "LXC 與 VM 的差異、範本、特權與非特權容器"
+title: "安裝與授權"
+desc: "版本差異、安裝步驟、授權與 Player 的取捨"
 aliases: []
-tags: [群組/虛擬機與容器, 虛擬化/pve, 主題/虛擬化]
-category: 虛擬化平台
-difficulty: 進階
+tags: []
+category: 虛擬機與容器
+difficulty: 入門
 status: 待撰寫
 distro: [ubuntu, rhel]
 prerequisites: []
-updated: 2026-08-27
+updated: 2026-09-02
 ---
 
-# PVE LXC 容器管理
+# 安裝與授權
 
 > [!abstract] 這篇你會學到
-> - 判斷該用 LXC 還是 VM
-> - 建立非特權容器並理解其限制
-> - 管理容器範本
+> - <!-- TODO: 待撰寫 -->
 
 ## 前置知識
 
-<!-- TODO: 待撰寫 -->
+- [[000-00-idx-索引-首頁]]
 
 ## 觀念說明
 
@@ -30,7 +28,7 @@ updated: 2026-08-27
 
 <!-- TODO: 待撰寫 -->
 
-> [!info]- 平台差異對照
+> [!info]- Rocky / AlmaLinux（RHEL 系）對照
 > <!-- TODO: 待撰寫 -->
 
 ## 基礎設定
@@ -58,7 +56,7 @@ updated: 2026-08-27
 
 ## 速查表
 
-| 指令 / 設定項 | 說明 | 範例 |
+| 指令 / 參數 | 說明 | 範例 |
 | --- | --- | --- |
 |  |  |  |
 
@@ -82,5 +80,4 @@ Q3.
 
 ## 延伸閱讀
 
-- [[050-01-03-03-guide-PVE-虛擬機管理]]
-- [[050-02-01-01-svc-Docker-容器概念與Docker安裝]]
+- [[000-00-idx-索引-首頁]]
