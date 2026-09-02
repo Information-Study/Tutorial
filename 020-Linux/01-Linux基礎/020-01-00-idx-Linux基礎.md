@@ -50,6 +50,8 @@ updated: 2026-08-27
 | 020 | [[020-01-28-cmd-Linux-時間同步NTP與chrony]] | 入門 | timesyncd 與 chrony 的選擇與設定、對內提供 NTP、AD/Kerberos 的時間要求、漂移監控 |
 | 020 | [[020-01-29-guide-Linux-網路儲存與軟體RAID]] | 進階 | NFS 與 CIFS/SMB 的掛載與伺服器端設定、autofs 自動掛載、mdadm 軟體 RAID、磁碟配額 |
 | 020 | [[020-01-30-guide-Linux-原始碼安裝與系統升級]] | 進階 | 從原始碼編譯安裝到 /usr/local 的正確做法、checkinstall/stow 管理，以及大版本升級（do-release-upgrade、leapp）的完整流程 |
+| 020 | [[020-01-98-trouble-Linux-常見故障排除]] | 進階 | 依症狀查的故障排除索引：判斷分流、處置步驟與一頁式急救卡，原理連回原文 |
+| 020 | [[020-01-99-exam-Linux-總結小考]] | 進階 | 涵蓋 Linux 基礎全章的 100 題總複習：是非 50 題、選擇 50 題，附詳解與原文連結 |
 
 ## 建議閱讀順序
 
