@@ -20,11 +20,11 @@ updated: 2026-09-02
 
 | # | 篇章 | 難度 | 說明 |
 | --- | --- | --- | --- |
-| 050 | [[050-01-04-01-guide-KVM-KVM與libvirt架構]] | 進階 | KVM／QEMU／libvirt 三者的分工，以及和 PVE 的關係 |
-| 050 | [[050-01-04-02-svc-KVM-安裝與virt-manager]] | 進階 | 套件安裝、權限群組、virt-manager 圖形化建立虛擬機 |
-| 050 | [[050-01-04-03-cmd-KVM-virsh指令實務]] | 進階 | 定義、啟停、快照、遷移與 XML 編輯的完整指令流程 |
-| 050 | [[050-01-04-04-guide-KVM-儲存池與網路]] | 進階 | storage pool 型式、qcow2 與 raw、NAT 與橋接網路設定 |
-| 050 | [[050-01-04-05-guide-KVM-自動化與範本]] | 專家 | virt-install、cloud-init 與用腳本量產虛擬機 |
+| 050 | [[050-01-04-01-guide-KVM-KVM與libvirt架構]] | 進階 | KVM 核心模組、QEMU 模擬器、libvirt 管理層三者的分工與界線，libvirtd 到 virtqemud 的演進，domain XML 的角色，以及 PVE 底層與 KVM 的真正關係 |
+| 050 | [[050-01-04-02-svc-KVM-安裝與virt-manager]] | 進階 | 硬體支援檢查與巢狀虛擬化、套件安裝（Ubuntu 與 RHEL）、libvirt 群組與權限為什麼要重新登入、system 與 session 模式的差別，以及用 virt-manager 建出第一台 VM |
+| 050 | [[050-01-04-03-cmd-KVM-virsh指令實務]] | 進階 | virsh 完整生命週期指令、destroy 為什麼不是刪除、dumpxml 與 edit 改設定、內部與外部快照的差別、console 連線與退出、線上遷移，以及 virsh 與 qm 的對照表 |
+| 050 | [[050-01-04-04-guide-KVM-儲存池與網路]] | 進階 | libvirt storage pool 的 dir／logical／netfs／zfs 四種型式與 virsh pool-* 完整流程、qcow2 與 raw 的取捨與 qemu-img 實務、預設 NAT 網路 virbr0 的封包路徑、用 Netplan 建 br0 做橋接網路（含不要把自己鎖在門外的做法）與隔離網路 |
+| 050 | [[050-01-04-05-guide-KVM-自動化與範本]] | 專家 | virt-install 完整參數與非互動安裝、cloud image ＋ cloud-init（cloud-localds seed ISO）量產虛擬機、用 virt-sysprep／virt-customize 做範本、virt-clone 與 backing file 連結複製、一支腳本開出三台已設好主機名稱與固定 IP 的 Ubuntu VM |
 
 ## 建議閱讀順序
 
